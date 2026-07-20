@@ -4,6 +4,11 @@ export const VK_ADS_API_BASE_URL = "https://ads.vk.com/api/v2" as const;
 
 export type ServerMode = "readonly" | "write";
 
+export interface VkAdsClientCredentials {
+  clientId: string;
+  clientSecret: string;
+}
+
 export interface AppConfig {
   mode: ServerMode;
   /** Имя локального профиля задаётся при старте; из MCP его менять нельзя. */
@@ -11,6 +16,10 @@ export interface AppConfig {
   /** Метка локального подключения; credential намеренно не выбирается произвольным ID из запроса MCP. */
   connectionId: string;
   tokenProvider: () => string;
+  /** Только для локального сохранения нового токена в .env. */
+  setAccessToken: (token: string) => void;
+  /** Данные приложения не передаются в MCP-инструменты и не логируются. */
+  clientCredentials?: VkAdsClientCredentials;
   timeoutMs: number;
   uploadDir?: string;
   /** Отдельный opt-in каталог для PII списков ремаркетинга. */
@@ -71,17 +80,25 @@ function parsePositiveIds(value: string | undefined, variableName: string): numb
 export function loadConfig(environment = process.env): AppConfig {
   const mode = environment.VK_ADS_MODE === "write" ? "write" : "readonly";
   const profileName = parseProfileName(environment.VK_ADS_PROFILE);
-  const environmentToken = environment.VK_ADS_TOKEN?.trim();
+  let accessToken = environment.VK_ADS_TOKEN?.trim() ?? "";
+  const clientId = environment.VK_ADS_CLIENT_ID?.trim();
+  const clientSecret = environment.VK_ADS_CLIENT_SECRET?.trim();
+  if ((clientId && !clientSecret) || (!clientId && clientSecret)) {
+    throw new Error("Укажите в .env обе переменные: VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET.");
+  }
+  const clientCredentials = clientId && clientSecret ? { clientId, clientSecret } : undefined;
+  if (!accessToken && !clientCredentials) {
+    throw new Error("Заполните в .env VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET. Токен сервер создаст сам.");
+  }
 
   return {
     mode,
     profileName,
     connectionId: parseConnectionId(environment.VK_ADS_CONNECTION_ID ?? profileName),
     timeoutMs: parseTimeout(environment.VK_ADS_TIMEOUT_MS),
-    tokenProvider: () => {
-      if (environmentToken) return environmentToken;
-      throw new Error("Токен VK Ads не найден. Создайте файл .env рядом с сервером и укажите VK_ADS_TOKEN=ваш_токен.");
-    },
+    tokenProvider: () => accessToken,
+    setAccessToken: (token) => { accessToken = token; },
+    ...(clientCredentials ? { clientCredentials } : {}),
     ...(environment.VK_ADS_UPLOAD_DIR ? { uploadDir: resolve(environment.VK_ADS_UPLOAD_DIR) } : {}),
     ...(environment.VK_ADS_PII_UPLOAD_DIR ? { piiUploadDir: resolve(environment.VK_ADS_PII_UPLOAD_DIR) } : {}),
     allowPiiUploads: environment.VK_ADS_ALLOW_PII_UPLOADS === "1",

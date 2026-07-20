@@ -4,19 +4,33 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadConfig } from "./config.js";
+import { EnvFile } from "./env-file.js";
 import { createServer } from "./server.js";
 import { TokenRateLimiter } from "./rate-limiter.js";
 import { VkAdsClient } from "./vk-client.js";
+import { VkAdsTokenManager } from "./vk-ads-token.js";
 
 /** .env лежит рядом с package.json, независимо от текущей папки MCP-клиента. */
 const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadDotenv({ path: resolve(packageDirectory, ".env"), override: false, quiet: true });
 
 const config = loadConfig();
+const envFile = new EnvFile(resolve(packageDirectory, ".env"));
+const tokenManager = config.clientCredentials
+  ? new VkAdsTokenManager({
+      credentials: config.clientCredentials,
+      envFile,
+      getAccessToken: config.tokenProvider,
+      getRefreshToken: () => process.env.VK_ADS_REFRESH_TOKEN?.trim() || undefined,
+      setAccessToken: config.setAccessToken,
+      timeoutMs: config.timeoutMs,
+    })
+  : undefined;
 // Лимит действует на все read-запросы одного локального подключения, включая повтор после 401.
 const rateLimiter = new TokenRateLimiter();
 const client = new VkAdsClient({
   tokenProvider: config.tokenProvider,
+  ...(tokenManager ? { tokenRefresher: () => tokenManager.refresh() } : {}),
   timeoutMs: config.timeoutMs,
   waitForRequest: () => rateLimiter.wait(),
 });

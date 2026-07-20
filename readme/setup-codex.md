@@ -1,6 +1,6 @@
 # Подключение к Codex
 
-Нужны Node.js 20 или новее и личный токен VK Ads.
+Нужны Node.js 20 или новее, `client_id` и `client_secret` вашего приложения VK Ads. Токен получать вручную не нужно.
 
 ## macOS
 
@@ -18,7 +18,8 @@ open -e .env
 В файле `.env` укажите:
 
 ```text
-VK_ADS_TOKEN=ваш_токен
+VK_ADS_CLIENT_ID=ваш_client_id
+VK_ADS_CLIENT_SECRET=ваш_client_secret
 ```
 
 Затем выполните:
@@ -44,10 +45,12 @@ codex mcp remove vk-ads
 codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$($PWD.Path)\dist\index.js"
 ```
 
-Сохраните токен в `.env`, перезапустите Codex и отправьте запрос:
+Сохраните `.env`, перезапустите Codex и отправьте запрос. Сервер сам получит токен и сохранит его в этом файле:
 
 ```text
 Покажи контекст подключения VK Ads и доступные рекламные планы. Ничего не меняй.
 ```
 
 Полная инструкция: [README](../README.md).
+
+Если VK Ads вернёт `token_limit_exceeded`, для приложения исчерпан лимит активных токенов. Сервер не отзывает их сам: удалите ненужные токены в кабинете VK Ads и повторите запуск.
