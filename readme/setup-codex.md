@@ -20,9 +20,21 @@ codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
 codex mcp list
 ```
 
-Не передавайте токен, `client_secret` и пароль хранилища в `codex mcp add`.
+Не передавайте токен и пароль хранилища в `codex mcp add`.
 
-## 3. Проверьте доступ
+## 3. Сохраните личный токен VK Ads
+
+В VK Ads откройте настройки API и создайте личный токен для нужного кабинета. На macOS сохраните его в Keychain:
+
+```bash
+read -s "VK_ADS_TOKEN?Токен VK Ads: "
+security add-generic-password -U -a default -s vk-ads-mcp -w "$VK_ADS_TOKEN"
+unset VK_ADS_TOKEN
+```
+
+Токен не добавляйте в Git, `.env` и настройки Codex.
+
+## 4. Проверьте доступ
 
 Откройте Codex и отправьте:
 
@@ -30,4 +42,4 @@ codex mcp list
 Покажи контекст подключения VK Ads и доступные рекламные планы. Ничего не меняй.
 ```
 
-Как безопасно сохранить токен или настроить OAuth: [README](../README.md#быстрый-старт).
+Подробнее: [README](../README.md#быстрый-старт).

@@ -15,7 +15,7 @@ This package is a local stdio MCP server. It is installed and started on the sam
 
 - Select an account namespace with `VK_ADS_PROFILE`; the default is `default`.
 - Keep `VK_ADS_MODE=readonly` unless an isolated test write is intentional.
-- Configure credentials through the process environment or supported local secret store, never through repository files or committed client configuration.
+- Persist the personal VK Ads token through the supported local secret store, never through repository files or committed client configuration.
 - Use an absolute path for `VK_ADS_UPLOAD_DIR` before any media upload capability is available.
 
 ## Client Connection

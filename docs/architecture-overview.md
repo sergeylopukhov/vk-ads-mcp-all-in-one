@@ -14,8 +14,7 @@
 - `src/index.ts`: process composition and stdio server startup.
 - `src/server.ts`: MCP tool registration, read aliases, write previews and execution wiring.
 - `src/vk-client.ts`: fixed-host VK Ads HTTP client, endpoint allowlists and response handling.
-- `src/config.ts`: environment parsing, profile isolation and credential refresh setup.
-- `src/vk-ads-oauth.ts`: local callback OAuth flow for VK Ads.
+- `src/config.ts`: environment parsing, profile isolation and personal-token lookup.
 - `src/secret-store.ts`: macOS Keychain and AES-256-GCM encrypted-file storage.
 - `src/write-gate.ts`, `src/write-preflight.ts`, `src/banner-preflight.ts`: explicit write confirmation and local validation.
 - `src/upload-policy.ts` and `src/destination-policy.ts`: upload-root, media-format and advertising-destination constraints.
@@ -26,7 +25,7 @@
 ## Runtime Shape
 
 1. `index.ts` loads a fixed local profile and starts one MCP server over stdio.
-2. Configuration constructs secret storage, optional OAuth helpers, a one-request-per-second rate limiter and the VK Ads client.
+2. Configuration constructs secret storage, a one-request-per-second rate limiter and the VK Ads client.
 3. `createServer()` registers read-only tools unconditionally and write tools only when `VK_ADS_MODE=write`.
 4. MCP calls pass through schemas and allowlisted client methods; the caller cannot provide an arbitrary API host or raw request path.
 5. Writes require preflight, a short-lived preview, an exact one-time confirmation and a result re-read where the operation supports it.

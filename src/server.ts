@@ -4,7 +4,6 @@ import { z } from "zod";
 
 import { buildRecommendations, comparePeriods, detectAnomalies, diagnoseDelivery, findInefficientRows, rankRows, type AnalyticsRow } from "./analytics.js";
 import type { ServerMode } from "./config.js";
-import { VkAdsOAuth } from "./vk-ads-oauth.js";
 import { statisticsToExportRows, toCsv, toXlsx, type ExportRow } from "./export.js";
 import { searchCatalog, toolCatalog } from "./tool-catalog.js";
 import { VERIFIED_AD_GROUP_FIELDS, VERIFIED_AD_PLAN_FIELDS, VERIFIED_BANNER_FIELDS, VkAdsApiError, VkAdsClient, type VkObject, type VkPagedResponse } from "./vk-client.js";
@@ -1303,7 +1302,7 @@ async function callReadTool(
   }
 }
 
-export function createServer(client: VkAdsClient, mode: ServerMode, options: { uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowSharingKeyRevoke?: boolean; allowSkAdNetworkWrites?: boolean; skAdNetworkTestAppIds?: number[]; inAppEventTestAppIds?: number[]; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; remarketingCounterTestIds?: number[]; connectionId?: string; profileName?: string; vkAdsOAuth?: VkAdsOAuth } = {}): McpServer {
+export function createServer(client: VkAdsClient, mode: ServerMode, options: { uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowSharingKeyRevoke?: boolean; allowSkAdNetworkWrites?: boolean; skAdNetworkTestAppIds?: number[]; inAppEventTestAppIds?: number[]; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; remarketingCounterTestIds?: number[]; connectionId?: string; profileName?: string } = {}): McpServer {
   const normalizeTestWritePayload = (operation: TestWriteOperation, payload: Record<string, unknown>, _legacyUploadDir?: string) => normalizeTestWritePayloadCore(
     operation,
     payload,
@@ -1316,7 +1315,6 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
   const writeGate = new WriteGate(mode === "write");
   const connectionId = options.connectionId ?? "default";
   const profileName = options.profileName ?? "default";
-  const vkAdsOAuth = options.vkAdsOAuth;
   /** Только content, загруженный этим MCP после локальной проверки размеров. */
   const uploadedImages = new Map<number, KnownStaticImage>();
   /** Secret хранится лишь до отзыва в памяти текущего процесса; handle не является ключом VK Ads. */
@@ -1350,42 +1348,6 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       },
       "Контекст VK Ads получен.",
     ),
-  );
-
-  server.registerTool(
-    "vk_ads_oauth_status",
-    {
-      title: "Статус подключения VK Ads",
-      description: "Read-only: показывает статус браузерного подключения VK Ads. Токены и client secret не возвращаются.",
-      outputSchema: { configured: z.boolean(), connected: z.boolean(), authorization_pending: z.boolean(), user_id: z.number().int().positive().optional(), access_token_expires_at: z.string().datetime().optional() },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
-    },
-    async () => textAndData(vkAdsOAuth ? { ...vkAdsOAuth.status() } : { configured: false, connected: false, authorization_pending: false }, "Статус подключения VK Ads получен."),
-  );
-
-  server.registerTool(
-    "vk_ads_oauth_begin",
-    {
-      title: "Подключить VK Ads",
-      description: "Открывает одноразовый OAuth-сеанс VK Ads. Вернёт официальную страницу запроса доступа: пользователь выбирает кабинет и нажимает «Разрешить доступ». Токены сохраняются только в локальном secret store.",
-      outputSchema: { authorization_url: z.string().url(), redirect_uri: z.string().url(), expires_at: z.string().datetime(), scopes: z.array(z.string()) },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    },
-    async () => {
-      if (!vkAdsOAuth) throw new Error("OAuth VK Ads не настроен. Добавьте client_id и client_secret VK Ads в безопасную конфигурацию запуска.");
-      return textAndData({ ...await vkAdsOAuth.beginAuthorization() }, "Откройте authorization_url, выберите кабинет VK Ads и подтвердите доступ.");
-    },
-  );
-
-  server.registerTool(
-    "vk_ads_oauth_cancel",
-    {
-      title: "Отменить подключение VK Ads",
-      description: "Закрывает ожидающий OAuth callback. Уже сохранённые токены и доступы VK Ads не изменяет.",
-      outputSchema: { cancelled: z.boolean() },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-    },
-    async () => textAndData({ cancelled: vkAdsOAuth?.cancelAuthorization() ?? false }, "Ожидание подключения VK Ads отменено."),
   );
 
   server.registerTool(

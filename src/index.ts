@@ -3,24 +3,15 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { loadConfig } from "./config.js";
 import { createServer } from "./server.js";
 import { TokenRateLimiter } from "./rate-limiter.js";
-import { VkAdsOAuth } from "./vk-ads-oauth.js";
 import { VkAdsClient } from "./vk-client.js";
 
 const config = loadConfig();
-const vkAdsOAuth = new VkAdsOAuth({
-  credentials: config.adsOAuthCredentials,
-  redirectUri: config.adsOAuthRedirectUri,
-  profileName: config.profileName,
-  secretStore: config.secretStore,
-  timeoutMs: config.timeoutMs,
-});
 // Лимит действует на все read-запросы одного локального подключения, включая повтор после 401.
 const rateLimiter = new TokenRateLimiter();
 const client = new VkAdsClient({
   tokenProvider: config.tokenProvider,
   timeoutMs: config.timeoutMs,
   waitForRequest: () => rateLimiter.wait(),
-  ...(config.tokenRefresher ? { tokenRefresher: config.tokenRefresher } : {}),
 });
 const server = createServer(client, config.mode, {
   connectionId: config.connectionId,
@@ -36,7 +27,6 @@ const server = createServer(client, config.mode, {
   inAppEventTestAppIds: config.inAppEventTestAppIds,
   allowRemarketingCounterWrites: config.allowRemarketingCounterWrites,
   remarketingCounterTestIds: config.remarketingCounterTestIds,
-  vkAdsOAuth,
 });
 
 await server.connect(new StdioServerTransport());

@@ -20,7 +20,7 @@ This is a routing map, not the complete project record. Read it before changes t
 ## Interface And Operations Documents
 
 - [MCP API](API.md): transport, tool discovery, input and write contracts.
-- [Integrations](INTEGRATIONS.md): VK Ads, OAuth and secret-storage boundaries.
+- [Integrations](INTEGRATIONS.md): VK Ads and secret-storage boundaries.
 - [Security](SECURITY.md): credential, write, destination and upload controls.
 - [Operations](DEPLOYMENT.md): local build, client connection and release boundaries.
 - [Code Rules](code_rules.md): required rules before code and code-adjacent edits.

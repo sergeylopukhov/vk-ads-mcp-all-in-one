@@ -8,12 +8,11 @@
 - The user credential and provider role ultimately decide which resources are visible or writable.
 - Provider contracts can evolve. Add a new operation only after official documentation or an isolated safe verification confirms its path, schema and permissions.
 
-## VK Ads OAuth
+## VK Ads Authentication
 
-- OAuth is optional and requires a user-owned VK Ads application with a configured client ID, client secret and exact loopback redirect URI.
-- Authorization is opened only on a loopback callback (`localhost`, `127.0.0.1` or `::1`) using an explicit non-privileged port.
-- OAuth state is random, callback state is compared in constant time and pending authorization closes after ten minutes.
-- Access and refresh tokens are persisted only through the selected local secret store.
+- The server accepts only a personal VK Ads access token.
+- OAuth, application credentials and browser callbacks are intentionally not part of the project.
+- The personal access token is persisted only through the selected local secret store.
 
 ## Local Credential Storage
 
@@ -24,4 +23,4 @@
 
 ## MCP Clients
 
-The public README documents supported local stdio clients. Each client must start the local Node.js process with an absolute path to `dist/index.js`; no client configuration should contain an access token, client secret or secret-store passphrase.
+The public README documents supported local stdio clients. Each client must start the local Node.js process with an absolute path to `dist/index.js`; no client configuration should contain an access token or secret-store passphrase.

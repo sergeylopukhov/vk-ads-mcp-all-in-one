@@ -2,7 +2,7 @@
 
 ## Secret Policy
 
-- Never place access tokens, refresh tokens, client secrets, secret-store passphrases, PII, production response bodies or callback credentials in source, tests, docs, logs or MCP client configuration.
+- Never place access tokens, secret-store passphrases, PII or production response bodies in source, tests, docs, logs or MCP client configuration.
 - `.env.example` is a variable reference only. Node.js does not load `.env` automatically.
 - Keep local secret files outside the repository. The repository ignore rules cover common secret-file patterns.
 
@@ -11,7 +11,6 @@
 - Profile and connection ID are fixed at process startup and cannot be supplied by a tool call.
 - The VK Ads client uses a fixed official base URL and path allowlists.
 - Advertising destinations must be public HTTPS domains without embedded credentials, IP addresses or localhost.
-- OAuth redirects accept only validated loopback URLs.
 
 ## Mutation Controls
 

@@ -24,7 +24,7 @@
 Подходит для Codex, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и других MCP-клиентов со стандартным `stdio`.
 
 > [!IMPORTANT]
-> Сервер работает только с VK Ads. Интеграций с сообществами VK и отдельного Core VK OAuth в проекте нет.
+> Сервер работает только с VK Ads. Интеграций с сообществами VK в проекте нет.
 
 ## Содержание
 
@@ -46,23 +46,7 @@ npm ci
 npm run build
 ```
 
-### 2. Настроить доступ VK Ads
-
-Нужен токен VK Ads или собственные `VK_ADS_CLIENT_ID` и `VK_ADS_CLIENT_SECRET`.
-
-macOS: сохраните уже полученный токен в Keychain. Команда запросит его скрыто и не создаст файл в репозитории.
-
-```bash
-read -s "VK_ADS_TOKEN?Токен VK Ads: "
-security add-generic-password -U -a default -s vk-ads-mcp -w "$VK_ADS_TOKEN"
-unset VK_ADS_TOKEN
-```
-
-Windows и Linux: зашифрованное локальное хранилище поддерживается, но оно наполняется через OAuth. Если есть только готовый токен, передайте `VK_ADS_TOKEN` защищённому окружению процесса, который запускает MCP-клиент, а не в Git, `.env` или JSON-конфигурацию.
-
-OAuth-подключение через `vk_ads_oauth_begin` доступно только для собственного заранее настроенного приложения VK Ads.
-
-### 3. Подключить MCP-клиент
+### 2. Подключить MCP-клиент
 
 Укажите абсолютный путь к `dist/index.js`. Токен в настройки клиента не добавляйте.
 
@@ -81,6 +65,20 @@ OAuth-подключение через `vk_ads_oauth_begin` доступно т
 ```
 
 Готовые команды для каждого клиента: [readme/setup-clients.md](readme/setup-clients.md). Для Codex: [readme/setup-codex.md](readme/setup-codex.md).
+
+### 3. Добавить личный токен VK Ads
+
+Откройте VK Ads → настройки API → создайте личный токен с доступом к нужному рекламному кабинету.
+
+macOS: команда ниже спросит токен скрыто и сохранит его в Keychain. В Git, `.env` и настройку Codex он не попадёт.
+
+```bash
+read -s "VK_ADS_TOKEN?Токен VK Ads: "
+security add-generic-password -U -a default -s vk-ads-mcp -w "$VK_ADS_TOKEN"
+unset VK_ADS_TOKEN
+```
+
+Windows и Linux: передайте `VK_ADS_TOKEN` только защищённому окружению процесса, который запускает MCP-клиент. Не сохраняйте его в репозитории, `.env` или JSON-конфигурации клиента.
 
 ### 4. Проверить подключение
 
@@ -115,7 +113,7 @@ VK_ADS_MODE=write node dist/index.js
 
 ## Безопасность
 
-- не публикуйте токены, `client_secret`, пароль хранилища и персональные данные;
+- не публикуйте токены, пароль хранилища и персональные данные;
 - не добавляйте их в Git, `.env` и MCP-конфигурацию;
 - храните загружаемые файлы в отдельной папке и указывайте её через `VK_ADS_UPLOAD_DIR`.
 

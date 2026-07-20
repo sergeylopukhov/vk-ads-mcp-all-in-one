@@ -13,7 +13,7 @@ The public package currently exposes a build script only. Do not claim that `npm
 
 - VK Ads endpoint contracts and permissions vary by account, role and provider release. Represent unverified operations as planned, not executable.
 - Rate limiting is process-local. Separate server processes using the same credential do not share the in-memory one-request-per-second queue.
-- OAuth depends on a correctly configured user-owned VK application and an available loopback port.
+- Personal VK Ads tokens can expire or be revoked; the user must replace the local token after that event.
 - Provider `403`, `404` and `405` may mean missing permission or unavailable capability, not necessarily a malformed MCP request.
 - In-memory write previews and audit metadata disappear when the process exits.
 - Media checks prevent known local format errors, but final eligibility and moderation remain VK decisions.
