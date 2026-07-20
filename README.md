@@ -76,7 +76,7 @@ npm.cmd ci --omit=dev
 
 Путь к `dist/index.js` должен быть абсолютным. Не добавляйте в конфигурацию клиента токен, секрет приложения или пароль от хранилища секретов.
 
-Подробные команды для Codex, Claude Code, Gemini CLI, Qwen Code и Kimi Code CLI: [docs/setup-clients.md](docs/setup-clients.md). Отдельная инструкция для Codex: [docs/setup-codex.md](docs/setup-codex.md).
+Подробные команды для Codex, Claude Code, Gemini CLI, Qwen Code и Kimi Code CLI: [readme/setup-clients.md](readme/setup-clients.md). Отдельная инструкция для Codex: [readme/setup-codex.md](readme/setup-codex.md).
 
 После подключения начните с запроса:
 
