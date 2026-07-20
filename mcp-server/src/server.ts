@@ -140,7 +140,7 @@ const verifiedBannerFields = VERIFIED_BANNER_FIELDS;
 
 const exportRowsSchema = z.array(z.record(z.string().min(1).max(120), z.union([z.string().max(10_000), z.number().finite(), z.boolean(), z.null()]))).min(1).max(1_000);
 
-const testWriteOperationSchema = z.enum(["create_url", "create_test_ad_plan", "create_test_campaign", "create_test_ad_group", "create_test_banner", "create_test_segment", "rename_test_ad_plan", "rename_test_campaign", "rename_test_ad_group", "rename_test_banner", "rename_test_segment", "rename_test_lead_form", "rename_test_remarketing_counter", "delete_test_remarketing_counter", "update_test_counter_goal", "update_test_inapp_event_category", "update_test_pricelist", "create_test_async_report", "delete_test_async_report", "block_test_ad_plans", "block_test_ad_groups", "block_test_banners", "remoderate_test_banners", "delete_test_ad_plan", "delete_test_ad_group", "delete_test_segment", "add_test_segment_relation", "delete_test_segment_relation", "upload_static_image", "upload_html5", "upload_test_video", "upload_lead_form_logo", "create_test_offer_batch", "export_leads", "export_survey_respondents", "upload_test_remarketing_user_list", "rename_test_remarketing_user_list", "delete_test_remarketing_user_list", "connect_agency_client", "create_test_local_geo", "update_test_local_geo", "delete_test_local_geo", "copy_test_lead_form", "copy_test_survey_form", "manage_test_lead_forms_archive", "manage_test_survey_forms_archive", "send_test_lead", "create_test_sharing_key", "revoke_created_sharing_key", "share_test_skadnetwork_ids", "withdraw_test_skadnetwork_ids"]);
+const testWriteOperationSchema = z.enum(["create_url", "create_test_ad_plan", "create_test_campaign", "create_test_ad_group", "create_test_banner", "create_test_segment", "rename_test_ad_plan", "rename_test_campaign", "update_campaign_budget_limit_day", "rename_test_ad_group", "rename_test_banner", "rename_test_segment", "rename_test_lead_form", "rename_test_remarketing_counter", "delete_test_remarketing_counter", "update_test_counter_goal", "update_test_inapp_event_category", "update_test_pricelist", "create_test_async_report", "delete_test_async_report", "block_test_ad_plans", "block_test_ad_groups", "block_test_banners", "remoderate_test_banners", "delete_test_ad_plan", "delete_test_ad_group", "delete_test_segment", "add_test_segment_relation", "delete_test_segment_relation", "upload_static_image", "upload_html5", "upload_test_video", "upload_lead_form_logo", "create_test_offer_batch", "export_leads", "export_survey_respondents", "upload_test_remarketing_user_list", "rename_test_remarketing_user_list", "delete_test_remarketing_user_list", "connect_agency_client", "create_test_local_geo", "update_test_local_geo", "delete_test_local_geo", "copy_test_lead_form", "copy_test_survey_form", "manage_test_lead_forms_archive", "manage_test_survey_forms_archive", "send_test_lead", "create_test_sharing_key", "revoke_created_sharing_key", "share_test_skadnetwork_ids", "withdraw_test_skadnetwork_ids"]);
 
 const confirmedTestGroupTargetingsSchema = z.object({
   geo: z.object({
@@ -254,6 +254,8 @@ function normalizeTestWritePayloadCore(
       }).parse(payload);
       return parsed;
     }
+    case "update_campaign_budget_limit_day":
+      return z.object({ campaign_id: z.number().int().positive(), budget_limit_day: z.number().finite().positive() }).parse(payload);
     case "rename_test_ad_group": {
       const parsed = z.object({
         ad_group_id: z.number().int().positive(),
@@ -683,6 +685,7 @@ function writeImpact(operation: TestWriteOperation): { risk: "low" | "medium" | 
     case "delete_test_remarketing_counter": return { risk: "high", expected_change: "Удалить только allowlist test-счётчик ремаркетинга; операция необратима." };
     case "update_test_counter_goal": return { risk: "low", expected_change: "Изменить только allowlist __MCP_TEST__ цель test-счётчика ремаркетинга." };
     case "rename_test_campaign": return { risk: "low", expected_change: "Переименовать только test campaign." };
+    case "update_campaign_budget_limit_day": return { risk: "medium", expected_change: "Изменить дневной лимит выбранной кампании; показы и статус не меняются." };
     case "rename_test_ad_group": return { risk: "low", expected_change: "Переименовать только test ad group." };
     case "rename_test_banner": return { risk: "low", expected_change: "Переименовать только test banner." };
     case "rename_test_segment": return { risk: "low", expected_change: "Переименовать только test-сегмент." };
@@ -740,7 +743,8 @@ async function captureWriteBefore(client: VkAdsClient, operation: TestWriteOpera
     case "delete_test_segment_relation": return client.getSegment(payload.segment_id as number);
     case "rename_test_ad_plan":
     case "delete_test_ad_plan": return client.getAdPlan(payload.ad_plan_id as number);
-    case "rename_test_campaign": return client.getCampaign(payload.campaign_id as number);
+    case "rename_test_campaign":
+    case "update_campaign_budget_limit_day": return client.getCampaign(payload.campaign_id as number);
     case "block_test_ad_plans": return { items: await Promise.all((payload.ad_plan_ids as number[]).map((id) => client.getAdPlan(id))) };
     case "block_test_ad_groups": return { items: await Promise.all((payload.ad_group_ids as number[]).map((id) => client.getAdGroup(id))) };
     case "block_test_banners": return { items: await Promise.all((payload.banner_ids as number[]).map((id) => client.getBanner(id))) };
@@ -838,7 +842,8 @@ async function captureWriteAfter(client: VkAdsClient, operation: TestWriteOperat
       case "manage_test_survey_forms_archive": return { reread: true, items: await Promise.all((payload.form_ids as number[]).map(async (id) => publicFormConfiguration(await client.getSurveyFormDetail(id)))) };
       case "rename_test_ad_plan":
       case "delete_test_ad_plan": return { reread: true, item: await client.getAdPlan(payload.ad_plan_id as number) };
-      case "rename_test_campaign": return { reread: true, item: await client.getCampaign(payload.campaign_id as number) };
+      case "rename_test_campaign":
+      case "update_campaign_budget_limit_day": return { reread: true, item: await client.getCampaign(payload.campaign_id as number) };
       case "block_test_ad_plans": return { reread: true, items: await Promise.all((payload.ad_plan_ids as number[]).map((id) => client.getAdPlan(id))) };
       case "block_test_ad_groups": return { reread: true, items: await Promise.all((payload.ad_group_ids as number[]).map((id) => client.getAdGroup(id))) };
       case "block_test_banners": return { reread: true, items: await Promise.all((payload.banner_ids as number[]).map((id) => client.getBanner(id))) };
@@ -2556,9 +2561,27 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       "vk_update_ad_plan", "Подготовить переименование test ad plan", "Подтверждён только rename существующего `__MCP_TEST__` ad plan; бюджеты и статусы не изменяются.", "rename_test_ad_plan",
       { ad_plan_id: z.number().int().positive(), name: z.string().min(1).max(120) },
     );
-    registerWritePreviewAlias(
-      "vk_update_campaign", "Подготовить переименование test campaign", "Подтверждён только rename существующей `__MCP_TEST__` campaign; статусы, бюджеты и существующие объекты без test-префикса заблокированы.", "rename_test_campaign",
-      { campaign_id: z.number().int().positive(), name: z.string().min(1).max(120) },
+    server.registerTool(
+      "vk_update_campaign",
+      {
+        title: "Подготовить изменение кампании",
+        description: "Изменяет название или `budget_limit_day` существующей кампании. Запись выполняется только через preview и одноразовое подтверждение.",
+        inputSchema: {
+          campaign_id: z.number().int().positive(),
+          name: z.string().min(1).max(120).optional(),
+          budget_limit_day: z.number().finite().positive().optional(),
+        },
+        outputSchema: previewOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      },
+      async ({ campaign_id, name, budget_limit_day }) => {
+        if ((name === undefined) === (budget_limit_day === undefined)) {
+          throw new Error("Укажите ровно одно поле: name или budget_limit_day.");
+        }
+        return name === undefined
+          ? prepareWritePreview("update_campaign_budget_limit_day", { campaign_id, budget_limit_day })
+          : prepareWritePreview("rename_test_campaign", { campaign_id, name });
+      },
     );
     registerWritePreviewAlias(
       "vk_delete_ad_plan", "Подготовить удаление test ad plan", "Только `__MCP_TEST__` ad plan; VK получает status=deleted.", "delete_test_ad_plan",
@@ -2896,6 +2919,11 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
           case "rename_test_campaign": {
             const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
             result = await client.renameTestCampaign(payload.campaign_id as number, payload.name as string);
+            break;
+          }
+          case "update_campaign_budget_limit_day": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.updateCampaignBudgetLimitDay(payload.campaign_id as number, payload.budget_limit_day as number);
             break;
           }
           case "rename_test_ad_group": {

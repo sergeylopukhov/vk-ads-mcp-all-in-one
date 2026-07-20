@@ -1315,6 +1315,25 @@ describe("VkAdsClient", () => {
     ]);
   });
 
+  it("изменяет дневной лимит существующей кампании через тот же endpoint", async () => {
+    const requests: Array<{ url: string; method: string; body: string | undefined }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method ?? "", body: typeof init?.body === "string" ? init.body : undefined });
+        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 12, budget_limit_day: 500 }), { status: 200 });
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    await expect(client.updateCampaignBudgetLimitDay(12, 750)).resolves.toEqual({});
+    expect(requests).toEqual([
+      { url: "https://ads.vk.com/api/v2/campaigns/12.json", method: "GET", body: undefined },
+      { url: "https://ads.vk.com/api/v2/campaigns/12.json", method: "POST", body: JSON.stringify({ budget_limit_day: 750 }) },
+    ]);
+  });
+
   it("переименовывает только существующий test banner через подтверждённый endpoint", async () => {
     const requests: Array<{ url: string; method: string; body: string | undefined }> = [];
     const client = new VkAdsClient({

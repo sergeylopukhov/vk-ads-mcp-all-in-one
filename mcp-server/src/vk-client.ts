@@ -1063,6 +1063,13 @@ export class VkAdsClient {
     return this.post(`/campaigns/${id}.json`, { name });
   }
 
+  /** Изменяет только дневной лимит конкретной существующей кампании. */
+  async updateCampaignBudgetLimitDay(id: number, budgetLimitDay: number): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.getCampaign(id);
+    return this.post(`/campaigns/${id}.json`, { budget_limit_day: budgetLimitDay });
+  }
+
   /** Используется только для изолированной очистки contract tests. */
   async deleteTestCampaign(id: number): Promise<VkObject> {
     this.assertPositiveId(id);
