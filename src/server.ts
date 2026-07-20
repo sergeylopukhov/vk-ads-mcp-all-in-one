@@ -4,7 +4,6 @@ import { z } from "zod";
 
 import { buildRecommendations, comparePeriods, detectAnomalies, diagnoseDelivery, findInefficientRows, rankRows, type AnalyticsRow } from "./analytics.js";
 import type { ServerMode } from "./config.js";
-import { CoreVkAuth, CoreVkClient } from "./core-vk.js";
 import { VkAdsOAuth } from "./vk-ads-oauth.js";
 import { statisticsToExportRows, toCsv, toXlsx, type ExportRow } from "./export.js";
 import { searchCatalog, toolCatalog } from "./tool-catalog.js";
@@ -87,8 +86,6 @@ const callableReadTools = [
   "vk_get_banner_fields",
   "vk_get_statistics",
   "vk_get_goal_statistics",
-  "vk_get_community_stats",
-  "vk_get_vk_groups",
   "vk_get_packages",
   "vk_get_package",
   "vk_get_package_fields",
@@ -1010,7 +1007,6 @@ async function callReadTool(
   client: VkAdsClient,
   toolName: (typeof callableReadTools)[number],
   args: Record<string, unknown>,
-  coreVkClient?: CoreVkClient,
 ): Promise<VkObject> {
   const page = () => z.object(pagingSchema).parse(args);
 
@@ -1080,22 +1076,6 @@ async function callReadTool(
       const { object_type, ids, date_from, date_to } = z.object(goalStatisticsInputSchema).parse(args);
       const statistics = await client.getGoalStatistics({ objectType: object_type, ids, dateFrom: date_from, dateTo: date_to });
       return { items: statistics.items, total: statistics.total };
-    }
-    case "vk_get_community_stats": {
-      if (!coreVkClient) throw new Error("Core VK не настроен. Добавьте VK_CORE_VK_CLIENT_ID и подключите аккаунт через vk_core_oauth_begin.");
-      const { group_id, date_from, date_to, interval, stats_groups } = z.object({
-        group_id: z.number().int().positive(),
-        date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-        date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-        interval: z.enum(["day", "week", "month", "all"]).default("day"),
-        stats_groups: z.array(z.enum(["visitors", "reach", "activity"])).min(1).max(3).optional(),
-      }).parse(args);
-      return { group_id, items: await coreVkClient.getCommunityStats({ groupId: group_id, interval, ...(date_from ? { dateFrom: date_from } : {}), ...(date_to ? { dateTo: date_to } : {}), ...(stats_groups ? { statsGroups: stats_groups } : {}) }) };
-    }
-    case "vk_get_vk_groups": {
-      if (!coreVkClient) throw new Error("Core VK не настроен. Добавьте VK_CORE_VK_CLIENT_ID и подключите аккаунт через vk_core_oauth_begin.");
-      const { offset, limit, filter } = z.object({ ...pagingSchema, filter: z.enum(["admin", "editor", "moder"]).default("admin") }).parse(args);
-      return coreVkClient.listManagedGroups({ offset, count: Math.min(limit, 200), filter });
     }
     case "vk_get_packages":
       return { items: await client.listPackages() };
@@ -1323,7 +1303,7 @@ async function callReadTool(
   }
 }
 
-export function createServer(client: VkAdsClient, mode: ServerMode, options: { uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowSharingKeyRevoke?: boolean; allowSkAdNetworkWrites?: boolean; skAdNetworkTestAppIds?: number[]; inAppEventTestAppIds?: number[]; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; remarketingCounterTestIds?: number[]; connectionId?: string; profileName?: string; coreVkAuth?: CoreVkAuth; coreVkClient?: CoreVkClient; vkAdsOAuth?: VkAdsOAuth } = {}): McpServer {
+export function createServer(client: VkAdsClient, mode: ServerMode, options: { uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowSharingKeyRevoke?: boolean; allowSkAdNetworkWrites?: boolean; skAdNetworkTestAppIds?: number[]; inAppEventTestAppIds?: number[]; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; remarketingCounterTestIds?: number[]; connectionId?: string; profileName?: string; vkAdsOAuth?: VkAdsOAuth } = {}): McpServer {
   const normalizeTestWritePayload = (operation: TestWriteOperation, payload: Record<string, unknown>, _legacyUploadDir?: string) => normalizeTestWritePayloadCore(
     operation,
     payload,
@@ -1336,7 +1316,6 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
   const writeGate = new WriteGate(mode === "write");
   const connectionId = options.connectionId ?? "default";
   const profileName = options.profileName ?? "default";
-  const coreVkAuth = options.coreVkAuth;
   const vkAdsOAuth = options.vkAdsOAuth;
   /** Только content, загруженный этим MCP после локальной проверки размеров. */
   const uploadedImages = new Map<number, KnownStaticImage>();
@@ -1407,42 +1386,6 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     async () => textAndData({ cancelled: vkAdsOAuth?.cancelAuthorization() ?? false }, "Ожидание подключения VK Ads отменено."),
-  );
-
-  server.registerTool(
-    "vk_core_oauth_status",
-    {
-      title: "Статус подключения Core VK",
-      description: "Read-only: показывает, настроено ли локальное подключение Core VK. Токены и ключи не возвращаются.",
-      outputSchema: { configured: z.boolean(), connected: z.boolean(), authorization_pending: z.boolean(), user_id: z.number().int().positive().optional(), access_token_expires_at: z.string().datetime().optional() },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
-    },
-    async () => textAndData(coreVkAuth ? { ...coreVkAuth.status() } : { configured: false, connected: false, authorization_pending: false }, "Статус Core VK получен."),
-  );
-
-  server.registerTool(
-    "vk_core_oauth_begin",
-    {
-      title: "Подключить Core VK",
-      description: "Открывает одноразовый PKCE OAuth-сеанс на http://localhost. Вернёт ссылку: откройте её в браузере, войдите в VK и подтвердите доступ. Токены сохраняются только в локальном secret store.",
-      outputSchema: { authorization_url: z.string().url(), redirect_uri: z.literal("http://localhost"), expires_at: z.string().datetime() },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-    },
-    async () => {
-      if (!coreVkAuth) throw new Error("Core VK client_id не настроен. Добавьте VK_CORE_VK_CLIENT_ID в конфигурацию запуска.");
-      return textAndData({ ...await coreVkAuth.beginAuthorization() }, "Откройте authorization_url в браузере и подтвердите доступ VK.");
-    },
-  );
-
-  server.registerTool(
-    "vk_core_oauth_cancel",
-    {
-      title: "Отменить подключение Core VK",
-      description: "Закрывает ожидающий локальный OAuth callback. Уже сохранённые токены и доступы VK не изменяет.",
-      outputSchema: { cancelled: z.boolean() },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-    },
-    async () => textAndData({ cancelled: coreVkAuth?.cancelAuthorization() ?? false }, "Ожидание подключения Core VK отменено."),
   );
 
   server.registerTool(
@@ -1809,7 +1752,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
     async ({ tool_name, arguments: args }) => textAndData(
-      { tool_name, data: await callReadTool(client, tool_name, args, options.coreVkClient) },
+      { tool_name, data: await callReadTool(client, tool_name, args) },
       "Read-only возможность VK Ads выполнена.",
     ),
   );
@@ -1828,7 +1771,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
         outputSchema: { data: z.record(z.string(), z.unknown()) },
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
-      async ({ arguments: args }) => textAndData({ data: await callReadTool(client, name, args, options.coreVkClient) }, "Read-only возможность VK Ads выполнена."),
+      async ({ arguments: args }) => textAndData({ data: await callReadTool(client, name, args) }, "Read-only возможность VK Ads выполнена."),
     );
   }
 

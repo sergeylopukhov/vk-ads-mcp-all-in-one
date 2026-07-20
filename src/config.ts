@@ -15,8 +15,6 @@ export interface AppConfig {
   /** Метка локального подключения; credential намеренно не выбирается произвольным ID из запроса MCP. */
   connectionId: string;
   secretStore: SecretStore;
-  /** Публичный идентификатор отдельного VK ID Web-приложения для Core VK API. */
-  coreVkClientId?: string;
   /** Credential приложения VK Ads; никогда не передаётся в MCP-ответы. */
   adsOAuthCredentials?: VkAdsOAuthCredentials;
   /** Фиксированный локальный callback, зарегистрированный для OAuth-клиента VK Ads. */
@@ -71,13 +69,6 @@ function parseProfileName(value: string | undefined): string {
   return profileName;
 }
 
-function parseCoreVkClientId(value: string | undefined): string | undefined {
-  if (!value?.trim()) return undefined;
-  const clientId = value.trim();
-  if (!/^\d{1,20}$/.test(clientId)) throw new Error("VK_CORE_VK_CLIENT_ID должен быть числовым ID приложения VK ID.");
-  return clientId;
-}
-
 function parseAdsOAuthRedirectUri(value: string | undefined): string {
   let uri: URL;
   try {
@@ -113,7 +104,6 @@ export function loadConfig(environment = process.env): AppConfig {
   const mode = environment.VK_ADS_MODE === "write" ? "write" : "readonly";
   const profileName = parseProfileName(environment.VK_ADS_PROFILE);
   const secretStore = createSecretStore(environment);
-  const coreVkClientId = parseCoreVkClientId(environment.VK_CORE_VK_CLIENT_ID);
   const adsOAuthRedirectUri = parseAdsOAuthRedirectUri(environment.VK_ADS_OAUTH_REDIRECT_URI);
   const environmentToken = environment.VK_ADS_TOKEN?.trim();
   const clientId = environment.VK_ADS_CLIENT_ID?.trim();
@@ -169,7 +159,6 @@ export function loadConfig(environment = process.env): AppConfig {
     profileName,
     connectionId: parseConnectionId(environment.VK_ADS_CONNECTION_ID ?? profileName),
     secretStore,
-    ...(coreVkClientId ? { coreVkClientId } : {}),
     ...(credentials ? { adsOAuthCredentials: credentials } : {}),
     adsOAuthRedirectUri,
     timeoutMs: parseTimeout(environment.VK_ADS_TIMEOUT_MS),

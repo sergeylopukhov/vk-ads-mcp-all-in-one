@@ -1,20 +1,12 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { loadConfig } from "./config.js";
-import { CoreVkAuth, CoreVkClient } from "./core-vk.js";
 import { createServer } from "./server.js";
 import { TokenRateLimiter } from "./rate-limiter.js";
 import { VkAdsOAuth } from "./vk-ads-oauth.js";
 import { VkAdsClient } from "./vk-client.js";
 
 const config = loadConfig();
-const coreVkAuth = new CoreVkAuth({
-  clientId: config.coreVkClientId,
-  profileName: config.profileName,
-  secretStore: config.secretStore,
-  timeoutMs: config.timeoutMs,
-});
-const coreVkClient = new CoreVkClient(coreVkAuth, config.timeoutMs);
 const vkAdsOAuth = new VkAdsOAuth({
   credentials: config.adsOAuthCredentials,
   redirectUri: config.adsOAuthRedirectUri,
@@ -44,8 +36,6 @@ const server = createServer(client, config.mode, {
   inAppEventTestAppIds: config.inAppEventTestAppIds,
   allowRemarketingCounterWrites: config.allowRemarketingCounterWrites,
   remarketingCounterTestIds: config.remarketingCounterTestIds,
-  coreVkAuth,
-  coreVkClient,
   vkAdsOAuth,
 });
 
