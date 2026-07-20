@@ -48,6 +48,7 @@ const server = createServer(client, config.mode, {
   inAppEventTestAppIds: config.inAppEventTestAppIds,
   allowRemarketingCounterWrites: config.allowRemarketingCounterWrites,
   remarketingCounterTestIds: config.remarketingCounterTestIds,
+  auditFile: config.auditFile,
 });
 
 await server.connect(new StdioServerTransport());

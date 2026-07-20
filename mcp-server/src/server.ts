@@ -5,7 +5,7 @@ import { z } from "zod";
 import { buildRecommendations, comparePeriods, detectAnomalies, diagnoseDelivery, findInefficientRows, rankRows, type AnalyticsRow } from "./analytics.js";
 import type { ServerMode } from "./config.js";
 import { statisticsToExportRows, toCsv, toXlsx, type ExportRow } from "./export.js";
-import { searchCatalog, toolCatalog } from "./tool-catalog.js";
+import { isExecutableTool, searchCatalog, toolCatalog } from "./tool-catalog.js";
 import { VERIFIED_AD_GROUP_FIELDS, VERIFIED_AD_PLAN_FIELDS, VERIFIED_BANNER_FIELDS, VkAdsApiError, VkAdsClient, type VkObject, type VkPagedResponse } from "./vk-client.js";
 import { WriteGate, type TestWriteOperation } from "./write-gate.js";
 import { validateHtml5Upload, validateImageUpload, validateLeadFormImageUpload, validateRemarketingUserListUpload, validateVideoUpload } from "./upload-policy.js";
@@ -68,7 +68,7 @@ const reachForecastInputSchema = {
   }).strict(),
 };
 
-const callableReadTools = [
+export const callableReadTools = [
   "vk_status",
   "vk_get_user",
   "vk_get_ad_plans",
@@ -1302,7 +1302,7 @@ async function callReadTool(
   }
 }
 
-export function createServer(client: VkAdsClient, mode: ServerMode, options: { uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowSharingKeyRevoke?: boolean; allowSkAdNetworkWrites?: boolean; skAdNetworkTestAppIds?: number[]; inAppEventTestAppIds?: number[]; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; remarketingCounterTestIds?: number[]; connectionId?: string; profileName?: string } = {}): McpServer {
+export function createServer(client: VkAdsClient, mode: ServerMode, options: { uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowSharingKeyRevoke?: boolean; allowSkAdNetworkWrites?: boolean; skAdNetworkTestAppIds?: number[]; inAppEventTestAppIds?: number[]; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; remarketingCounterTestIds?: number[]; connectionId?: string; profileName?: string; auditFile?: string } = {}): McpServer {
   const normalizeTestWritePayload = (operation: TestWriteOperation, payload: Record<string, unknown>, _legacyUploadDir?: string) => normalizeTestWritePayloadCore(
     operation,
     payload,
@@ -1312,7 +1312,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
     options.allowAgencyWrites,
   );
   const server = new McpServer({ name: "vk-ads-mcp", version: "0.1.0" });
-  const writeGate = new WriteGate(mode === "write");
+  const writeGate = new WriteGate(mode === "write", Date.now, randomUUID, options.auditFile);
   const connectionId = options.connectionId ?? "default";
   const profileName = options.profileName ?? "default";
   /** Только content, загруженный этим MCP после локальной проверки размеров. */
@@ -1344,7 +1344,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
         mode,
         api_base_url: "https://ads.vk.com/api/v2" as const,
         rate_limit: "Один последовательный API-запрос в секунду на локальный credential.",
-        catalog: { total: toolCatalog.length, executable: toolCatalog.filter((tool) => tool.implemented).length },
+        catalog: { total: toolCatalog.length, executable: toolCatalog.filter(isExecutableTool).length },
       },
       "Контекст VK Ads получен.",
     ),
@@ -1687,13 +1687,13 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       outputSchema: {
         total: z.number().int().nonnegative(),
         items: z.array(z.object({
-          name: z.string(), title: z.string(), category: z.string(), access: z.enum(["read", "write"]), implemented: z.boolean(),
+          name: z.string(), title: z.string(), category: z.string(), access: z.enum(["read", "write"]), status: z.enum(["planned", "implemented", "docs_verified", "live_read_verified", "live_write_verified"]),
         })),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
     async ({ query, category, include_planned }) => {
-      const items = searchCatalog(query, category).filter((tool) => include_planned || tool.implemented);
+      const items = searchCatalog(query, category).filter((tool) => include_planned || isExecutableTool(tool));
       return textAndData({ total: items.length, items }, "Каталог VK Ads найден.");
     },
   );

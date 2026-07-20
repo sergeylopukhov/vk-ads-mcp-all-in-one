@@ -9,8 +9,9 @@ coverage/
 AGENTS.md
 !mcp-server/AGENTS.md
 docs/
-scripts/
-test/
+/plan*.md
+/scripts/
+/test/
 CHANGELOG.md
 CONTRIBUTING.md
 plan-vk-mcp.md
@@ -25,6 +26,7 @@ secret.md
 .env.*
 !.env.example
 .envrc
+.vk-ads-audit.json
 .secrets/
 *.pem
 *.p12

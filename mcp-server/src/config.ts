@@ -41,6 +41,8 @@ export interface AppConfig {
   allowRemarketingCounterWrites: boolean;
   /** Только эти заранее подготовленные счётчики допустимы для test-write. */
   remarketingCounterTestIds: number[];
+  /** Локальный audit write-операций содержит только IDs, статусы и хеши. */
+  auditFile: string;
 }
 
 function parseTimeout(value: string | undefined): number {
@@ -110,5 +112,6 @@ export function loadConfig(environment = process.env): AppConfig {
     inAppEventTestAppIds: parsePositiveIds(environment.VK_ADS_TEST_MOBILE_APP_IDS, "VK_ADS_TEST_MOBILE_APP_IDS"),
     allowRemarketingCounterWrites: environment.VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES === "1",
     remarketingCounterTestIds: parsePositiveIds(environment.VK_ADS_TEST_COUNTER_IDS, "VK_ADS_TEST_COUNTER_IDS"),
+    auditFile: resolve(environment.VK_ADS_AUDIT_FILE ?? ".vk-ads-audit.json"),
   };
 }

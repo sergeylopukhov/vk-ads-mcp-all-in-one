@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 export type TestWriteOperation = "create_url" | "create_test_ad_plan" | "create_test_campaign" | "create_test_ad_group" | "create_test_banner" | "create_test_segment" | "rename_test_ad_plan" | "rename_test_campaign" | "rename_test_ad_group" | "rename_test_banner" | "rename_test_segment" | "rename_test_lead_form" | "rename_test_remarketing_counter" | "delete_test_remarketing_counter" | "update_test_counter_goal" | "update_test_inapp_event_category" | "update_test_pricelist" | "create_test_async_report" | "delete_test_async_report" | "block_test_ad_plans" | "block_test_ad_groups" | "block_test_banners" | "remoderate_test_banners" | "delete_test_ad_plan" | "delete_test_ad_group" | "delete_test_segment" | "add_test_segment_relation" | "delete_test_segment_relation" | "upload_static_image" | "upload_html5" | "upload_test_video" | "upload_lead_form_logo" | "create_test_offer_batch" | "export_leads" | "export_survey_respondents" | "upload_test_remarketing_user_list" | "rename_test_remarketing_user_list" | "delete_test_remarketing_user_list" | "connect_agency_client" | "create_test_local_geo" | "update_test_local_geo" | "delete_test_local_geo" | "copy_test_lead_form" | "copy_test_survey_form" | "manage_test_lead_forms_archive" | "manage_test_survey_forms_archive" | "send_test_lead" | "create_test_sharing_key" | "revoke_created_sharing_key" | "share_test_skadnetwork_ids" | "withdraw_test_skadnetwork_ids";
 
@@ -42,7 +44,10 @@ export class WriteGate {
     private readonly enabled: boolean,
     private readonly now: () => number = Date.now,
     private readonly createId: () => string = randomUUID,
-  ) {}
+    private readonly auditFile?: string,
+  ) {
+    this.loadAudit();
+  }
 
   prepare(operation: TestWriteOperation, payload: Record<string, unknown>, connectionId = "default"): WritePreview {
     if (!this.enabled) throw new Error("Операции записи отключены: запустите сервер с VK_ADS_MODE=write.");
@@ -70,6 +75,7 @@ export class WriteGate {
       completed_at: null,
       result_hash: null,
     });
+    this.persistAudit();
     return this.publicPreview(preview);
   }
 
@@ -97,6 +103,7 @@ export class WriteGate {
       result_hash: result === undefined ? null : createHash("sha256").update(canonicalize(result)).digest("hex"),
     };
     this.audit.set(preview.id, completed);
+    this.persistAudit();
     return completed;
   }
 
@@ -110,4 +117,43 @@ export class WriteGate {
     const { expiresAtMs: _expiresAtMs, consumed: _consumed, ...publicPreview } = preview;
     return publicPreview;
   }
+
+  private loadAudit(): void {
+    if (!this.auditFile) return;
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(this.auditFile, "utf8"));
+      if (!Array.isArray(parsed)) return;
+      for (const item of parsed) {
+        if (!isAuditEntry(item)) continue;
+        this.audit.set(item.id, item);
+      }
+    } catch (error: unknown) {
+      if (isMissingFileError(error)) return;
+      throw new Error("Не удалось прочитать локальный audit write-операций.");
+    }
+  }
+
+  private persistAudit(): void {
+    if (!this.auditFile) return;
+    mkdirSync(dirname(this.auditFile), { recursive: true });
+    const temporary = `${this.auditFile}.${process.pid}.tmp`;
+    writeFileSync(temporary, JSON.stringify([...this.audit.values()]), { encoding: "utf8", mode: 0o600 });
+    renameSync(temporary, this.auditFile);
+  }
+}
+
+function isMissingFileError(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function isAuditEntry(value: unknown): value is WriteAuditEntry {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Record<string, unknown>;
+  return typeof entry.id === "string"
+    && typeof entry.operation === "string"
+    && typeof entry.connection_id === "string"
+    && (entry.status === "prepared" || entry.status === "succeeded" || entry.status === "failed")
+    && typeof entry.prepared_at === "string"
+    && (entry.completed_at === null || typeof entry.completed_at === "string")
+    && (entry.result_hash === null || typeof entry.result_hash === "string");
 }

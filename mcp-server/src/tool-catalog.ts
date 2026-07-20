@@ -1,11 +1,12 @@
 export type ToolAccess = "read" | "write";
+export type ToolVerificationStatus = "planned" | "implemented" | "docs_verified" | "live_read_verified" | "live_write_verified";
 
 export interface CatalogTool {
   name: string;
   title: string;
   category: string;
   access: ToolAccess;
-  implemented: boolean;
+  status: ToolVerificationStatus;
 }
 
 const implemented = new Set([
@@ -18,7 +19,7 @@ const implemented = new Set([
   "vk_remoderate_banners",
   "vk_get_statistics", "vk_get_packages", "vk_get_currencies",
   "vk_get_ad_plan", "vk_get_campaign", "vk_get_ad_group", "vk_get_banner", "vk_get_urls", "vk_create_url", "vk_create_banner", "vk_get_banner_patterns", "vk_get_remarketing_counters",
-  "analytics_compare_periods", "analytics_rank_campaigns", "analytics_find_inefficient_campaigns", "analytics_recommendations", "vk_get_offline_conversions", "vk_get_realtime_stats",
+  "analytics_compare_periods", "analytics_rank_campaigns", "analytics_find_inefficient_campaigns", "analytics_recommendations", "analytics_anomalies", "analytics_delivery_issues", "vk_get_offline_conversions", "vk_get_realtime_stats",
   "vk_get_throttling", "vk_get_targetings_tree", "vk_get_pads_tree", "vk_get_mobile_categories", "vk_get_mobile_os", "vk_get_mobile_operators", "vk_get_mobile_types", "vk_get_mobile_vendors", "vk_get_inapp_events", "vk_get_inapp_stats", "vk_get_segments", "vk_get_segment", "vk_get_local_geos",
   "vk_get_remarketing_lists",
   "vk_get_inapp_event_categories", "vk_update_inapp_event_category", "vk_get_lead_forms",
@@ -35,7 +36,7 @@ const implemented = new Set([
   "agency_client_get", "agency_manager_client_get", "inapp_event_get", "subscription_details_get",
   "offer_batch_task_get",
   "vk_resolve_url",
-  "vk_get_goal_statistics",
+  "vk_get_goal_statistics", "vk_get_search_phrases",
   "vk_get_video_report",
   "vk_get_async_report", "vk_create_async_report", "vk_delete_async_report",
   "vk_manage_campaigns",
@@ -78,7 +79,7 @@ const definitions: Array<[string, string, string, ToolAccess]> = [
   ["vk_get_ad_groups", "Список групп", "Группы", "read"], ["vk_get_ad_group", "Группа по ID", "Группы", "read"], ["vk_create_ad_group", "Создать группу", "Группы", "write"], ["vk_update_ad_group", "Изменить группу", "Группы", "write"], ["vk_delete_ad_group", "Удалить test-группу", "Группы", "write"], ["vk_manage_ad_groups", "Массовое управление группами", "Группы", "write"],
   ["vk_get_banners", "Список объявлений", "Объявления", "read"], ["vk_get_banner", "Объявление по ID", "Объявления", "read"], ["vk_get_urls", "Ссылки по ID", "Объявления", "read"], ["vk_resolve_url", "Разобрать URL", "Объявления", "read"], ["vk_create_url", "Зарегистрировать URL", "Объявления", "write"], ["vk_create_banner", "Создать объявление", "Объявления", "write"], ["vk_update_banner", "Изменить объявление", "Объявления", "write"], ["vk_manage_banners", "Массовое управление объявлениями", "Объявления", "write"], ["vk_get_banner_patterns", "Шаблоны баннеров", "Объявления", "read"], ["vk_get_banner_fields", "Поля баннеров", "Объявления", "read"], ["vk_remoderate_banners", "Повторная модерация", "Объявления", "write"],
   ["vk_upload_image", "Загрузить изображение", "Контент", "write"], ["vk_upload_html5", "Загрузить HTML5-креатив", "Контент", "write"], ["vk_upload_video", "Загрузить видео", "Контент", "write"], ["vk_delete_async_report", "Удалить async-отчёт", "Отчёты", "write"],
-  ["vk_get_statistics", "Статистика", "Статистика", "read"], ["vk_get_goal_statistics", "Статистика целей", "Статистика", "read"], ["vk_get_video_report", "Видеоотчёт", "Статистика", "read"], ["vk_get_inapp_stats", "In-app статистика", "Статистика", "read"], ["vk_get_offline_conversions", "Офлайн-конверсии", "Статистика", "read"], ["vk_get_realtime_stats", "Realtime статистика", "Статистика", "read"],
+  ["vk_get_statistics", "Статистика", "Статистика", "read"], ["vk_get_goal_statistics", "Статистика целей", "Статистика", "read"], ["vk_get_search_phrases", "Поисковые фразы", "Статистика", "read"], ["vk_get_video_report", "Видеоотчёт", "Статистика", "read"], ["vk_get_inapp_stats", "In-app статистика", "Статистика", "read"], ["vk_get_offline_conversions", "Офлайн-конверсии", "Статистика", "read"], ["vk_get_realtime_stats", "Realtime статистика", "Статистика", "read"],
   ["vk_get_mobile_apps", "Мобильные приложения", "Mini Apps", "read"], ["vk_get_mobile_app_users", "Связанные мобильные приложения", "Mini Apps", "read"], ["vk_get_inapp_events", "In-app события", "Mini Apps", "read"], ["vk_get_inapp_event_categories", "Категории in-app", "Mini Apps", "read"], ["vk_update_inapp_event_category", "Изменить категорию in-app", "Mini Apps", "write"],
   ["vk_get_regions", "Регионы", "Справочники", "read"], ["vk_get_mobile_categories", "Категории приложений", "Справочники", "read"], ["vk_get_mobile_os", "ОС устройств", "Справочники", "read"], ["vk_get_mobile_operators", "Операторы", "Справочники", "read"], ["vk_get_mobile_types", "Типы устройств", "Справочники", "read"], ["vk_get_mobile_vendors", "Производители", "Справочники", "read"], ["vk_get_targetings_tree", "Дерево таргетингов", "Справочники", "read"],
   ["vk_get_remarketing_counters", "Счётчики ремаркетинга", "Аудитории", "read"], ["vk_get_remarketing_counter", "Счётчик по ID", "Аудитории", "read"], ["vk_create_remarketing_counter", "Создать счётчик", "Аудитории", "write"], ["vk_update_remarketing_counter", "Изменить счётчик", "Аудитории", "write"], ["vk_delete_remarketing_counter", "Удалить счётчик", "Аудитории", "write"], ["vk_get_counter_goals", "Цели счётчика", "Аудитории", "read"], ["vk_create_counter_goal", "Создать цель", "Аудитории", "write"], ["vk_update_counter_goal", "Изменить цель", "Аудитории", "write"], ["vk_get_goals", "Все цели", "Аудитории", "read"], ["vk_get_remarketing_lists", "Списки ремаркетинга", "Аудитории", "read"], ["vk_get_remarketing_list", "Список по ID", "Аудитории", "read"], ["vk_create_remarketing_list", "Создать список", "Аудитории", "write"], ["vk_update_remarketing_list", "Изменить список", "Аудитории", "write"], ["vk_delete_remarketing_list", "Удалить список", "Аудитории", "write"], ["vk_get_segments", "Сегменты", "Аудитории", "read"], ["vk_get_segment", "Сегмент по ID", "Аудитории", "read"], ["vk_create_segment", "Создать сегмент", "Аудитории", "write"], ["vk_update_segment", "Изменить сегмент", "Аудитории", "write"], ["vk_delete_segment", "Удалить сегмент", "Аудитории", "write"], ["vk_manage_segment_relations", "Связи сегмента", "Аудитории", "write"], ["vk_get_local_geos", "Локальные гео", "Аудитории", "read"], ["vk_manage_local_geo", "Управление локальным гео", "Аудитории", "write"],
@@ -93,14 +94,24 @@ const definitions: Array<[string, string, string, ToolAccess]> = [
   ["agency_client_get", "Клиент агентства", "Кабинеты", "read"], ["agency_manager_client_get", "Клиент менеджера", "Кабинеты", "read"], ["inapp_event_get", "In-app событие", "Mini Apps", "read"], ["subscription_details_get", "Подписка", "Кабинеты", "read"],
   ["offer_batch_task_get", "Batch-задачи офферов", "Контент", "read"],
   ["skadnetwork_ids_share", "Передать SKAdNetwork IDs", "Mini Apps", "write"], ["skadnetwork_ids_withdraw", "Вернуть SKAdNetwork IDs", "Mini Apps", "write"],
-  ["analytics_compare_periods", "Сравнение периодов", "Аналитика", "read"], ["analytics_rank_campaigns", "Рейтинг кампаний", "Аналитика", "read"], ["analytics_find_inefficient_campaigns", "Поиск неэффективных кампаний", "Аналитика", "read"], ["analytics_recommendations", "Рекомендации по оптимизации", "Аналитика", "read"], ["vk_get_pads_tree", "Дерево рекламных площадок", "Пакеты", "read"],
+  ["analytics_compare_periods", "Сравнение периодов", "Аналитика", "read"], ["analytics_rank_campaigns", "Рейтинг кампаний", "Аналитика", "read"], ["analytics_find_inefficient_campaigns", "Поиск неэффективных кампаний", "Аналитика", "read"], ["analytics_recommendations", "Рекомендации по оптимизации", "Аналитика", "read"], ["analytics_anomalies", "Поиск аномалий", "Аналитика", "read"], ["analytics_delivery_issues", "Диагностика delivery", "Аналитика", "read"], ["vk_get_pads_tree", "Дерево рекламных площадок", "Пакеты", "read"],
 ];
 
-export const toolCatalog: CatalogTool[] = definitions.map(([name, title, category, access]) => ({ name, title, category, access, implemented: implemented.has(name) }));
+export const toolCatalog: CatalogTool[] = definitions.map(([name, title, category, access]) => ({
+  name,
+  title,
+  category,
+  access,
+  status: implemented.has(name) ? "implemented" : "planned",
+}));
 
 if (new Set(toolCatalog.map((tool) => tool.name)).size !== toolCatalog.length) throw new Error("Каталог MCP содержит повторяющиеся имена инструментов.");
 
 export function searchCatalog(query: string, category?: string): CatalogTool[] {
   const normalized = query.trim().toLocaleLowerCase("ru");
   return toolCatalog.filter((tool) => (!category || tool.category === category) && (!normalized || `${tool.name} ${tool.title} ${tool.category}`.toLocaleLowerCase("ru").includes(normalized)));
+}
+
+export function isExecutableTool(tool: CatalogTool): boolean {
+  return tool.status !== "planned";
 }
