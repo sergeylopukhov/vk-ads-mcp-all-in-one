@@ -33,7 +33,7 @@
 ```bash
 curl -fL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -o vk-ads-mcp-0.1.0.zip
 unzip vk-ads-mcp-0.1.0.zip
-cd vk-ads-mcp-0.1.0
+cd vk-ads-mcp-0.1.0/mcp-server
 npm ci --omit=dev
 cp .env.example .env
 open -e .env
@@ -68,6 +68,7 @@ codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
 Invoke-WebRequest https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -OutFile vk-ads-mcp-0.1.0.zip
 Expand-Archive vk-ads-mcp-0.1.0.zip -DestinationPath .
 Set-Location .\vk-ads-mcp-0.1.0
+Set-Location .\mcp-server
 npm.cmd ci --omit=dev
 Copy-Item .env.example .env
 notepad .env
@@ -88,7 +89,7 @@ codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$($PWD.Path)\dist\ind
 
 ## Как хранится токен
 
-Токен лежит только в локальном файле `.env` рядом с `package.json`. Сервер загружает его сам при запуске. Файл `.env` исключён из Git, не попадает в архив релиза и не нужен в настройках MCP-клиента.
+Токен лежит только в локальном файле `mcp-server/.env` рядом с `package.json`. Сервер загружает его сам при запуске. Файл `.env` исключён из Git, не попадает в архив релиза и не нужен в настройках MCP-клиента.
 
 Чтобы заменить токен, откройте `.env`, измените значение `VK_ADS_TOKEN` и перезапустите клиент.
 
@@ -105,7 +106,7 @@ codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$($PWD.Path)\dist\ind
 
 ## Режим записи
 
-Для чтения ничего настраивать не нужно. Запись включается только при явном запуске:
+Для чтения ничего настраивать не нужно. Из папки `mcp-server` запись включается только при явном запуске:
 
 ```bash
 VK_ADS_MODE=write node dist/index.js
@@ -121,3 +122,7 @@ VK_ADS_MODE=write node dist/index.js
 Инструкции для других MCP-клиентов: [readme/setup-clients.md](readme/setup-clients.md). Короткая инструкция для Codex: [readme/setup-codex.md](readme/setup-codex.md).
 
 Лицензия: [MIT](LICENSE). Политика безопасности: [SECURITY.md](SECURITY.md).
+
+## Структура репозитория
+
+Весь код и конфигурация сервера находятся в [mcp-server](mcp-server): исходники, зависимости, `.env.example` и `AGENTS.md`. В корне остаются только описание, лицензия, безопасность и изображения для страницы репозитория.

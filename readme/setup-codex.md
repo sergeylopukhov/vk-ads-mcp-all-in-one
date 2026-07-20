@@ -7,7 +7,7 @@
 ```bash
 curl -fL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -o vk-ads-mcp-0.1.0.zip
 unzip vk-ads-mcp-0.1.0.zip
-cd vk-ads-mcp-0.1.0
+cd vk-ads-mcp-0.1.0/mcp-server
 npm ci --omit=dev
 cp .env.example .env
 open -e .env
@@ -36,6 +36,7 @@ codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
 Invoke-WebRequest https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -OutFile vk-ads-mcp-0.1.0.zip
 Expand-Archive vk-ads-mcp-0.1.0.zip -DestinationPath .
 Set-Location .\vk-ads-mcp-0.1.0
+Set-Location .\mcp-server
 npm.cmd ci --omit=dev
 Copy-Item .env.example .env
 notepad .env

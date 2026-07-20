@@ -7,6 +7,7 @@ coverage/
 .github/
 .project-questionnaire/
 AGENTS.md
+!mcp-server/AGENTS.md
 docs/
 scripts/
 test/
@@ -14,9 +15,9 @@ CHANGELOG.md
 CONTRIBUTING.md
 plan-vk-mcp.md
 new-instruments-plan.md
-vk-ads-api-docs-snapshot.json
-vk-ads-capability-matrix.md
-src/api-docs-inventory.ts
+mcp-server/vk-ads-api-docs-snapshot.json
+mcp-server/vk-ads-capability-matrix.md
+mcp-server/src/api-docs-inventory.ts
 
 # Учётные данные VK Ads никогда не входят в Git.
 secret.md

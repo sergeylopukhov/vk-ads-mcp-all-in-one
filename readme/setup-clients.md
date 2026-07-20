@@ -1,6 +1,6 @@
 # Подключение к MCP-клиентам
 
-Распакуйте релиз, перейдите в папку сервера и установите зависимости:
+Распакуйте релиз, перейдите в папку `mcp-server` и установите зависимости:
 
 ```bash
 npm ci --omit=dev
@@ -45,7 +45,7 @@ qwen mcp add vk-ads -e VK_ADS_PROFILE=default node "$(pwd)/dist/index.js"
   "mcpServers": {
     "vk-ads": {
       "command": "node",
-      "args": ["/полный/путь/vk-ads-mcp/dist/index.js"],
+      "args": ["/полный/путь/vk-ads-mcp/mcp-server/dist/index.js"],
       "env": { "VK_ADS_PROFILE": "default" },
       "enabled": true
     }
