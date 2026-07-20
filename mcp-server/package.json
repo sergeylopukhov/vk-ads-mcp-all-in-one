@@ -10,8 +10,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs",
-    "api:check": "npm run build && node scripts/check-api-contracts.mjs",
+    "test": "npm run build && node --test test/*.test.mjs && vitest run",
+    "api:check": "npm run build && node scripts/check-api-contracts.mjs && node scripts/check-vk-ads-api-docs.mjs",
     "repo:check": "node scripts/check-repository-boundaries.mjs",
     "start": "node dist/index.js"
   },
@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }

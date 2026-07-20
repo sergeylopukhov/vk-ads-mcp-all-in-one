@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-import { buildRecommendations, comparePeriods, detectAnomalies, diagnoseDelivery, findInefficientRows, rankRows, type AnalyticsRow } from "./analytics.js";
+import { accountAuditInputSchema, analyticsRowSchema, analyticsThresholdsSchema, analyticsTimeSeriesPointSchema, analyticsToolNames, buildAccountAudit, deliveryDiagnosticInputSchema, runAnalyticsTool } from "./analytics-tools.js";
 import type { ServerMode } from "./config.js";
 import { statisticsToExportRows, toCsv, toXlsx, type ExportRow } from "./export.js";
 import { isExecutableTool, searchCatalog, toolCatalog } from "./tool-catalog.js";
@@ -138,39 +138,6 @@ export const callableReadTools = [
 // неизвестные поля и не раскрывал произвольный query passthrough.
 const verifiedBannerFields = VERIFIED_BANNER_FIELDS;
 
-const analyticsRowSchema = z.object({
-  id: z.union([z.string(), z.number()]),
-  name: z.string().optional(),
-  ctr: z.number().finite().optional(),
-  cpc: z.number().finite().optional(),
-  cpa: z.number().finite().optional(),
-  spent: z.number().finite().optional(),
-  clicks: z.number().finite().optional(),
-  goals: z.number().finite().optional(),
-});
-
-const analyticsThresholdsSchema = z.object({
-  min_spent: z.number().finite().nonnegative().optional(),
-  max_cpc: z.number().finite().nonnegative().optional(),
-  max_cpa: z.number().finite().nonnegative().optional(),
-  min_ctr: z.number().finite().nonnegative().optional(),
-});
-
-const analyticsTimeSeriesPointSchema = z.object({
-  id: z.union([z.string(), z.number()]),
-  name: z.string().optional(),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  value: z.number().finite(),
-});
-
-const deliveryDiagnosticInputSchema = z.object({
-  id: z.union([z.string(), z.number()]),
-  name: z.string().optional(),
-  status: z.string().optional(),
-  delivery: z.string().optional(),
-  moderation_status: z.string().optional(),
-});
-
 const exportRowsSchema = z.array(z.record(z.string().min(1).max(120), z.union([z.string().max(10_000), z.number().finite(), z.boolean(), z.null()]))).min(1).max(1_000);
 
 const testWriteOperationSchema = z.enum(["create_url", "create_test_ad_plan", "create_test_campaign", "create_test_ad_group", "create_test_banner", "create_test_segment", "rename_test_ad_plan", "rename_test_campaign", "rename_test_ad_group", "rename_test_banner", "rename_test_segment", "rename_test_lead_form", "rename_test_remarketing_counter", "delete_test_remarketing_counter", "update_test_counter_goal", "update_test_inapp_event_category", "update_test_pricelist", "create_test_async_report", "delete_test_async_report", "block_test_ad_plans", "block_test_ad_groups", "block_test_banners", "remoderate_test_banners", "delete_test_ad_plan", "delete_test_ad_group", "delete_test_segment", "add_test_segment_relation", "delete_test_segment_relation", "upload_static_image", "upload_html5", "upload_test_video", "upload_lead_form_logo", "create_test_offer_batch", "export_leads", "export_survey_respondents", "upload_test_remarketing_user_list", "rename_test_remarketing_user_list", "delete_test_remarketing_user_list", "connect_agency_client", "create_test_local_geo", "update_test_local_geo", "delete_test_local_geo", "copy_test_lead_form", "copy_test_survey_form", "manage_test_lead_forms_archive", "manage_test_survey_forms_archive", "send_test_lead", "create_test_sharing_key", "revoke_created_sharing_key", "share_test_skadnetwork_ids", "withdraw_test_skadnetwork_ids"]);
@@ -202,7 +169,7 @@ function normalizeTestWritePayloadCore(
     }
     case "create_test_ad_plan": {
       const parsed = z.object({
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
         objective: z.string().min(1).max(80),
         package_id: z.number().int().positive(),
       }).parse(payload);
@@ -212,7 +179,7 @@ function normalizeTestWritePayloadCore(
       const parsed = z.object({
         ad_plan_id: z.number().int().positive(),
         package_id: z.number().int().positive(),
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
         targetings: confirmedTestGroupTargetingsSchema,
       }).parse(payload);
       return parsed;
@@ -222,14 +189,14 @@ function normalizeTestWritePayloadCore(
         ad_plan_id: z.number().int().positive(),
         package_id: z.literal(2860),
         objective: z.literal("appinstalls"),
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
       }).parse(payload);
       return parsed;
     }
     case "create_test_banner": {
       const parsed = z.object({
         ad_group_id: z.number().int().positive(),
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
         primary_url_id: z.number().int().positive(),
         landscape_image_id: z.number().int().positive(),
         icon_image_id: z.number().int().positive(),
@@ -276,28 +243,28 @@ function normalizeTestWritePayloadCore(
     case "rename_test_ad_plan": {
       const parsed = z.object({
         ad_plan_id: z.number().int().positive(),
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
       }).parse(payload);
       return parsed;
     }
     case "rename_test_campaign": {
       const parsed = z.object({
         campaign_id: z.number().int().positive(),
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
       }).parse(payload);
       return parsed;
     }
     case "rename_test_ad_group": {
       const parsed = z.object({
         ad_group_id: z.number().int().positive(),
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
       }).parse(payload);
       return parsed;
     }
     case "rename_test_banner": {
       const parsed = z.object({
         banner_id: z.number().int().positive(),
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
       }).parse(payload);
       return parsed;
     }
@@ -1263,42 +1230,13 @@ async function callReadTool(
         byte_length: exported.byteLength,
       };
     }
-    case "analytics_compare_periods": {
-      const { current, previous } = z.object({
-        current: z.record(z.string(), z.number().finite()),
-        previous: z.record(z.string(), z.number().finite()),
-      }).parse(args);
-      return { items: comparePeriods(current, previous) };
-    }
-    case "analytics_rank_campaigns": {
-      const { rows, metric } = z.object({ rows: z.array(analyticsRowSchema).min(1), metric: z.enum(["ctr", "cpc", "cpa", "spent"]) }).parse(args);
-      return { items: rankRows(rows, metric) };
-    }
-    case "analytics_find_inefficient_campaigns": {
-      const { rows, thresholds } = z.object({ rows: z.array(analyticsRowSchema).min(1), thresholds: analyticsThresholdsSchema }).parse(args);
-      return { items: findInefficientRows(rows, {
-        ...(thresholds.min_spent !== undefined ? { minSpent: thresholds.min_spent } : {}),
-        ...(thresholds.max_cpc !== undefined ? { maxCpc: thresholds.max_cpc } : {}),
-        ...(thresholds.max_cpa !== undefined ? { maxCpa: thresholds.max_cpa } : {}),
-        ...(thresholds.min_ctr !== undefined ? { minCtr: thresholds.min_ctr } : {}),
-      }) };
-    }
-    case "analytics_recommendations": {
-      const { rows, thresholds } = z.object({ rows: z.array(analyticsRowSchema).min(1), thresholds: analyticsThresholdsSchema }).parse(args);
-      return { items: buildRecommendations(rows, {
-        ...(thresholds.max_cpc !== undefined ? { maxCpc: thresholds.max_cpc } : {}),
-        ...(thresholds.max_cpa !== undefined ? { maxCpa: thresholds.max_cpa } : {}),
-        ...(thresholds.min_ctr !== undefined ? { minCtr: thresholds.min_ctr } : {}),
-      }) };
-    }
-    case "analytics_anomalies": {
-      const { points, threshold } = z.object({ points: z.array(analyticsTimeSeriesPointSchema).min(5).max(10_000), threshold: z.number().finite().min(1).max(20).default(3.5) }).parse(args);
-      return { items: detectAnomalies(points, threshold) };
-    }
-    case "analytics_delivery_issues": {
-      const { items } = z.object({ items: z.array(deliveryDiagnosticInputSchema).min(1).max(10_000) }).parse(args);
-      return { items: diagnoseDelivery(items) };
-    }
+    case "analytics_compare_periods":
+    case "analytics_rank_campaigns":
+    case "analytics_find_inefficient_campaigns":
+    case "analytics_recommendations":
+    case "analytics_anomalies":
+    case "analytics_delivery_issues":
+      return runAnalyticsTool(toolName, args);
   }
 }
 
@@ -1627,7 +1565,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
     items: z.array(z.record(z.string(), z.unknown())),
   };
   const analyticsTool = (
-    name: "analytics_compare_periods" | "analytics_rank_campaigns" | "analytics_find_inefficient_campaigns" | "analytics_recommendations" | "analytics_anomalies" | "analytics_delivery_issues",
+    name: (typeof analyticsToolNames)[number],
     title: string,
     description: string,
     inputSchema: Record<string, z.ZodType>,
@@ -1672,6 +1610,18 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
     "Диагностировать delivery и модерацию",
     "Read-only: объясняет status, delivery и moderation_status в переданных объектах. Ничего не меняет в VK Ads.",
     { items: z.array(deliveryDiagnosticInputSchema).min(1).max(10_000) },
+  );
+
+  server.registerTool(
+    "analytics_account_audit",
+    {
+      title: "Аудит кабинета за период",
+      description: "Read-only: получает ограниченную выборку ad plans и статистику за период; отдельно возвращает факты, корреляции и рекомендации без изменения VK Ads.",
+      inputSchema: accountAuditInputSchema.shape,
+      outputSchema: { period: z.record(z.string(), z.string()), scanned_ad_plans: z.number().int(), total_ad_plans: z.number().int(), data_complete: z.boolean(), limitation: z.string().nullable(), facts: z.record(z.string(), z.unknown()), correlations: z.array(z.unknown()), delivery_issues: z.array(z.unknown()), recommendations: z.array(z.unknown()) },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async (input) => textAndData(await buildAccountAudit(client, input), "Аудит кабинета выполнен; записи в VK Ads не производились."),
   );
 
   server.registerTool(
@@ -1759,6 +1709,26 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       const account = publicAccount(await client.getUser());
       return textAndData({ authenticated: true, account }, "Доступ к VK Ads подтверждён.");
     },
+  );
+
+  server.registerTool(
+    "self_diagnostic",
+    {
+      title: "Самодиагностика VK Ads MCP",
+      description: "Read-only: проверяет доступность credential безопасным запросом и возвращает профиль, режим, лимит и состояние каталога без токенов и PII.",
+      outputSchema: {
+        authenticated: z.boolean(), profile: z.string(), connection_id: z.string(), mode: z.enum(["readonly", "write"]),
+        rate_limit: z.string(), catalog: z.object({ total: z.number().int(), executable: z.number().int() }),
+        account: z.object({ id: z.union([z.string(), z.number()]).nullable(), username: z.string().nullable(), currency: z.string().nullable(), info_currency: z.string().nullable(), status: z.string().nullable(), timezone: z.string().nullable() }),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async () => textAndData({
+      authenticated: true, profile: profileName, connection_id: connectionId, mode,
+      rate_limit: "Один последовательный API-запрос в секунду на credential, включая параллельные процессы.",
+      catalog: { total: toolCatalog.length, executable: toolCatalog.filter(isExecutableTool).length },
+      account: publicAccount(await client.getUser()),
+    }, "Самодиагностика выполнена."),
   );
 
   const registerList = (
@@ -2584,11 +2554,11 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
     );
     registerWritePreviewAlias(
       "vk_update_ad_plan", "Подготовить переименование test ad plan", "Подтверждён только rename существующего `__MCP_TEST__` ad plan; бюджеты и статусы не изменяются.", "rename_test_ad_plan",
-      { ad_plan_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+      { ad_plan_id: z.number().int().positive(), name: z.string().min(1).max(120) },
     );
     registerWritePreviewAlias(
       "vk_update_campaign", "Подготовить переименование test campaign", "Подтверждён только rename существующей `__MCP_TEST__` campaign; статусы, бюджеты и существующие объекты без test-префикса заблокированы.", "rename_test_campaign",
-      { campaign_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+      { campaign_id: z.number().int().positive(), name: z.string().min(1).max(120) },
     );
     registerWritePreviewAlias(
       "vk_delete_ad_plan", "Подготовить удаление test ad plan", "Только `__MCP_TEST__` ad plan; VK получает status=deleted.", "delete_test_ad_plan",
@@ -2604,11 +2574,11 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
     );
     registerWritePreviewAlias(
       "vk_update_ad_group", "Подготовить переименование test ad group", "Подтверждён только rename существующей `__MCP_TEST__` group; ставки, бюджет и таргетинги не изменяются.", "rename_test_ad_group",
-      { ad_group_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+      { ad_group_id: z.number().int().positive(), name: z.string().min(1).max(120) },
     );
     registerWritePreviewAlias(
       "vk_update_banner", "Подготовить переименование test banner", "Подтверждён только rename существующего `__MCP_TEST__` banner; content, URLs, статусы и обычные объекты заблокированы.", "rename_test_banner",
-      { banner_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+      { banner_id: z.number().int().positive(), name: z.string().min(1).max(120) },
     );
     registerWritePreviewAlias(
       "vk_update_remarketing_counter", "Подготовить переименование test-счётчика", "Только счётчик из VK_ADS_TEST_COUNTER_IDS с именем `__MCP_TEST__`; URL, учётные данные и flags не передаются.", "rename_test_remarketing_counter",

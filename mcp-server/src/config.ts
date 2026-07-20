@@ -90,7 +90,7 @@ export function loadConfig(environment = process.env): AppConfig {
   }
   const clientCredentials = clientId && clientSecret ? { clientId, clientSecret } : undefined;
   if (!accessToken && !clientCredentials) {
-    throw new Error("Заполните в .env VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET. Токен сервер создаст сам.");
+    throw new Error("Создайте файл .env и заполните VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET. Токен сервер создаст сам.");
   }
 
   return {

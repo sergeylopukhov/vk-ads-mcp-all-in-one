@@ -19,7 +19,7 @@ const implemented = new Set([
   "vk_remoderate_banners",
   "vk_get_statistics", "vk_get_packages", "vk_get_currencies",
   "vk_get_ad_plan", "vk_get_campaign", "vk_get_ad_group", "vk_get_banner", "vk_get_urls", "vk_create_url", "vk_create_banner", "vk_get_banner_patterns", "vk_get_remarketing_counters",
-  "analytics_compare_periods", "analytics_rank_campaigns", "analytics_find_inefficient_campaigns", "analytics_recommendations", "analytics_anomalies", "analytics_delivery_issues", "vk_get_offline_conversions", "vk_get_realtime_stats",
+  "analytics_compare_periods", "analytics_rank_campaigns", "analytics_find_inefficient_campaigns", "analytics_recommendations", "analytics_anomalies", "analytics_delivery_issues", "analytics_account_audit", "vk_get_offline_conversions", "vk_get_realtime_stats",
   "vk_get_throttling", "vk_get_targetings_tree", "vk_get_pads_tree", "vk_get_mobile_categories", "vk_get_mobile_os", "vk_get_mobile_operators", "vk_get_mobile_types", "vk_get_mobile_vendors", "vk_get_inapp_events", "vk_get_inapp_stats", "vk_get_segments", "vk_get_segment", "vk_get_local_geos",
   "vk_get_remarketing_lists",
   "vk_get_inapp_event_categories", "vk_update_inapp_event_category", "vk_get_lead_forms",
@@ -94,7 +94,7 @@ const definitions: Array<[string, string, string, ToolAccess]> = [
   ["agency_client_get", "Клиент агентства", "Кабинеты", "read"], ["agency_manager_client_get", "Клиент менеджера", "Кабинеты", "read"], ["inapp_event_get", "In-app событие", "Mini Apps", "read"], ["subscription_details_get", "Подписка", "Кабинеты", "read"],
   ["offer_batch_task_get", "Batch-задачи офферов", "Контент", "read"],
   ["skadnetwork_ids_share", "Передать SKAdNetwork IDs", "Mini Apps", "write"], ["skadnetwork_ids_withdraw", "Вернуть SKAdNetwork IDs", "Mini Apps", "write"],
-  ["analytics_compare_periods", "Сравнение периодов", "Аналитика", "read"], ["analytics_rank_campaigns", "Рейтинг кампаний", "Аналитика", "read"], ["analytics_find_inefficient_campaigns", "Поиск неэффективных кампаний", "Аналитика", "read"], ["analytics_recommendations", "Рекомендации по оптимизации", "Аналитика", "read"], ["analytics_anomalies", "Поиск аномалий", "Аналитика", "read"], ["analytics_delivery_issues", "Диагностика delivery", "Аналитика", "read"], ["vk_get_pads_tree", "Дерево рекламных площадок", "Пакеты", "read"],
+  ["analytics_compare_periods", "Сравнение периодов", "Аналитика", "read"], ["analytics_rank_campaigns", "Рейтинг кампаний", "Аналитика", "read"], ["analytics_find_inefficient_campaigns", "Поиск неэффективных кампаний", "Аналитика", "read"], ["analytics_recommendations", "Рекомендации по оптимизации", "Аналитика", "read"], ["analytics_anomalies", "Поиск аномалий", "Аналитика", "read"], ["analytics_delivery_issues", "Диагностика delivery", "Аналитика", "read"], ["analytics_account_audit", "Аудит кабинета за период", "Аналитика", "read"], ["vk_get_pads_tree", "Дерево рекламных площадок", "Пакеты", "read"],
 ];
 
 export const toolCatalog: CatalogTool[] = definitions.map(([name, title, category, access]) => ({

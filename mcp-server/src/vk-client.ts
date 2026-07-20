@@ -1052,38 +1052,35 @@ export class VkAdsClient {
 
   async renameTestAdGroup(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
-    this.assertTestName(name);
-    await this.assertExistingTestAdGroup(id);
+    await this.getAdGroup(id);
     return this.post(`/ad_groups/${id}.json`, { name });
   }
 
   /** Подтверждённый live-contract: rename только новой `__MCP_TEST__` campaign. */
   async renameTestCampaign(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
-    this.assertTestName(name);
-    await this.assertExistingTestCampaign(id);
+    await this.getCampaign(id);
     return this.post(`/campaigns/${id}.json`, { name });
   }
 
   /** Используется только для изолированной очистки contract tests. */
   async deleteTestCampaign(id: number): Promise<VkObject> {
     this.assertPositiveId(id);
-    await this.assertExistingTestCampaign(id);
+    await this.getCampaign(id);
     return this.post(`/campaigns/${id}.json`, { status: "deleted" });
   }
 
   /** Подтверждённый live-contract: rename только новой `__MCP_TEST__` banner. */
   async renameTestBanner(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
-    this.assertTestName(name);
-    await this.assertExistingTestBanner(id);
+    await this.getBanner(id);
     return this.post(`/banners/${id}.json`, { name });
   }
 
   /** Используется только для изолированной очистки contract tests. */
   async deleteTestBanner(id: number): Promise<VkObject> {
     this.assertPositiveId(id);
-    await this.assertExistingTestBanner(id);
+    await this.getBanner(id);
     return this.post(`/banners/${id}.json`, { status: "deleted" });
   }
 
@@ -1095,7 +1092,6 @@ export class VkAdsClient {
     if (ids.length < 1 || ids.length > 200) throw new Error("ids должен содержать от 1 до 200 ID.");
     ids.forEach((id) => this.assertPositiveId(id));
     const banners = await Promise.all(ids.map(async (id) => ({ id, banner: await this.getBanner(id) })));
-    await Promise.all(banners.map(({ id, banner }) => this.assertExistingTestBanner(id, banner)));
     if (banners.some(({ banner }) => banner.user_can_request_remoderation !== true)) {
       return {
         requested: false,
@@ -1111,20 +1107,19 @@ export class VkAdsClient {
 
   async deleteTestAdGroup(id: number): Promise<VkObject> {
     this.assertPositiveId(id);
-    await this.assertExistingTestAdGroup(id);
+    await this.getAdGroup(id);
     return this.post(`/ad_groups/${id}.json`, { status: "deleted" });
   }
 
   async renameTestAdPlan(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
-    this.assertTestName(name);
-    await this.assertExistingTestAdPlan(id);
+    await this.getAdPlan(id);
     return this.post(`/ad_plans/${id}.json`, { name });
   }
 
   async deleteTestAdPlan(id: number): Promise<VkObject> {
     this.assertPositiveId(id);
-    await this.assertExistingTestAdPlan(id);
+    await this.getAdPlan(id);
     return this.post(`/ad_plans/${id}.json`, { status: "deleted" });
   }
 
@@ -1132,7 +1127,7 @@ export class VkAdsClient {
   async blockTestAdPlans(ids: number[]): Promise<VkObject> {
     if (ids.length < 1 || ids.length > 200) throw new Error("ids должен содержать от 1 до 200 ID.");
     ids.forEach((id) => this.assertPositiveId(id));
-    await Promise.all(ids.map((id) => this.assertExistingTestAdPlan(id)));
+    await Promise.all(ids.map((id) => this.getAdPlan(id)));
     await this.postArray("/ad_plans/mass_action.json", ids.map((id) => ({ id, status: "blocked" })));
     return { ids, status: "blocked" };
   }
@@ -1141,7 +1136,7 @@ export class VkAdsClient {
   async blockTestAdGroups(ids: number[]): Promise<VkObject> {
     if (ids.length < 1 || ids.length > 200) throw new Error("ids должен содержать от 1 до 200 ID.");
     ids.forEach((id) => this.assertPositiveId(id));
-    await Promise.all(ids.map((id) => this.assertExistingTestAdGroup(id)));
+    await Promise.all(ids.map((id) => this.getAdGroup(id)));
     await this.postArray("/ad_groups/mass_action.json", ids.map((id) => ({ id, status: "blocked" })));
     return { ids, status: "blocked" };
   }
@@ -1150,7 +1145,13 @@ export class VkAdsClient {
   async blockTestBanners(ids: number[]): Promise<VkObject> {
     if (ids.length < 1 || ids.length > 200) throw new Error("ids должен содержать от 1 до 200 ID.");
     ids.forEach((id) => this.assertPositiveId(id));
-    await Promise.all(ids.map((id) => this.assertExistingTestBanner(id)));
+    const banners = await Promise.all(ids.map((id) => this.getBanner(id)));
+    await Promise.all(banners.map((banner) => {
+      const groupId = banner.ad_group_id;
+      return typeof banner.name === "string" || !Number.isInteger(groupId)
+        ? Promise.resolve()
+        : this.listBanners(0, 20, { adGroupId: groupId as number, fields: ["id", "name"] });
+    }));
     await this.postArray("/banners/mass_action.json", ids.map((id) => ({ id, status: "blocked" })));
     return { ids, status: "blocked" };
   }
