@@ -119,4 +119,4 @@ VK_ADS_MODE=write node dist/index.js
 - не добавляйте их в Git, `.env` и MCP-конфигурацию;
 - храните загружаемые файлы в отдельной папке и указывайте её через `VK_ADS_UPLOAD_DIR`.
 
-Подробности: [SECURITY.md](SECURITY.md). Лицензия: [MIT](LICENSE).
+Подробности: [документация по безопасности](docs/SECURITY.md). Лицензия: [MIT](LICENSE).
