@@ -5,8 +5,7 @@
   "type": "module",
   "description": "Безопасный локальный MCP-сервер для VK Ads API v2",
   "bin": {
-    "vk-ads-mcp": "dist/index.js",
-    "vk-ads-core-oauth-helper": "dist/core-vk-redirect-helper.js"
+    "vk-ads-mcp": "dist/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

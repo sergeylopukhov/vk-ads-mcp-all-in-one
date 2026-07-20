@@ -1,0 +1,31 @@
+# Security
+
+## Secret Policy
+
+- Never place access tokens, refresh tokens, client secrets, secret-store passphrases, PII, production response bodies or callback credentials in source, tests, docs, logs or MCP client configuration.
+- `.env.example` is a variable reference only. Node.js does not load `.env` automatically.
+- Keep local secret files outside the repository. The repository ignore rules cover common secret-file patterns.
+
+## Profile And Network Boundaries
+
+- Profile and connection ID are fixed at process startup and cannot be supplied by a tool call.
+- The VK Ads client uses a fixed official base URL and path allowlists.
+- Advertising destinations must be public HTTPS domains without embedded credentials, IP addresses or localhost.
+- OAuth redirects accept only validated loopback URLs.
+
+## Mutation Controls
+
+- Startup is read-only unless `VK_ADS_MODE=write` is explicit.
+- Every registered write needs preflight, a short-lived preview and an exact one-time user confirmation.
+- Existing production objects are not a valid test target. Test operations require `__MCP_TEST__` naming and, where configured, explicit ID allowlists.
+- PII uploads, agency writes, sharing-key revocation, SKAdNetwork writes, in-app event category writes and counter writes use separate opt-ins.
+
+## File Upload Controls
+
+- Files must resolve under an approved local upload root and be regular files.
+- Image, MP4 and HTML5 ZIP content is checked for signature, size and structural constraints before preview.
+- Remarketing user lists use a separate PII root and are validated without returning or logging contact content.
+
+## Incident Handling
+
+If a credential leaks, revoke it in VK first. Do not paste it into an issue or chat. Report security issues using the public contact in the repository-level `SECURITY.md`.
