@@ -12,15 +12,14 @@
 
 - The server accepts only a personal VK Ads access token.
 - OAuth, application credentials and browser callbacks are intentionally not part of the project.
-- The personal access token is persisted only through the selected local secret store.
+- The personal access token is stored only in the local `.env` file beside `package.json`.
 
-## Local Credential Storage
+## Local Token File
 
-- macOS defaults to Keychain.
-- Windows and Linux require the encrypted-file mode for persistent storage.
-- The encrypted store uses AES-256-GCM with an scrypt-derived key and is written atomically with restrictive file permissions.
-- A profile prefixes stored credential keys, so credentials are not selected by arbitrary MCP input.
+- Copy `.env.example` to `.env` and enter the token after `VK_ADS_TOKEN=`.
+- The same workflow works on macOS, Windows and Linux.
+- `.env` stays local and is ignored by Git.
 
 ## MCP Clients
 
-The public README documents supported local stdio clients. Each client must start the local Node.js process with an absolute path to `dist/index.js`; no client configuration should contain an access token or secret-store passphrase.
+The public README documents supported local stdio clients. Each client must start the local Node.js process with an absolute path to `dist/index.js`; no client configuration should contain an access token.

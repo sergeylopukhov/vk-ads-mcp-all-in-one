@@ -1,9 +1,16 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { config as loadDotenv } from "dotenv";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { loadConfig } from "./config.js";
 import { createServer } from "./server.js";
 import { TokenRateLimiter } from "./rate-limiter.js";
 import { VkAdsClient } from "./vk-client.js";
+
+/** .env лежит рядом с package.json, независимо от текущей папки MCP-клиента. */
+const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+loadDotenv({ path: resolve(packageDirectory, ".env"), override: false, quiet: true });
 
 const config = loadConfig();
 // Лимит действует на все read-запросы одного локального подключения, включая повтор после 401.

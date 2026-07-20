@@ -11,17 +11,16 @@ cd vk-ads-mcp-0.1.0
 npm ci --omit=dev
 ```
 
-## 2. Сохраните токен
+## 2. Добавьте токен в `.env`
 
 Создайте личный токен в настройках API VK Ads для нужного кабинета. Затем выполните:
 
 ```bash
-read -s "VK_ADS_TOKEN?Вставьте токен VK Ads и нажмите Enter: "
-security add-generic-password -U -a default -s vk-ads-mcp -w "$VK_ADS_TOKEN"
-unset VK_ADS_TOKEN
+cp .env.example .env
+open -e .env
 ```
 
-Токен сохранится в Keychain и не попадёт в Git или настройки Codex.
+В открывшемся файле вставьте токен после `VK_ADS_TOKEN=` и сохраните его. Файл `.env` не попадает в Git.
 
 ## 3. Добавьте сервер в Codex
 

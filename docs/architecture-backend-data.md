@@ -6,7 +6,7 @@
 
 - `AppConfig` fixes the profile, connection identifier, timeout, mode and opt-in switches at startup.
 - `VkAdsClient` uses the selected token provider and endpoint allowlists.
-- `TokenRateLimiter` serializes requests for the local credential at a minimum one-second interval.
+- `TokenRateLimiter` serializes requests for the local token at a minimum one-second interval.
 - `createServer()` receives these dependencies and exposes the MCP surface.
 
 The MCP request cannot switch profile, credential, API host or local upload root. Start another server process for another profile.
@@ -19,7 +19,7 @@ The main VK Ads hierarchy is `ad_plans → ad_groups → banners`. The server al
 
 ### Local State
 
-- Secret storage contains tokens and client credentials outside the repository.
+- The local `.env` file contains the personal token and is excluded from the repository.
 - Write previews, write audit metadata and uploaded-file metadata live only in the current process.
 - A preview expires after ten minutes and is single-use.
 - CSV and XLSX exports are generated in memory; they are not written to the project directory.

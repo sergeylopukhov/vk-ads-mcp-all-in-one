@@ -2,7 +2,7 @@
 
 ## Runtime Model
 
-This package is a local stdio MCP server. It is installed and started on the same machine that owns the local credential store. It does not expose a hosted HTTP service.
+This package is a local stdio MCP server. It is installed and started on the same machine that contains its local `.env` file. It does not expose a hosted HTTP service.
 
 ## Requirements And Build
 
@@ -15,7 +15,7 @@ This package is a local stdio MCP server. It is installed and started on the sam
 
 - Select an account namespace with `VK_ADS_PROFILE`; the default is `default`.
 - Keep `VK_ADS_MODE=readonly` unless an isolated test write is intentional.
-- Persist the personal VK Ads token through the supported local secret store, never through repository files or committed client configuration.
+- Store the personal VK Ads token only in the local `.env` file beside `package.json`; it is excluded from Git and must not be added to MCP client configuration.
 - Use an absolute path for `VK_ADS_UPLOAD_DIR` before any media upload capability is available.
 
 ## Client Connection
@@ -32,5 +32,5 @@ Public client-specific instructions live in `README.md` and `readme/setup-client
 ## Recovery
 
 - For a failed local build, remove only generated `dist/`, reinstall dependencies and rebuild.
-- For a credential problem, repair or rotate the provider credential in its local secret store; do not place a replacement in the repository.
+- For a credential problem, rotate the token in the local `.env` file; do not place a replacement in the repository.
 - For an unintended write attempt, inspect the process-local write audit while the server is running and re-read the affected provider object before any further action.

@@ -1354,7 +1354,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
     "account_profile_get",
     {
       title: "Активный профиль VK Ads",
-      description: "Read-only: возвращает профиль, выбранный при запуске. Не раскрывает Keychain account, токен или client secret и не переключает credential во время MCP-сеанса.",
+      description: "Read-only: возвращает профиль, выбранный при запуске. Не раскрывает токен или client secret и не переключает подключение во время MCP-сеанса.",
       outputSchema: { profile: z.string(), connection_id: z.string(), selection: z.literal("startup_configuration") },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },

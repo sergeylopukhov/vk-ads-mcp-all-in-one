@@ -50,19 +50,30 @@ npm ci --omit=dev
 
 В результате появится готовая папка `vk-ads-mcp-0.1.0`. Не удаляйте и не перемещайте её после подключения к Codex.
 
-### Шаг 2. Сохраните личный токен VK Ads
+### Шаг 2. Добавьте токен в `.env`
 
-Токен — это ключ к вашему рекламному кабинету. Если он уже есть, переходите к командам ниже. Если нет — создайте личный токен в настройках API VK Ads с доступом к нужному кабинету.
+Токен — это ключ к рекламному кабинету. Если его ещё нет, создайте личный токен в настройках API VK Ads с доступом к нужному кабинету.
 
 В той же папке выполните:
 
 ```bash
-read -s "VK_ADS_TOKEN?Вставьте токен VK Ads и нажмите Enter: "
-security add-generic-password -U -a default -s vk-ads-mcp -w "$VK_ADS_TOKEN"
-unset VK_ADS_TOKEN
+cp .env.example .env
+open -e .env
 ```
 
-Когда будете вставлять токен, символы в терминале не появятся — это нормально. После Enter токен сохранится в macOS Keychain. В Git, `.env` и настройках Codex его не будет.
+Откроется обычный текстовый файл. Найдите строку:
+
+```text
+VK_ADS_TOKEN=
+```
+
+Вставьте токен сразу после знака `=` и сохраните файл. Должно получиться так:
+
+```text
+VK_ADS_TOKEN=ваш_личный_токен_из_VK_Ads
+```
+
+Файл `.env` лежит только на вашем компьютере и уже исключён из Git. Не отправляйте его другим людям и не публикуйте.
 
 ### Шаг 3. Подключите сервер к Codex
 
@@ -87,9 +98,31 @@ codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
 
 ### Если возникла ошибка
 
-- «Токен VK Ads не найден» — повторите шаг 2, затем перезапустите Codex.
+- «Токен VK Ads не найден» — проверьте, что файл называется именно `.env`, лежит рядом с `package.json` и содержит строку `VK_ADS_TOKEN=...`.
 - Ошибка `403` — токен не имеет доступа к выбранному рекламному кабинету; создайте новый токен в VK Ads для этого кабинета.
-- Хотите заменить токен — просто повторите шаг 2: Keychain перезапишет старое значение.
+- Хотите заменить токен — откройте `.env`, замените значение после `VK_ADS_TOKEN=` и перезапустите Codex.
+
+### Установка на Windows
+
+Откройте PowerShell и выполните:
+
+```powershell
+Invoke-WebRequest https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -OutFile vk-ads-mcp-0.1.0.zip
+Expand-Archive vk-ads-mcp-0.1.0.zip -DestinationPath .
+Set-Location .\vk-ads-mcp-0.1.0
+npm.cmd ci --omit=dev
+Copy-Item .env.example .env
+notepad .env
+```
+
+В Блокноте вставьте личный токен после `VK_ADS_TOKEN=` и сохраните файл. Затем подключите сервер:
+
+```powershell
+codex mcp remove vk-ads
+codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$pwd\dist\index.js"
+```
+
+Перезапустите Codex и выполните проверочный запрос из шага 4.
 
 Инструкции для других MCP-клиентов: [readme/setup-clients.md](readme/setup-clients.md). Отдельная краткая версия для Codex: [readme/setup-codex.md](readme/setup-codex.md).
 
@@ -116,8 +149,8 @@ VK_ADS_MODE=write node dist/index.js
 
 ## Безопасность
 
-- не публикуйте токены, пароль хранилища и персональные данные;
-- не добавляйте их в Git, `.env` и MCP-конфигурацию;
+- не публикуйте токены и персональные данные;
+- не добавляйте `.env` в Git или MCP-конфигурацию;
 - храните загружаемые файлы в отдельной папке и указывайте её через `VK_ADS_UPLOAD_DIR`.
 
 Подробности: [документация по безопасности](docs/SECURITY.md). Лицензия: [MIT](LICENSE).

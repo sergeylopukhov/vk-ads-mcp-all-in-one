@@ -2,9 +2,9 @@
 
 ## Secret Policy
 
-- Never place access tokens, secret-store passphrases, PII or production response bodies in source, tests, docs, logs or MCP client configuration.
-- `.env.example` is a variable reference only. Node.js does not load `.env` automatically.
-- Keep local secret files outside the repository. The repository ignore rules cover common secret-file patterns.
+- Never place access tokens, PII or production response bodies in source, tests, docs, logs or MCP client configuration.
+- The server reads the personal VK Ads token from the local `.env` file beside `package.json`.
+- Keep `.env` out of screenshots, archives and version control. The repository ignore rules cover it.
 
 ## Profile And Network Boundaries
 

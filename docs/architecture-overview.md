@@ -7,7 +7,7 @@
 - MCP SDK: `@modelcontextprotocol/sdk` over stdio.
 - Validation: Zod.
 - Build: TypeScript compiler via `npm run build`.
-- Persistence: no application database. Credentials are held outside the repository in a platform keychain or encrypted local file.
+- Persistence: no application database. The personal token is read from a local `.env` file outside version control.
 
 ## Repository Layout
 
@@ -15,7 +15,6 @@
 - `src/server.ts`: MCP tool registration, read aliases, write previews and execution wiring.
 - `src/vk-client.ts`: fixed-host VK Ads HTTP client, endpoint allowlists and response handling.
 - `src/config.ts`: environment parsing, profile isolation and personal-token lookup.
-- `src/secret-store.ts`: macOS Keychain and AES-256-GCM encrypted-file storage.
 - `src/write-gate.ts`, `src/write-preflight.ts`, `src/banner-preflight.ts`: explicit write confirmation and local validation.
 - `src/upload-policy.ts` and `src/destination-policy.ts`: upload-root, media-format and advertising-destination constraints.
 - `src/analytics.ts` and `src/export.ts`: local analysis and in-memory CSV/XLSX generation.
@@ -25,7 +24,7 @@
 ## Runtime Shape
 
 1. `index.ts` loads a fixed local profile and starts one MCP server over stdio.
-2. Configuration constructs secret storage, a one-request-per-second rate limiter and the VK Ads client.
+2. Configuration reads the local `.env` file, then constructs a one-request-per-second rate limiter and the VK Ads client.
 3. `createServer()` registers read-only tools unconditionally and write tools only when `VK_ADS_MODE=write`.
 4. MCP calls pass through schemas and allowlisted client methods; the caller cannot provide an arbitrary API host or raw request path.
 5. Writes require preflight, a short-lived preview, an exact one-time confirmation and a result re-read where the operation supports it.
