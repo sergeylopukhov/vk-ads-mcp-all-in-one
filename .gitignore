@@ -1,0 +1,32 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+
+# В GitHub попадает только код и файлы, нужные для сборки и запуска MCP.
+.github/
+.project-questionnaire/
+docs/
+scripts/
+test/
+AGENTS.md
+CHANGELOG.md
+CONTRIBUTING.md
+NOTICE.md
+SECURITY.md
+plan-vk-mcp.md
+new-instruments-plan.md
+vk-ads-api-docs-snapshot.json
+vk-ads-capability-matrix.md
+src/api-docs-inventory.ts
+
+# Учётные данные VK Ads никогда не входят в Git.
+secret.md
+.env
+.env.*
+!.env.example
+.envrc
+.secrets/
+*.pem
+*.p12
+*.pfx

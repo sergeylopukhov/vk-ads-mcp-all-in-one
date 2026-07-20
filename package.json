@@ -1,0 +1,26 @@
+{
+  "name": "vk-ads-mcp-all-in-one",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Безопасный локальный MCP-сервер для VK Ads API v2",
+  "bin": {
+    "vk-ads-mcp": "dist/index.js",
+    "vk-ads-core-oauth-helper": "dist/core-vk-redirect-helper.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
+  }
+}
