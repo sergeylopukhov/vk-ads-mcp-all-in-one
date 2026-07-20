@@ -1,45 +1,41 @@
 # Подключение к Codex
 
-## 1. Соберите сервер
+Нужны Node.js 20 или новее и личный токен VK Ads.
+
+## 1. Установите сервер
 
 ```bash
-git clone https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one.git vk-ads-mcp
-cd vk-ads-mcp
-npm ci
-npm run build
+curl -fL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -o vk-ads-mcp-0.1.0.zip
+unzip vk-ads-mcp-0.1.0.zip
+cd vk-ads-mcp-0.1.0
+npm ci --omit=dev
 ```
 
-Нужен Node.js 20 или новее.
+## 2. Сохраните токен
 
-## 2. Добавьте сервер
-
-Выполните из папки проекта:
+Создайте личный токен в настройках API VK Ads для нужного кабинета. Затем выполните:
 
 ```bash
-codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
-codex mcp list
-```
-
-Не передавайте токен и пароль хранилища в `codex mcp add`.
-
-## 3. Сохраните личный токен VK Ads
-
-В VK Ads откройте настройки API и создайте личный токен для нужного кабинета. На macOS сохраните его в Keychain:
-
-```bash
-read -s "VK_ADS_TOKEN?Токен VK Ads: "
+read -s "VK_ADS_TOKEN?Вставьте токен VK Ads и нажмите Enter: "
 security add-generic-password -U -a default -s vk-ads-mcp -w "$VK_ADS_TOKEN"
 unset VK_ADS_TOKEN
 ```
 
-Токен не добавляйте в Git, `.env` и настройки Codex.
+Токен сохранится в Keychain и не попадёт в Git или настройки Codex.
+
+## 3. Добавьте сервер в Codex
+
+```bash
+codex mcp remove vk-ads
+codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
+```
 
 ## 4. Проверьте доступ
 
-Откройте Codex и отправьте:
+Перезапустите Codex и отправьте:
 
 ```text
 Покажи контекст подключения VK Ads и доступные рекламные планы. Ничего не меняй.
 ```
 
-Подробнее: [README](../README.md#быстрый-старт).
+Полная инструкция и решение частых ошибок: [README](../README.md#установка-в-codex-на-macos).
