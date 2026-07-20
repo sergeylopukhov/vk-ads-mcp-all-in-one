@@ -34,6 +34,28 @@ npm ci
 npm run build
 ```
 
+### Установка из ZIP-архива
+
+Архив релиза содержит уже собранную папку `dist`. Node.js 20 или новее всё равно нужен.
+
+macOS:
+
+```bash
+curl -fL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -o vk-ads-mcp-0.1.0.zip
+unzip vk-ads-mcp-0.1.0.zip
+cd vk-ads-mcp-0.1.0
+npm ci --omit=dev
+```
+
+Windows PowerShell:
+
+```powershell
+Invoke-WebRequest https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -OutFile vk-ads-mcp-0.1.0.zip
+Expand-Archive vk-ads-mcp-0.1.0.zip -DestinationPath .
+Set-Location .\vk-ads-mcp-0.1.0
+npm.cmd ci --omit=dev
+```
+
 ## Подключение к AI-клиенту
 
 В клиенте укажите команду `node`, абсолютный путь к `dist/index.js` и профиль. Большинство клиентов с JSON-настройками используют такую форму:
@@ -99,7 +121,7 @@ security add-generic-password -U -a default -s vk-ads-mcp -w "$VK_ADS_TOKEN"
 Для каждого кабинета используйте отдельный профиль:
 
 ```bash
-VK_ADS_PROFILE=agency_a VK_ADS_CONNECTION_ID=agency-a npm run dev
+VK_ADS_PROFILE=agency_a VK_ADS_CONNECTION_ID=agency-a node dist/index.js
 ```
 
 Секреты получат префикс `agency_a:`. Во время MCP-сеанса нельзя подменить профиль или учётные данные параметрами инструмента.
@@ -111,7 +133,7 @@ VK_ADS_PROFILE=agency_a VK_ADS_CONNECTION_ID=agency-a npm run dev
 Этот сценарий требует заранее настроенного приложения VK Ads: его `client_id`, секрет приложения и адрес обратного вызова должны быть зарегистрированы у VK. По умолчанию сервер использует `http://127.0.0.1:39874/`. Разрешены только `localhost`, `127.0.0.1` и `::1` с непривилегированным портом.
 
 ```bash
-VK_ADS_OAUTH_REDIRECT_URI=http://127.0.0.1:39874/ npm run dev
+VK_ADS_OAUTH_REDIRECT_URI=http://127.0.0.1:39874/ node dist/index.js
 ```
 
 ## Сообщества VK
