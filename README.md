@@ -54,6 +54,8 @@ npm run build
 
 Путь к `dist/index.js` должен быть абсолютным. Не добавляйте в конфигурацию клиента токен, секрет приложения или пароль от хранилища секретов.
 
+Подробные команды для Codex, Claude Code, Gemini CLI, Qwen Code и Kimi Code CLI: [docs/setup-clients.md](docs/setup-clients.md). Отдельная инструкция для Codex: [docs/setup-codex.md](docs/setup-codex.md).
+
 После подключения начните с запроса:
 
 ```text
@@ -157,4 +159,4 @@ VK_ADS_MODE=write VK_ADS_UPLOAD_DIR=/абсолютный/путь/к/upload nod
 
 ## Лицензия
 
-Проект распространяется по [лицензии MIT](LICENSE).
+Проект распространяется по [лицензии MIT](LICENSE). Атрибуция изученных открытых репозиториев приведена в [NOTICE.md](NOTICE.md).

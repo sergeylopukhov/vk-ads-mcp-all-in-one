@@ -6,14 +6,10 @@ coverage/
 # В GitHub попадает только код и файлы, нужные для сборки и запуска MCP.
 .github/
 .project-questionnaire/
-docs/
 scripts/
 test/
-AGENTS.md
 CHANGELOG.md
 CONTRIBUTING.md
-NOTICE.md
-SECURITY.md
 plan-vk-mcp.md
 new-instruments-plan.md
 vk-ads-api-docs-snapshot.json
