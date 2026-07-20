@@ -119,7 +119,7 @@ notepad .env
 
 ```powershell
 codex mcp remove vk-ads
-codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$pwd\dist\index.js"
+codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$($PWD.Path)\dist\index.js"
 ```
 
 Перезапустите Codex и выполните проверочный запрос из шага 4.
