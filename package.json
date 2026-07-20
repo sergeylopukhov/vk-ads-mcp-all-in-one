@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Безопасный локальный MCP-сервер для VK Ads API v2",
+  "description": "Локальный MCP-сервер для анализа и безопасной работы с VK Ads",
   "bin": {
     "vk-ads-mcp": "dist/index.js"
   },
