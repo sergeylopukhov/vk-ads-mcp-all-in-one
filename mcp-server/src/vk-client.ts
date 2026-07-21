@@ -67,6 +67,27 @@ export class VkAdsApiError extends Error {
   }
 }
 
+/** Провайдерские тексты и значения полей могут быть чувствительными: оставляем только машинный код и имена полей. */
+async function safeProviderErrorMessage(response: Response): Promise<string> {
+  const base = `VK Ads API вернул HTTP ${response.status}.`;
+  try {
+    const payload: unknown = await response.json();
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return base;
+    const error = (payload as VkObject).error;
+    if (typeof error !== "object" || error === null || Array.isArray(error)) return base;
+    const rawCode = (error as VkObject).code;
+    const code = typeof rawCode === "string" && /^[a-z0-9_]{1,64}$/i.test(rawCode) ? rawCode : undefined;
+    const fields = (error as VkObject).fields;
+    const fieldNames = typeof fields === "object" && fields !== null && !Array.isArray(fields)
+      ? Object.keys(fields as VkObject).filter((field) => /^[a-z0-9_]{1,64}$/i.test(field)).slice(0, 8)
+      : [];
+    const detail = [code, fieldNames.length ? `поля: ${fieldNames.join(", ")}` : undefined].filter(Boolean).join("; ");
+    return detail ? `${base} Диагностика: ${detail}.` : base;
+  } catch {
+    return base;
+  }
+}
+
 const allowedPaths = new Set([
   "/user.json",
   "/ad_plans.json",
@@ -79,6 +100,7 @@ const allowedPaths = new Set([
   "/packages.json",
   "/currencies.json",
   "/remarketing/counters.json",
+  "/remarketing/users_lists.json",
   "/remarketing/inapp_events.json",
   "/remarketing/offline_goals.json",
   "/remarketing/pricelists.json",
@@ -110,9 +132,12 @@ const urlDetailPath = /^\/urls\/\d+(?:,\d+)*\.json$/;
 const segmentDetailPath = /^\/remarketing\/segments\/\d+\.json$/;
 const segmentRelationsPath = /^\/remarketing\/segments\/\d+\/relations\.json$/;
 const remarketingCounterDetailPath = /^\/remarketing\/counters\/\d+\.json$/;
+const remarketingCounterV1DetailPath = /^\/remarketing_counters\/\d+\.json$/;
 const counterGoalsPath = /^\/remarketing\/counters\/\d+\/goals\.json$/;
 const counterGoalDetailPath = /^\/remarketing\/counters\/\d+\/goals\/\d+\.json$/;
 const remarketingUserListDetailPath = /^\/remarketing\/users_lists\/\d+\.json$/;
+const offlineGoalDetailPath = /^\/remarketing\/offline_goals\/\d+\.json$/;
+const remarketingUserListV1DetailPath = /^\/remarketing_users_list\/\d+\.json$/;
 const localGeoDetailPath = /^\/remarketing\/local_geo\/\d+\.json$/;
 const pricelistDetailPath = /^\/remarketing\/pricelists\/\d+\.json$/;
 const pricelistBatchPath = /^\/remarketing\/pricelists\/\d+\/batch\.json$/;
@@ -122,12 +147,28 @@ const googleAppPath = /^\/google_apps\/[A-Za-z0-9][A-Za-z0-9._-]{0,254}\.json$/;
 const leadExportPath = /^\/lead_ads\/lead_forms\/\d+\/leads\.(csv|xlsx)$/;
 const surveyRespondentsExportPath = /^\/lead_ads\/survey_forms\/\d+\/respondents\.xlsx$/;
 const sharingKeyPath = /^\/sharing_keys\/[A-Za-z0-9_-]{1,128}\.json$/;
+const adGroupOrBannerDetailPath = /^\/(ad_groups|banners)\/\d+\.json$/;
+const agencyClientDetailPath = /^\/agency\/clients\/\d+\.json$/;
+const agencyManagerClientDetailPath = /^\/agency\/managers\/\d+\/clients\/\d+\.json$/;
+const billingTransferPath = /^\/billing\/transactions\/(to|from)\/\d+\.json$/;
 const skAdNetworkPath = /^\/apple_apps\/\d+\/sk_ad_network_ids\/(share|withdraw)\.json$/;
 const inAppEventCategoryPath = /^\/remarketing\/inapp_events\/\d+\/trackers\/\d+\/events\/\d+\.json$/;
 const MAX_LEAD_EXPORT_BYTES = 25 * 1024 * 1024;
 
 function isAllowedPath(path: string): boolean {
   return allowedPaths.has(path) || entityDetailPath.test(path) || urlDetailPath.test(path) || segmentDetailPath.test(path) || segmentRelationsPath.test(path) || remarketingCounterDetailPath.test(path) || counterGoalsPath.test(path) || remarketingUserListDetailPath.test(path) || localGeoDetailPath.test(path) || pricelistDetailPath.test(path) || pricelistBatchPath.test(path) || appleAppPath.test(path) || googleAppPath.test(path) || /^\/ord\/agency\/\d+\/acts\.json$/.test(path) || /^\/statistics\/(ad_plans|campaigns|ad_groups|banners|users)\/(summary|day)\.json$/.test(path) || /^\/statistics\/goals\/(banners|ad_groups|ad_plans|users)\/day\.json$/.test(path) || /^\/statistics\/inapp\/(ad_plans|ad_groups|banners|users)\/day\.json$/.test(path) || /^\/statistics\/offline_conversions\/(ad_plans|ad_groups|users)\/day\.json$/.test(path);
+}
+
+/** VK Ads помечает uniques.reach как устаревшую метрику, которая всегда равна 0. */
+function withoutDeprecatedReachMetric(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutDeprecatedReachMetric);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(Object.entries(value as VkObject).flatMap(([key, nested]) => {
+    if (key === "uniques" && typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
+      return [[key, Object.fromEntries(Object.entries(nested as VkObject).filter(([metric]) => metric !== "reach").map(([metric, item]) => [metric, withoutDeprecatedReachMetric(item)]))]];
+    }
+    return [[key, withoutDeprecatedReachMetric(nested)]];
+  }));
 }
 
 export class VkAdsClient {
@@ -139,6 +180,45 @@ export class VkAdsClient {
 
   async getUser(): Promise<VkObject> {
     return this.get("/user.json");
+  }
+
+  /** Отдельный опубликованный v3 read-контракт профиля. */
+  async getUserV3(): Promise<VkObject> {
+    return this.getV3("/user.json");
+  }
+
+  /** Изменяет только фиксированную схему профиля; версия выбирается сервером, не MCP path. */
+  async updateUserProfile(apiVersion: "v2" | "v3", body: VkObject): Promise<VkObject> {
+    return apiVersion === "v3" ? this.postV3("/user.json", body) : this.post("/user.json", body);
+  }
+
+  /** Создаёт подписку только на один из трёх опубликованных v3-ресурсов. */
+  async createSubscription(input: { resource: "BANNER" | "CAMPAIGN" | "OKLEADAD"; callbackUrl: string }): Promise<VkObject> {
+    return this.postV3("/subscription.json", { resource: input.resource, callback_url: input.callbackUrl });
+  }
+
+  /** Перечитывает metadata iOS-приложения по документированному App Store ID. */
+  async getAppleApp(appId: number): Promise<VkObject> {
+    this.assertPositiveId(appId);
+    return this.get(`/apple_apps/${appId}.json`);
+  }
+
+  /** Обновляет metadata iOS-приложения только по фиксированному документированному пути. */
+  async refreshAppleAppMetadata(appId: number): Promise<VkObject> {
+    this.assertPositiveId(appId);
+    return this.post(`/apple_apps/${appId}.json`, {});
+  }
+
+  /** Перечитывает metadata Android-приложения по documentированному package name. */
+  async getGoogleApp(packageName: string): Promise<VkObject> {
+    this.assertGooglePackageName(packageName);
+    return this.get(`/google_apps/${packageName}.json`);
+  }
+
+  /** Обновляет metadata Android-приложения только по фиксированному документированному пути. */
+  async refreshGoogleAppMetadata(packageName: string): Promise<VkObject> {
+    this.assertGooglePackageName(packageName);
+    return this.post(`/google_apps/${packageName}.json`, {});
   }
 
   async listAdPlans(offset = 0, limit = 100, fields?: string[], userId?: number): Promise<VkPagedResponse> {
@@ -223,6 +303,11 @@ export class VkAdsClient {
     return this.getItems(`/urls/${ids.join(",")}.json`);
   }
 
+  /** Legacy v1 получает технический url_id по уже публичному HTTPS-адресу. */
+  async resolveUrlIdV1(url: string): Promise<VkObject> {
+    return this.getV1("/urls/", { url: this.assertHttpsUrl(url).toString() });
+  }
+
   /** Регистрирует HTTPS landing URL в VK Ads; MCP не выполняет запрос к этому URL. */
   async createUrl(url: string): Promise<VkObject> {
     const parsed = this.assertHttpsUrl(url);
@@ -231,6 +316,17 @@ export class VkAdsClient {
 
   async listRemarketingCounters(): Promise<VkObject[]> {
     return this.getItems("/remarketing/counters.json");
+  }
+
+  /** Подключает уже существующий Top.Mail.ru счётчик без передачи пароля или URL. */
+  async connectExistingRemarketingCounter(input: { counterId: number; name: string; flags?: Array<"cookie_sync"> }): Promise<VkObject> {
+    this.assertPositiveId(input.counterId);
+    if (!input.name.trim() || input.name.length > 120) throw new Error("name должен содержать от 1 до 120 символов.");
+    return this.post("/remarketing/counters.json", {
+      counter_id: input.counterId,
+      name: input.name,
+      ...(input.flags?.length ? { flags: input.flags } : {}),
+    });
   }
 
   /** Документированное detail-чтение; права зависят от владельца счётчика. */
@@ -249,7 +345,24 @@ export class VkAdsClient {
   async deleteTestRemarketingCounter(id: number): Promise<VkObject> {
     this.assertPositiveId(id);
     await this.assertExistingTestRemarketingCounter(id);
+    return this.deleteV1(`/remarketing_counters/${id}.json`);
+  }
+
+  /** Отдельный v2-контракт: не заменяет legacy v1 DELETE. */
+  async deleteTestRemarketingCounterV2(id: number): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.assertExistingTestRemarketingCounter(id);
     return this.delete(`/remarketing/counters/${id}.json`);
+  }
+
+  /** Создаёт цель только внутри allowlist test-счётчика; сам счётчик не меняется. */
+  async createTestCounterGoal(input: { counterId: number; name: string; substr: string; condition: "uss" | "rss" | "jse" | "hd" | "ts"; goalType: "content" | "search" | "basket" | "wishlist" | "checkout" | "payment_info" | "purchase" | "lead" | "registration" | "custom"; value?: number | null }): Promise<VkObject> {
+    this.assertPositiveId(input.counterId);
+    this.assertTestName(input.name);
+    if (!input.substr.trim() || input.substr.length > 2_000) throw new Error("substr должен содержать от 1 до 2000 символов.");
+    if (input.value !== undefined && input.value !== null && (!Number.isInteger(input.value) || input.value < -2_147_483_647 || input.value > 2_147_483_647)) throw new Error("value выходит за допустимый диапазон integer.");
+    await this.assertExistingTestRemarketingCounter(input.counterId);
+    return this.post(`/remarketing/counters/${input.counterId}/goals.json`, { substr: input.substr, condition: input.condition, name: input.name, goal_type: input.goalType, ...(input.value === undefined ? {} : { value: input.value }) });
   }
 
   async updateTestCounterGoal(input: { counterId: number; goalId: number; name: string; value: number; goalType: "content" | "search" | "basket" | "wishlist" | "checkout" | "payment_info" | "purchase" | "lead" | "registration" | "custom" }): Promise<VkObject> {
@@ -274,9 +387,36 @@ export class VkAdsClient {
     return this.getItems("/remarketing/offline_goals.json");
   }
 
+  /** Удаляет только ранее созданный изолированный список офлайн-конверсий. */
+  async deleteTestOfflineGoal(id: number): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.assertExistingTestOfflineGoal(id);
+    return this.delete(`/remarketing/offline_goals/${id}.json`);
+  }
+
+  /** Обновляет только изолированный offline-goal: переименование и/или дозагрузка PII из разрешённого файла. */
+  async updateTestOfflineGoal(input: { id: number; name: string; filename?: string; mimeType?: string; bytes?: Uint8Array }): Promise<VkObject> {
+    this.assertPositiveId(input.id);
+    this.assertTestName(input.name);
+    if ((input.filename === undefined) !== (input.bytes === undefined) || (input.mimeType === undefined) !== (input.bytes === undefined)) {
+      throw new Error("Для дозагрузки offline-goal укажите filename, mimeType и bytes вместе.");
+    }
+    await this.assertExistingTestOfflineGoal(input.id);
+    const form = new FormData();
+    if (input.bytes && input.filename && input.mimeType) form.append("list_users", new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }), input.filename);
+    form.append("data", JSON.stringify({ name: input.name }));
+    return this.postMultipart(`/remarketing/offline_goals/${input.id}.json`, form);
+  }
+
   async listPricelists(offset = 0, limit = 50): Promise<VkPagedResponse> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error("Для прайс-листов limit должен быть целым числом от 1 до 50.");
     return this.getPaged("/remarketing/pricelists.json", offset, limit);
+  }
+
+  /** Создаёт пустой blocked-каталог без внешнего URL и credentials. */
+  async createTestPricelist(name: string): Promise<VkObject> {
+    this.assertTestName(name);
+    return this.post("/remarketing/pricelists.json", { name, status: "blocked", remove_utm_tags: true, source_type: "api" });
   }
 
   /** API публикует список batch-задач, а не GET по отдельному task ID. */
@@ -298,19 +438,20 @@ export class VkAdsClient {
     return this.postBatch(`/remarketing/pricelists/${input.pricelistId}/batch.json`, [{ method: "PUT", data: { id: input.offerId, product_type: input.productType, title: input.title.trim(), link, image_link: imageLink, price: input.price } }]);
   }
 
-  /** Изменяет только изолированный test-каталог; рабочие каталоги и произвольные URL исключены. */
-  async updateTestPricelist(input: { id: number; name: string; status: "active" | "blocked"; removeUtmTags: boolean; exportUrl?: string }): Promise<VkObject> {
-    this.assertPositiveId(input.id);
-    this.assertTestName(input.name);
-    await this.assertExistingTestPricelist(input.id);
-    const body: VkObject = { name: input.name, status: input.status, remove_utm_tags: input.removeUtmTags };
-    if (input.exportUrl !== undefined) body.export_url = this.assertHttpsUrl(input.exportUrl).toString();
-    return this.post(`/remarketing/pricelists/${input.id}.json`, body);
-  }
-
   /** v3 отдаёт metadata списков; содержимое аудиторий намеренно не запрашивается. */
   async listRemarketingUserLists(offset = 0, limit = 100): Promise<VkPagedResponse> {
     return this.getV3Paged("/remarketing/users_lists.json", offset, limit);
+  }
+
+  /** Отдельный опубликованный v2 list-контракт. */
+  async listRemarketingUserListsV2(offset = 0, limit = 100): Promise<VkPagedResponse> {
+    return this.getPaged("/remarketing/users_lists.json", offset, limit);
+  }
+
+  /** Документированный v3 detail: возвращает только metadata одного списка. */
+  async getRemarketingUserListV3(id: number): Promise<VkObject> {
+    this.assertPositiveId(id);
+    return this.getV3(`/remarketing/users_lists/${id}.json`);
   }
 
   /** v2 detail нужен только для безопасной проверки test-имени перед write. */
@@ -329,6 +470,27 @@ export class VkAdsClient {
     return this.postMultipart("/remarketing/users_lists.json", form);
   }
 
+  /** Документированный v3 multipart-контракт: поля name и type находятся вне data. */
+  async createTestRemarketingUserListV3(input: { name: string; type: string; filename: string; mimeType: "text/plain" | "text/csv"; bytes: Uint8Array }): Promise<VkObject> {
+    this.assertTestName(input.name);
+    if (!/^[a-z][a-z0-9_]{0,31}$/.test(input.type)) throw new Error("type списка ремаркетинга содержит недопустимые символы.");
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }), input.filename);
+    form.append("name", input.name);
+    form.append("type", input.type);
+    return this.postMultipartV3("/remarketing/users_lists.json", form);
+  }
+
+  /** Загружает только новый test-список офлайн-конверсий; PII остаётся в multipart body. */
+  async createTestOfflineGoal(input: { name: string; attributionPeriod: number; type: "email" | "hash_email" | "phone" | "hash_phone"; filename: string; mimeType: "text/plain" | "text/csv"; bytes: Uint8Array }): Promise<VkObject> {
+    this.assertTestName(input.name);
+    if (!Number.isInteger(input.attributionPeriod) || input.attributionPeriod < 1 || input.attributionPeriod > 365) throw new Error("attribution_period должен быть целым числом от 1 до 365.");
+    const form = new FormData();
+    form.append("list_users", new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }), input.filename);
+    form.append("data", JSON.stringify({ name: input.name, attribution_period: input.attributionPeriod, type: input.type }));
+    return this.postMultipart("/remarketing/offline_goals.json", form);
+  }
+
   async renameTestRemarketingUserList(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
     this.assertTestName(name);
@@ -336,16 +498,77 @@ export class VkAdsClient {
     return this.post(`/remarketing/users_lists/${id}.json`, { name });
   }
 
+  async renameTestRemarketingUserListV3(id: number, name: string): Promise<VkObject> {
+    this.assertPositiveId(id);
+    this.assertTestName(name);
+    await this.assertExistingTestRemarketingUserList(id);
+    return this.postV3(`/remarketing/users_lists/${id}.json`, { name });
+  }
+
   async deleteTestRemarketingUserList(id: number): Promise<VkObject> {
     this.assertPositiveId(id);
     await this.assertExistingTestRemarketingUserList(id);
-    return this.delete(`/remarketing/users_lists/${id}.json`);
+    return this.deleteV1(`/remarketing_users_list/${id}.json`);
+  }
+
+  /** Отдельный v3-контракт: legacy v1 DELETE сохраняется без изменений. */
+  async deleteTestRemarketingUserListV3(id: number): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.assertExistingTestRemarketingUserList(id);
+    return this.deleteV3(`/remarketing/users_lists/${id}.json`);
   }
 
   /** Документированный агентский контракт для уже существующего клиента. */
   async connectExistingAgencyClient(input: { userId: number; accessType: "full_access" }): Promise<VkObject> {
     this.assertPositiveId(input.userId);
     return this.post("/agency/clients.json", { access_type: input.accessType, user: { id: input.userId } });
+  }
+
+  /** Обновляет только документированные параметры уже привязанного клиента агентства. */
+  async updateAgencyClient(input: {
+    clientId: number;
+    isVkads?: boolean;
+    accessType?: "full_access";
+    additionalEmails?: string[];
+    additionalInfo?: { clientName?: string; clientInfo?: string };
+  }): Promise<VkObject> {
+    this.assertPositiveId(input.clientId);
+    await this.listAgencyClients();
+    const user: VkObject = {
+      ...(input.additionalEmails ? { additional_emails: input.additionalEmails } : {}),
+      ...(input.additionalInfo ? {
+        additional_info: {
+          ...(input.additionalInfo.clientName ? { client_name: input.additionalInfo.clientName } : {}),
+          ...(input.additionalInfo.clientInfo ? { client_info: input.additionalInfo.clientInfo } : {}),
+        },
+      } : {}),
+    };
+    return this.post(`/agency/clients/${input.clientId}.json`, {
+      ...(input.isVkads === undefined ? {} : { is_vkads: input.isVkads }),
+      ...(input.accessType ? { access_type: input.accessType } : {}),
+      ...(Object.keys(user).length > 0 ? { user } : {}),
+    });
+  }
+
+  /** Удаляет только связь клиента с агентством, а не рекламный кабинет клиента. */
+  async deleteAgencyClient(clientId: number): Promise<VkObject> {
+    this.assertPositiveId(clientId);
+    await this.listAgencyClients();
+    return this.delete(`/agency/clients/${clientId}.json`);
+  }
+
+  async updateAgencyManagerClient(input: { managerId: number; clientId: number; accessType: "full_access" | "readonly" | "fin_readonly" | "ads_readonly" }): Promise<VkObject> {
+    this.assertPositiveId(input.managerId);
+    this.assertPositiveId(input.clientId);
+    await this.listManagerClients();
+    return this.post(`/agency/managers/${input.managerId}/clients/${input.clientId}.json`, { access_type: input.accessType });
+  }
+
+  async deleteAgencyManagerClient(managerId: number, clientId: number): Promise<VkObject> {
+    this.assertPositiveId(managerId);
+    this.assertPositiveId(clientId);
+    await this.listManagerClients();
+    return this.delete(`/agency/managers/${managerId}/clients/${clientId}.json`);
   }
 
   async listInAppEvents(offset = 0, limit = 100): Promise<VkPagedResponse> {
@@ -406,6 +629,12 @@ export class VkAdsClient {
   async revokeSharingKey(key: string): Promise<VkObject> {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(key)) throw new Error("Формат ключа шаринга некорректен.");
     return this.delete(`/sharing_keys/${key}.json`);
+  }
+
+  /** Активирует все источники полученного ключа; сам bearer-key наружу не возвращается. */
+  async activateExternalSharingKey(key: string): Promise<void> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(key)) throw new Error("Формат ключа шаринга некорректен.");
+    await this.post(`/sharing_keys/${key}.json`, {});
   }
 
   async hasSharingKey(key: string): Promise<boolean> {
@@ -659,6 +888,26 @@ export class VkAdsClient {
     return this.getV1(`/ord/partner/acts/${month}/${padId}.json`);
   }
 
+  async updateOrdPartnerActs(month: string, padId: number, acts: VkObject[]): Promise<VkObject> {
+    this.assertPositiveId(padId);
+    this.assertMonthStart(month);
+    return this.postV1(`/ord/partner/acts/${month}/${padId}.json`, { acts });
+  }
+
+  async updateOrdPartnerPad(padId: number, body: VkObject): Promise<VkObject> {
+    this.assertPositiveId(padId);
+    return this.postV1(`/ord/partner/pads/${padId}.json`, body);
+  }
+
+  async createOrdPartnerSubagent(body: VkObject): Promise<VkObject> {
+    return this.postV1("/ord/partner/subagents.json", body);
+  }
+
+  async updateOrdPartnerSubagent(id: number, body: VkObject): Promise<VkObject> {
+    this.assertPositiveId(id);
+    return this.postV1(`/ord/partner/subagents/${id}.json`, body);
+  }
+
   async listOrdAgencyActs(month: string, offset = 0, limit = 100): Promise<VkPagedResponse> {
     this.assertMonthStart(month);
     return this.getPaged("/ord/agency/acts.json", offset, limit, { _month: month });
@@ -701,12 +950,12 @@ export class VkAdsClient {
    */
   async createTestSegment(input: {
     name: string;
-    counterSourceId: number;
+    counterId: number;
     leftDays: number;
-    goalId?: string;
+    goalId: string;
   }): Promise<VkObject> {
     this.assertTestName(input.name);
-    this.assertPositiveId(input.counterSourceId);
+    this.assertPositiveId(input.counterId);
     this.assertSegmentDays(input.leftDays);
     return this.post("/remarketing/segments.json", {
       name: input.name,
@@ -714,8 +963,8 @@ export class VkAdsClient {
       relations: [{
         object_type: "remarketing_counter",
         params: {
-          source_id: input.counterSourceId,
-          goal_id: input.goalId ?? "",
+          source_id: input.counterId,
+          goal_id: input.goalId,
           left: input.leftDays,
           right: 0,
           type: "positive",
@@ -750,6 +999,22 @@ export class VkAdsClient {
     });
   }
 
+  /** Изменяет только params связи между двумя test-сегментами. */
+  async updateTestSegmentRelation(input: { segmentId: number; relationId: number; left: number; right: number; type: "positive" | "negative" }): Promise<VkObject> {
+    this.assertPositiveId(input.segmentId);
+    this.assertPositiveId(input.relationId);
+    if (!Number.isInteger(input.left) || !Number.isInteger(input.right) || input.left < 1 || input.left > 365 || input.right < 0 || input.right >= input.left) {
+      throw new Error("Для test-связи нужно 1 <= right < left <= 365.");
+    }
+    await this.assertExistingTestSegment(input.segmentId);
+    const relation = (await this.listSegmentRelations(input.segmentId)).find((item) => Number(item.id) === input.relationId);
+    if (!relation || relation.object_type !== "segment" || !Number.isInteger(relation.object_id)) {
+      throw new Error("Разрешено изменить только существующую связь с test-сегментом.");
+    }
+    await this.assertExistingTestSegment(Number(relation.object_id));
+    return this.post(`/remarketing/segments/${input.segmentId}/relations/${input.relationId}.json`, { params: { left: input.left, right: input.right, type: input.type } });
+  }
+
   /** Удаляет связь только из test-сегмента; источник связи повторно сверяется. */
   async deleteTestSegmentRelation(input: { segmentId: number; relationId: number }): Promise<VkObject> {
     this.assertPositiveId(input.segmentId);
@@ -774,7 +1039,7 @@ export class VkAdsClient {
       if (!Number.isFinite(region.lat) || region.lat < -90 || region.lat > 90 || !Number.isFinite(region.lng) || region.lng < -180 || region.lng > 180) {
         throw new Error("Координаты local geo выходят за допустимые границы.");
       }
-      if (!Number.isInteger(region.radius) || region.radius < 1 || region.radius > 100_000) throw new Error("radius должен быть целым числом от 1 до 100000 метров.");
+      if (!Number.isInteger(region.radius) || region.radius < 500 || region.radius > 10_000) throw new Error("radius должен быть целым числом от 500 до 10000 метров.");
       if (!region.label.trim() || region.label.length > 200 || (region.address !== undefined && region.address.length > 500)) {
         throw new Error("label обязателен до 200 символов, address — не более 500 символов.");
       }
@@ -801,7 +1066,7 @@ export class VkAdsClient {
       if (!Number.isFinite(region.lat) || region.lat < -90 || region.lat > 90 || !Number.isFinite(region.lng) || region.lng < -180 || region.lng > 180) {
         throw new Error("Координаты local geo выходят за допустимые границы.");
       }
-      if (!Number.isInteger(region.radius) || region.radius < 1 || region.radius > 100_000) throw new Error("radius должен быть целым числом от 1 до 100000 метров.");
+      if (!Number.isInteger(region.radius) || region.radius < 500 || region.radius > 10_000) throw new Error("radius должен быть целым числом от 500 до 10000 метров.");
       if (!region.label.trim() || region.label.length > 200 || (region.address !== undefined && region.address.length > 500)) {
         throw new Error("label обязателен до 200 символов, address — не более 500 символов.");
       }
@@ -844,13 +1109,9 @@ export class VkAdsClient {
 
   async getMobileApp(input: { platform: "ios"; appId: number } | { platform: "android"; packageName: string }): Promise<VkObject> {
     if (input.platform === "ios") {
-      this.assertPositiveId(input.appId);
-      return this.get(`/apple_apps/${input.appId}.json`);
+      return this.getAppleApp(input.appId);
     }
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/.test(input.packageName)) {
-      throw new Error("Android package name содержит недопустимые символы.");
-    }
-    return this.get(`/google_apps/${input.packageName}.json`);
+    return this.getGoogleApp(input.packageName);
   }
 
   async getThrottling(): Promise<VkObject> {
@@ -934,8 +1195,22 @@ export class VkAdsClient {
     return this.deleteV3(`/reports/${id}.json`);
   }
 
+  /** v3 возвращает только v3-подписки; старые v2-подписки этот ресурс не обслуживает. */
   async listSubscriptions(offset = 0, limit = 100): Promise<VkPagedResponse> {
     return this.getV3Paged("/subscription.json", offset, limit);
+  }
+
+  /** Официальный HTTP DELETE только для v3-подписки, найденной свежим v3 list-запросом. */
+  async deleteSubscription(id: number): Promise<VkObject> {
+    this.assertPositiveId(id);
+    const subscriptions = await this.listSubscriptions(0, 200);
+    if (!subscriptions.items.some((item) => Number(item.id) === id)) throw new Error("Удаление разрешено только для v3-подписки, найденной в свежем списке.");
+    return this.deleteV3(`/subscription/${id}.json`);
+  }
+
+  async transferToClient(clientId: number, amount: string): Promise<VkObject> {
+    this.assertPositiveId(clientId);
+    return this.post(`/billing/transactions/to/${clientId}.json`, { amount });
   }
 
   async uploadStaticImage(input: { filename: string; mimeType: "image/png" | "image/jpeg" | "image/webp"; bytes: Uint8Array }): Promise<VkObject> {
@@ -983,6 +1258,39 @@ export class VkAdsClient {
     });
   }
 
+  /** Production hierarchy write. Payload is assembled from the server's fixed Zod contract. */
+  async createAdPlan(input: VkObject): Promise<VkObject> {
+    return this.post("/ad_plans.json", input);
+  }
+
+  async updateAdPlan(id: number, input: VkObject): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.getAdPlan(id);
+    return this.post(`/ad_plans/${id}.json`, input);
+  }
+
+  async deleteAdPlan(id: number): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.getAdPlan(id);
+    return this.post(`/ad_plans/${id}.json`, { status: "deleted" });
+  }
+
+  async createCampaign(input: VkObject): Promise<VkObject> {
+    return this.post("/campaigns.json", input);
+  }
+
+  async updateCampaign(id: number, input: VkObject): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.getCampaign(id);
+    return this.post(`/campaigns/${id}.json`, input);
+  }
+
+  async deleteCampaign(id: number): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.getCampaign(id);
+    return this.post(`/campaigns/${id}.json`, { status: "deleted" });
+  }
+
   /** Единственный подтверждённый direct-create campaign: blocked appinstalls package 2860 в test plan. */
   async createTestCampaign(input: { adPlanId: number; packageId: 2860; objective: "appinstalls"; name: string }): Promise<VkObject> {
     this.assertPositiveId(input.adPlanId);
@@ -1010,6 +1318,29 @@ export class VkAdsClient {
       status: "blocked",
       targetings: input.targetings,
     });
+  }
+
+  async createAdGroup(input: VkObject): Promise<VkObject> {
+    return this.post("/ad_groups.json", input);
+  }
+
+  async updateAdGroup(id: number, input: VkObject): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.getAdGroup(id);
+    return this.post(`/ad_groups/${id}.json`, input);
+  }
+
+  async deleteAdGroup(id: number): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.getAdGroup(id);
+    return this.delete(`/ad_groups/${id}.json`);
+  }
+
+  /** Официальный HTTP DELETE /api/v2/ad_groups/{id}.json. */
+  async deleteAdGroupHttp(id: number): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.getAdGroup(id);
+    return this.delete(`/ad_groups/${id}.json`);
   }
 
   /** Единственный live-проверенный шаблон banner: appinstalls package 2860, pattern 284. */
@@ -1050,6 +1381,53 @@ export class VkAdsClient {
     });
   }
 
+  async createBanner(input: VkObject & { ad_group_id: number }): Promise<VkObject> {
+    this.assertPositiveId(input.ad_group_id);
+    await this.getAdGroup(input.ad_group_id);
+    const { ad_group_id: _adGroupId, ...body } = input;
+    return this.post(`/ad_groups/${input.ad_group_id}/banners.json`, body);
+  }
+
+  async updateBanner(id: number, input: VkObject): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.getBanner(id);
+    return this.post(`/banners/${id}.json`, input);
+  }
+
+  async deleteBanner(id: number): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.getBanner(id);
+    return this.delete(`/banners/${id}.json`);
+  }
+
+  /** Официальный HTTP DELETE /api/v2/banners/{id}.json. */
+  async deleteBannerHttp(id: number): Promise<VkObject> {
+    this.assertPositiveId(id);
+    await this.getBanner(id);
+    return this.delete(`/banners/${id}.json`);
+  }
+
+  async manageAdPlans(items: VkObject[]): Promise<VkObject> {
+    items.forEach((item) => this.assertPositiveId(Number(item.id)));
+    await Promise.all(items.map((item) => this.getAdPlan(Number(item.id))));
+    await this.postArray("/ad_plans/mass_action.json", items);
+    return { items };
+  }
+
+  async manageAdGroups(items: VkObject[]): Promise<VkObject> {
+    items.forEach((item) => this.assertPositiveId(Number(item.id)));
+    await Promise.all(items.map((item) => this.getAdGroup(Number(item.id))));
+    await this.postArray("/ad_groups/mass_action.json", items);
+    return { items };
+  }
+
+  async manageBanners(items: VkObject[]): Promise<VkObject> {
+    items.forEach((item) => this.assertPositiveId(Number(item.id)));
+    await Promise.all(items.map((item) => this.getBanner(Number(item.id))));
+    await this.postArray("/banners/mass_action.json", items);
+    return { items };
+  }
+
   async renameTestAdGroup(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
     await this.getAdGroup(id);
@@ -1073,7 +1451,7 @@ export class VkAdsClient {
   /** Используется только для изолированной очистки contract tests. */
   async deleteTestCampaign(id: number): Promise<VkObject> {
     this.assertPositiveId(id);
-    await this.getCampaign(id);
+    await this.assertExistingTestCampaign(id);
     return this.post(`/campaigns/${id}.json`, { status: "deleted" });
   }
 
@@ -1164,6 +1542,7 @@ export class VkAdsClient {
   }
 
   async getStatistics(input: {
+    apiVersion?: "v2" | "v3";
     objectType: StatisticsObjectType;
     period: StatisticsPeriod;
     ids?: number[];
@@ -1177,20 +1556,25 @@ export class VkAdsClient {
     if (input.period === "day" && (!input.dateFrom || !input.dateTo)) {
       throw new Error("Для period=day VK Ads требует dateFrom и dateTo.");
     }
-    const query: Record<string, string> = { metrics: input.metrics ?? "base" };
+    const isV3 = input.apiVersion === "v3";
+    if (isV3 && input.objectType === "campaigns") throw new Error("v3 statistics не поддерживает objectType=campaigns.");
+    if (isV3 && input.period !== "day") throw new Error("v3 statistics поддерживает только period=day.");
+    const query: Record<string, string> = { [isV3 ? "fields" : "metrics"]: input.metrics ?? "base" };
     if (input.ids?.length) query.id = input.ids.join(",");
     if (input.dateFrom && input.dateTo) {
       query.date_from = input.dateFrom;
       query.date_to = input.dateTo;
     }
-    const payload = await this.get(`/statistics/${input.objectType}/${input.period}.json`, query);
+    const payload = isV3
+      ? await this.getV3(`/statistics/${input.objectType}/day.json`, query)
+      : await this.get(`/statistics/${input.objectType}/${input.period}.json`, query);
     if (!Array.isArray(payload.items) || typeof payload.total !== "object" || payload.total === null || Array.isArray(payload.total)) {
       throw new Error("VK Ads вернул неожиданный формат статистики.");
     }
     return {
       ...payload,
-      items: payload.items.filter((item): item is VkObject => typeof item === "object" && item !== null),
-      total: payload.total as VkObject,
+      items: payload.items.filter((item): item is VkObject => typeof item === "object" && item !== null).map((item) => withoutDeprecatedReachMetric(item) as VkObject),
+      total: withoutDeprecatedReachMetric(payload.total) as VkObject,
     };
   }
 
@@ -1347,6 +1731,11 @@ export class VkAdsClient {
     this.assertTestName(typeof list.name === "string" ? list.name : "");
   }
 
+  private async assertExistingTestOfflineGoal(id: number): Promise<void> {
+    const goal = (await this.listOfflineGoals()).find((item) => Number(item.id) === id);
+    this.assertTestName(typeof goal?.name === "string" ? goal.name : "");
+  }
+
   private async assertExistingTestLocalGeo(id: number): Promise<void> {
     const localGeo = (await this.listLocalGeo()).find((item) => Number(item.id) === id);
     this.assertTestName(typeof localGeo?.name === "string" ? localGeo.name : "");
@@ -1396,6 +1785,12 @@ export class VkAdsClient {
 
   private assertPositiveId(id: number): void {
     if (!Number.isInteger(id) || id <= 0) throw new Error("ID должен быть положительным целым числом.");
+  }
+
+  private assertGooglePackageName(packageName: string): void {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/.test(packageName)) {
+      throw new Error("Android package name содержит недопустимые символы.");
+    }
   }
 
   private assertMonth(value: string): void {
@@ -1502,7 +1897,7 @@ export class VkAdsClient {
   }
 
   private async getV3(path: string, query: Record<string, string> = {}): Promise<VkObject> {
-    if (path !== "/manager/clients.json" && path !== "/remarketing/users_lists.json" && path !== "/search_phrases.json" && path !== "/subscription.json" && path !== "/reports.json" && !customReportDetailPath.test(path) && !/^\/statistics\/faststat\/(ad_plans|banners|campaigns|users)\.json$/.test(path)) {
+    if (path !== "/user.json" && path !== "/manager/clients.json" && path !== "/remarketing/users_lists.json" && !/^\/remarketing\/users_lists\/\d+\.json$/.test(path) && path !== "/search_phrases.json" && path !== "/subscription.json" && path !== "/reports.json" && !customReportDetailPath.test(path) && !/^\/statistics\/faststat\/(ad_plans|banners|campaigns|users)\.json$/.test(path) && !/^\/statistics\/(ad_plans|ad_groups|banners|users)\/day\.json$/.test(path)) {
       throw new Error("Запрошен неразрешённый v3-путь VK Ads API.");
     }
     const url = new URL(`${VK_ADS_API_V3_BASE_URL}${path}`);
@@ -1553,7 +1948,7 @@ export class VkAdsClient {
   }
 
   private async getV1(path: string, query: Record<string, string> = {}): Promise<VkObject> {
-    if (path !== "/inapp_event_categories.json" && path !== "/mobile_app_users.json" && path !== "/lead_ads/lead_forms.json" && path !== "/lead_ads/leads.json" && path !== "/lead_ads/respondents.json" && path !== "/lead_ads/survey_forms.json" && !/^\/lead_ads\/(lead_forms|survey_forms)\/\d+\.json$/.test(path) && !/^\/ord\/partner\/(pads|subagents)\.json$/.test(path) && !/^\/ord\/partner\/(pads|subagents)\/\d+\.json$/.test(path) && !/^\/ord\/partner\/acts\/\d{4}-\d{2}-01(?:\/\d+)?\.json$/.test(path)) {
+    if (path !== "/urls/" && path !== "/inapp_event_categories.json" && path !== "/mobile_app_users.json" && path !== "/lead_ads/lead_forms.json" && path !== "/lead_ads/leads.json" && path !== "/lead_ads/respondents.json" && path !== "/lead_ads/survey_forms.json" && !/^\/lead_ads\/(lead_forms|survey_forms)\/\d+\.json$/.test(path) && !/^\/ord\/partner\/(pads|subagents)\.json$/.test(path) && !/^\/ord\/partner\/(pads|subagents)\/\d+\.json$/.test(path) && !/^\/ord\/partner\/acts\/\d{4}-\d{2}-01(?:\/\d+)?\.json$/.test(path)) {
       throw new Error("Запрошен неразрешённый v1-путь VK Ads API.");
     }
     const url = new URL(`${VK_ADS_API_V1_BASE_URL}${path}`);
@@ -1575,14 +1970,14 @@ export class VkAdsClient {
       }
     };
     const response = await this.requestReadWithRetries(token, request);
-    if (!response.ok) throw new VkAdsApiError(response.status, `VK Ads API вернул HTTP ${response.status}.`);
+    if (!response.ok) throw new VkAdsApiError(response.status, await safeProviderErrorMessage(response));
     const payload: unknown = await response.json();
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) throw new Error("VK Ads API вернул неожиданный JSON-ответ.");
     return payload as VkObject;
   }
 
   private async postV1(path: string, body: VkObject): Promise<VkObject> {
-    if (!/^\/lead_ads\/(lead_forms|survey_forms)\/\d+\/copy$/.test(path) && !/^\/lead_ads\/lead_forms\/\d+\/send_test_lead$/.test(path) && !/^\/lead_ads\/lead_forms\/\d+\.json$/.test(path)) throw new Error("Запрошен неразрешённый v1 write-путь VK Ads API.");
+    if (!/^\/lead_ads\/(lead_forms|survey_forms)\/\d+\/copy$/.test(path) && !/^\/lead_ads\/lead_forms\/\d+\/send_test_lead$/.test(path) && !/^\/lead_ads\/lead_forms\/\d+\.json$/.test(path) && !/^\/ord\/partner\/acts\/\d{4}-\d{2}-01\/\d+\.json$/.test(path) && !/^\/ord\/partner\/pads\/\d+\.json$/.test(path) && !/^\/ord\/partner\/subagents(?:\/\d+)?\.json$/.test(path)) throw new Error("Запрошен неразрешённый v1 write-путь VK Ads API.");
     let token = this.options.tokenProvider();
     if (!token && this.options.tokenRefresher) token = await this.options.tokenRefresher();
     if (!token) throw new Error("Токен VK Ads пуст.");
@@ -1603,6 +1998,7 @@ export class VkAdsClient {
     let response = await request(token);
     if (response.status === 401 && this.options.tokenRefresher) response = await request(await this.options.tokenRefresher());
     if (!response.ok) throw new VkAdsApiError(response.status, `VK Ads API вернул HTTP ${response.status}.`);
+    if (response.status === 204) return {};
     const payload: unknown = await response.json();
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) throw new Error("VK Ads API вернул неожиданный JSON-ответ.");
     return payload as VkObject;
@@ -1687,7 +2083,7 @@ export class VkAdsClient {
   }
 
   private async postV3(path: string, body: VkObject, query: Record<string, string> = {}): Promise<VkObject> {
-    if (path !== "/projection.json" && path !== "/audit_pixel.json" && path !== "/reports.json") throw new Error("Запрошен неразрешённый v3 write-путь VK Ads API.");
+    if (path !== "/projection.json" && path !== "/audit_pixel.json" && path !== "/reports.json" && path !== "/subscription.json" && path !== "/user.json" && !/^\/remarketing\/users_lists\/\d+\.json$/.test(path)) throw new Error("Запрошен неразрешённый v3 write-путь VK Ads API.");
     const url = new URL(`${VK_ADS_API_V3_BASE_URL}${path}`);
     for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
     let token = this.options.tokenProvider();
@@ -1710,13 +2106,14 @@ export class VkAdsClient {
     let response = await request(token);
     if (response.status === 401 && this.options.tokenRefresher) response = await request(await this.options.tokenRefresher());
     if (!response.ok) throw new VkAdsApiError(response.status, `VK Ads API вернул HTTP ${response.status}.`);
+    if (response.status === 204 || response.headers.get("content-length") === "0") return {};
     const payload: unknown = await response.json();
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) throw new Error("VK Ads API вернул неожиданный JSON-ответ.");
     return payload as VkObject;
   }
 
   private async deleteV3(path: string): Promise<VkObject> {
-    if (!customReportDetailPath.test(path)) throw new Error("Запрошен неразрешённый v3 delete-путь VK Ads API.");
+    if (!customReportDetailPath.test(path) && !/^\/(subscription|remarketing\/users_lists)\/\d+\.json$/.test(path)) throw new Error("Запрошен неразрешённый v3 delete-путь VK Ads API.");
     let token = this.options.tokenProvider();
     if (!token && this.options.tokenRefresher) token = await this.options.tokenRefresher();
     if (!token) throw new Error("Токен VK Ads пуст.");
@@ -1748,20 +2145,30 @@ export class VkAdsClient {
       && path !== "/campaigns.json"
       && path !== "/ad_groups.json"
       && path !== "/urls.json"
+      && path !== "/user.json"
+      && path !== "/remarketing/counters.json"
       && path !== "/remarketing/segments.json"
       && path !== "/remarketing/local_geo.json"
+      && path !== "/remarketing/pricelists.json"
       && !pricelistDetailPath.test(path)
+      && !appleAppPath.test(path)
+      && !googleAppPath.test(path)
       && path !== "/agency/clients.json"
       && path !== "/sharing_keys.json"
+      && !sharingKeyPath.test(path)
       && !skAdNetworkPath.test(path)
       && path !== "/banners/remoderate.json"
       && !/^\/(ad_plans|campaigns|ad_groups|banners)\/\d+\.json$/.test(path)
       && !/^\/ad_groups\/\d+\/banners\.json$/.test(path)
-      && !/^\/remarketing\/segments\/\d+(?:\/relations)?\.json$/.test(path)
+      && !/^\/remarketing\/segments\/\d+(?:\/relations(?:\/\d+)?)?\.json$/.test(path)
       && !remarketingCounterDetailPath.test(path)
+      && !counterGoalsPath.test(path)
       && !counterGoalDetailPath.test(path)
       && !remarketingUserListDetailPath.test(path)
       && !localGeoDetailPath.test(path)
+      && !agencyClientDetailPath.test(path)
+      && !agencyManagerClientDetailPath.test(path)
+      && !billingTransferPath.test(path)
     ) {
       throw new Error("Запрошен неразрешённый write-путь VK Ads API.");
     }
@@ -1786,7 +2193,7 @@ export class VkAdsClient {
     };
     let response = await request(token);
     if (response.status === 401 && this.options.tokenRefresher) response = await request(await this.options.tokenRefresher());
-    if (!response.ok) throw new VkAdsApiError(response.status, `VK Ads API вернул HTTP ${response.status}.`);
+    if (!response.ok) throw new VkAdsApiError(response.status, await safeProviderErrorMessage(response));
     if (response.status === 204) return {};
     const payload: unknown = await response.json();
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) throw new Error("VK Ads API вернул неожиданный JSON-ответ.");
@@ -1818,7 +2225,7 @@ export class VkAdsClient {
   }
 
   private async delete(path: string): Promise<VkObject> {
-    if (!/^\/remarketing\/segments\/\d+(?:\/relations\/\d+)?\.json$/.test(path) && !remarketingCounterDetailPath.test(path) && !remarketingUserListDetailPath.test(path) && !localGeoDetailPath.test(path) && !sharingKeyPath.test(path)) {
+    if (!/^\/remarketing\/segments\/\d+(?:\/relations\/\d+)?\.json$/.test(path) && !remarketingCounterDetailPath.test(path) && !remarketingUserListDetailPath.test(path) && !offlineGoalDetailPath.test(path) && !localGeoDetailPath.test(path) && !sharingKeyPath.test(path) && !adGroupOrBannerDetailPath.test(path) && !agencyClientDetailPath.test(path) && !agencyManagerClientDetailPath.test(path)) {
       throw new Error("Запрошен неразрешённый delete-путь VK Ads API.");
     }
     let token = this.options.tokenProvider();
@@ -1843,6 +2250,35 @@ export class VkAdsClient {
     if (response.status === 204 || response.headers.get("content-length") === "0") return {};
     const payload: unknown = await response.json();
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) throw new Error("VK Ads API вернул неожиданный JSON-ответ.");
+    return payload as VkObject;
+  }
+
+  private async deleteV1(path: string): Promise<VkObject> {
+    if (!remarketingCounterV1DetailPath.test(path) && !remarketingUserListV1DetailPath.test(path)) {
+      throw new Error("Запрошен неразрешённый v1 delete-путь VK Ads API.");
+    }
+    let token = this.options.tokenProvider();
+    if (!token && this.options.tokenRefresher) token = await this.options.tokenRefresher();
+    if (!token) throw new Error("Токен VK Ads пуст.");
+    const request = async (requestToken: string): Promise<Response> => {
+      try {
+        await this.options.waitForRequest?.();
+        return await this.fetchImplementation(`${VK_ADS_API_V1_BASE_URL}${path}`, {
+          method: "DELETE",
+          headers: { Accept: "application/json", Authorization: `Bearer ${requestToken}` },
+          signal: AbortSignal.timeout(this.options.timeoutMs),
+          redirect: "error",
+        });
+      } catch {
+        throw new Error("Не удалось выполнить v1 delete-запрос к VK Ads API.");
+      }
+    };
+    let response = await request(token);
+    if (response.status === 401 && this.options.tokenRefresher) response = await request(await this.options.tokenRefresher());
+    if (!response.ok) throw new VkAdsApiError(response.status, `VK Ads API вернул HTTP ${response.status}.`);
+    if (response.status === 204 || response.headers.get("content-length") === "0") return {};
+    const payload: unknown = await response.json();
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) throw new Error("VK Ads вернул неожиданный JSON-ответ.");
     return payload as VkObject;
   }
 
@@ -1871,7 +2307,7 @@ export class VkAdsClient {
   }
 
   private async postMultipart(path: string, body: FormData): Promise<VkObject> {
-    if (path !== "/content/static.json" && path !== "/content/video.json" && path !== "/content/html5.json" && path !== "/remarketing/users_lists.json") throw new Error("Запрошен неразрешённый upload-путь VK Ads API.");
+    if (path !== "/content/static.json" && path !== "/content/video.json" && path !== "/content/html5.json" && path !== "/remarketing/users_lists.json" && path !== "/remarketing/offline_goals.json" && !offlineGoalDetailPath.test(path)) throw new Error("Запрошен неразрешённый upload-путь VK Ads API.");
     let token = this.options.tokenProvider();
     if (!token && this.options.tokenRefresher) token = await this.options.tokenRefresher();
     if (!token) throw new Error("Токен VK Ads пуст.");
@@ -1888,6 +2324,26 @@ export class VkAdsClient {
       } catch {
         throw new Error("Не удалось выполнить upload-запрос к VK Ads API.");
       }
+    };
+    let response = await request(token);
+    if (response.status === 401 && this.options.tokenRefresher) response = await request(await this.options.tokenRefresher());
+    if (!response.ok) throw new VkAdsApiError(response.status, `VK Ads API вернул HTTP ${response.status}.`);
+    if (response.status === 204 || response.headers.get("content-length") === "0") return {};
+    const payload: unknown = await response.json();
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) throw new Error("VK Ads API вернул неожиданный JSON-ответ.");
+    return payload as VkObject;
+  }
+
+  private async postMultipartV3(path: string, body: FormData): Promise<VkObject> {
+    if (path !== "/remarketing/users_lists.json") throw new Error("Запрошен неразрешённый v3 upload-путь VK Ads API.");
+    let token = this.options.tokenProvider();
+    if (!token && this.options.tokenRefresher) token = await this.options.tokenRefresher();
+    if (!token) throw new Error("Токен VK Ads пуст.");
+    const request = async (requestToken: string): Promise<Response> => {
+      try {
+        await this.options.waitForRequest?.();
+        return await this.fetchImplementation(`${VK_ADS_API_V3_BASE_URL}${path}`, { method: "POST", headers: { Accept: "application/json", Authorization: `Bearer ${requestToken}` }, body, signal: AbortSignal.timeout(this.options.timeoutMs), redirect: "error" });
+      } catch { throw new Error("Не удалось выполнить v3 upload-запрос к VK Ads API."); }
     };
     let response = await request(token);
     if (response.status === 401 && this.options.tokenRefresher) response = await request(await this.options.tokenRefresher());

@@ -31,6 +31,21 @@ describe("WriteGate", () => {
     expect(() => gate.consume(preview.id, preview.confirmation_statement)).toThrow("истёк");
   });
 
+  it("использует явно заданный ограниченный срок preview", () => {
+    let time = 0;
+    const gate = new WriteGate(true, () => time, () => "00000000-0000-4000-8000-000000000004", undefined, 60 * 60 * 1_000);
+    const preview = gate.prepare("delete_test_ad_plan", { ad_plan_id: 1 });
+    time = 3_599_999;
+    expect(gate.consume(preview.id, preview.confirmation_statement)).toMatchObject({ id: preview.id });
+  });
+
+  it("разрешает локально отключить фразу, сохраняя одноразовость preview", () => {
+    const gate = new WriteGate(true, () => 1_000, () => "00000000-0000-4000-8000-000000000005", undefined, 600_000, false);
+    const preview = gate.prepare("create_test_ad_plan", { name: "__MCP_TEST__ test" });
+    expect(gate.consume(preview.id, undefined)).toMatchObject({ id: preview.id });
+    expect(() => gate.consume(preview.id, undefined)).toThrow("уже использован");
+  });
+
   it("привязывает preview к подключению и хранит аудит без payload", () => {
     let time = 1_000;
     const gate = new WriteGate(true, () => time, () => "00000000-0000-4000-8000-000000000003");

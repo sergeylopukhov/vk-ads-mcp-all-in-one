@@ -1,39 +1,41 @@
 # Подключение к MCP-клиентам
 
-Распакуйте релиз, перейдите в папку `mcp-server` и установите зависимости:
+Сначала установите или обновите сервер.
+
+### macOS и Linux
 
 ```bash
-npm ci --omit=dev
+curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.sh | sh
 ```
 
-Скопируйте `.env.example` в `.env` и укажите `VK_ADS_CLIENT_ID` и `VK_ADS_CLIENT_SECRET` вашего приложения VK Ads. При первом запросе сервер сам получит токен и сохранит его в `.env`. Токен не нужно добавлять в настройки клиента.
+### Windows
 
-Если вы запускаете сервер из исходников, выполните `npm ci`, затем `npm run build`.
+```powershell
+irm https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.ps1 | iex
+```
 
-Во всех примерах путь к `dist/index.js` должен быть абсолютным.
+Установщик запросит данные приложения и режим `readonly/write`, затем напечатает каталог установки. Расширенные разрешения записи можно открыть отдельным необязательным шагом. Codex подключится автоматически. Для остальных клиентов укажите полный путь к `/dist/index.js` в нужной команде.
 
 ## Codex
 
-```bash
-codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
-```
+Дополнительные команды не нужны. Перезапустите Codex после установки.
 
 ## Claude Code
 
 ```bash
-claude mcp add --env VK_ADS_PROFILE=default --transport stdio --scope user vk-ads -- node "$(pwd)/dist/index.js"
+claude mcp add --env VK_ADS_PROFILE=default --transport stdio --scope user vk-ads -- node "/полный/путь/к/каталогу/установки/dist/index.js"
 ```
 
 ## Gemini CLI
 
 ```bash
-gemini mcp add vk-ads node "$(pwd)/dist/index.js" --env VK_ADS_PROFILE=default --scope user
+gemini mcp add vk-ads node "/полный/путь/к/каталогу/установки/dist/index.js" --env VK_ADS_PROFILE=default --scope user
 ```
 
 ## Qwen Code
 
 ```bash
-qwen mcp add vk-ads -e VK_ADS_PROFILE=default node "$(pwd)/dist/index.js"
+qwen mcp add vk-ads -e VK_ADS_PROFILE=default node "/полный/путь/к/каталогу/установки/dist/index.js"
 ```
 
 ## Kimi Code CLI
@@ -45,7 +47,7 @@ qwen mcp add vk-ads -e VK_ADS_PROFILE=default node "$(pwd)/dist/index.js"
   "mcpServers": {
     "vk-ads": {
       "command": "node",
-      "args": ["/полный/путь/vk-ads-mcp/mcp-server/dist/index.js"],
+      "args": ["/полный/путь/к/каталогу/установки/dist/index.js"],
       "env": { "VK_ADS_PROFILE": "default" },
       "enabled": true
     }
@@ -59,4 +61,4 @@ qwen mcp add vk-ads -e VK_ADS_PROFILE=default node "$(pwd)/dist/index.js"
 Покажи контекст подключения VK Ads и доступные рекламные планы. Ничего не меняй.
 ```
 
-Если VK Ads вернёт `token_limit_exceeded`, выпуск нового токена отклонён. Сервер не умеет просматривать и отзывать токены приложения. Не удаляйте локальный `.env`, чтобы не выпускать токен повторно. Если лимит уже исчерпан, обратитесь в поддержку VK Ads, указав ошибку и `client_id` приложения.
+Если VK Ads вернёт `token_limit_exceeded`, не удаляйте локальный `.env`. При запуске сервер сначала пытается продлить сохранённый `refresh_token`. Если лимит уже исчерпан, в write-режиме используйте `vk_recover_token_limit`: он подготовит preview, а после выполнения отзовёт токены только текущей пары `client_id—user`, выпустит один новый токен и сохранит `refresh_token`. Кампании, бюджеты и аудитории не изменяются.

@@ -21,14 +21,22 @@ export interface AppConfig {
   /** Данные приложения не передаются в MCP-инструменты и не логируются. */
   clientCredentials?: VkAdsClientCredentials;
   timeoutMs: number;
+  /** Одноразовый preview записи: от 1 до 60 минут, 10 минут по умолчанию. */
+  previewTtlMs: number;
+  /** Локальный opt-in владельца профиля: preview сохраняется, точная фраза необязательна. */
+  requireWriteConfirmation: boolean;
   uploadDir?: string;
   /** Отдельный opt-in каталог для PII списков ремаркетинга. */
   piiUploadDir?: string;
   allowPiiUploads: boolean;
   /** Агентский write меняет отношения между кабинетами, поэтому opt-in отдельный. */
   allowAgencyWrites: boolean;
+  /** Изменение профиля кабинета и его уведомлений требует отдельного opt-in. */
+  allowProfileWrites: boolean;
   /** Отзыв ключа может остановить кампании получателя; включается только отдельно. */
   allowSharingKeyRevoke: boolean;
+  /** Внешний ключ шаринга хранится только локально и никогда не возвращается MCP. */
+  externalSharingKey?: string;
   /** SKAdNetwork меняет права мобильного приложения и требует отдельного opt-in. */
   allowSkAdNetworkWrites: boolean;
   /** Единственные iOS-приложения, на которых допустимы тестовые SKAdNetwork-вызовы. */
@@ -45,6 +53,11 @@ export interface AppConfig {
   auditFile: string;
 }
 
+export interface ProfileStoragePaths {
+  envFile: string;
+  auditFile: string;
+}
+
 function parseTimeout(value: string | undefined): number {
   if (value === undefined) return 30_000;
   const parsed = Number(value);
@@ -52,6 +65,21 @@ function parseTimeout(value: string | undefined): number {
     throw new Error("VK_ADS_TIMEOUT_MS должен быть целым числом от 1000 до 120000.");
   }
   return parsed;
+}
+
+function parsePreviewTtl(value: string | undefined): number {
+  if (value === undefined) return 10 * 60 * 1_000;
+  const minutes = Number(value);
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 60) {
+    throw new Error("VK_ADS_PREVIEW_TTL_MINUTES должен быть целым числом от 1 до 60.");
+  }
+  return minutes * 60 * 1_000;
+}
+
+function parseWriteConfirmation(value: string | undefined): boolean {
+  if (value === undefined || value === "1") return true;
+  if (value === "0") return false;
+  throw new Error("VK_ADS_REQUIRE_WRITE_CONFIRMATION должен быть 0 или 1.");
 }
 
 function parseConnectionId(value: string | undefined): string {
@@ -62,12 +90,31 @@ function parseConnectionId(value: string | undefined): string {
   return connectionId;
 }
 
-function parseProfileName(value: string | undefined): string {
+export function parseProfileName(value: string | undefined): string {
   const profileName = value?.trim() || "default";
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profileName)) {
     throw new Error("VK_ADS_PROFILE может содержать только буквы, цифры, _ и - (до 64 символов).");
   }
   return profileName;
+}
+
+/**
+ * Credential и audit одного профиля живут в отдельном локальном файле.
+ * Профиль выбирается только до старта stdio-сервера, никогда MCP-вызовом.
+ */
+export function resolveProfileStorage(packageDirectory: string, profileName: string): ProfileStoragePaths {
+  const profile = parseProfileName(profileName);
+  const root = resolve(packageDirectory);
+  if (profile === "default") {
+    return {
+      envFile: resolve(root, ".env"),
+      auditFile: resolve(root, ".vk-ads-audit.json"),
+    };
+  }
+  return {
+    envFile: resolve(root, "profiles", `${profile}.env`),
+    auditFile: resolve(root, "profiles", `${profile}.vk-ads-audit.json`),
+  };
 }
 
 function parsePositiveIds(value: string | undefined, variableName: string): number[] {
@@ -77,6 +124,15 @@ function parsePositiveIds(value: string | undefined, variableName: string): numb
     throw new Error(`${variableName} должен содержать положительные целые ID через запятую.`);
   }
   return [...new Set(ids)];
+}
+
+function parseExternalSharingKey(value: string | undefined): string | undefined {
+  const key = value?.trim();
+  if (!key) return undefined;
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(key)) {
+    throw new Error("VK_ADS_EXTERNAL_SHARING_KEY имеет недопустимый формат.");
+  }
+  return key;
 }
 
 export function loadConfig(environment = process.env): AppConfig {
@@ -89,6 +145,7 @@ export function loadConfig(environment = process.env): AppConfig {
     throw new Error("Укажите в .env обе переменные: VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET.");
   }
   const clientCredentials = clientId && clientSecret ? { clientId, clientSecret } : undefined;
+  const externalSharingKey = parseExternalSharingKey(environment.VK_ADS_EXTERNAL_SHARING_KEY);
   if (!accessToken && !clientCredentials) {
     throw new Error("Создайте файл .env и заполните VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET. Токен сервер создаст сам.");
   }
@@ -98,6 +155,8 @@ export function loadConfig(environment = process.env): AppConfig {
     profileName,
     connectionId: parseConnectionId(environment.VK_ADS_CONNECTION_ID ?? profileName),
     timeoutMs: parseTimeout(environment.VK_ADS_TIMEOUT_MS),
+    previewTtlMs: parsePreviewTtl(environment.VK_ADS_PREVIEW_TTL_MINUTES),
+    requireWriteConfirmation: parseWriteConfirmation(environment.VK_ADS_REQUIRE_WRITE_CONFIRMATION),
     tokenProvider: () => accessToken,
     setAccessToken: (token) => { accessToken = token; },
     ...(clientCredentials ? { clientCredentials } : {}),
@@ -105,7 +164,9 @@ export function loadConfig(environment = process.env): AppConfig {
     ...(environment.VK_ADS_PII_UPLOAD_DIR ? { piiUploadDir: resolve(environment.VK_ADS_PII_UPLOAD_DIR) } : {}),
     allowPiiUploads: environment.VK_ADS_ALLOW_PII_UPLOADS === "1",
     allowAgencyWrites: environment.VK_ADS_ALLOW_AGENCY_WRITES === "1",
+    allowProfileWrites: environment.VK_ADS_ALLOW_PROFILE_WRITES === "1",
     allowSharingKeyRevoke: environment.VK_ADS_ALLOW_SHARING_KEY_REVOKE === "1",
+    ...(externalSharingKey ? { externalSharingKey } : {}),
     allowSkAdNetworkWrites: environment.VK_ADS_ALLOW_SKADNETWORK_WRITES === "1",
     skAdNetworkTestAppIds: parsePositiveIds(environment.VK_ADS_TEST_IOS_APP_IDS, "VK_ADS_TEST_IOS_APP_IDS"),
     allowInAppEventCategoryWrites: environment.VK_ADS_ALLOW_INAPP_EVENT_CATEGORY_WRITES === "1",

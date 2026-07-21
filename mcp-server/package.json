@@ -12,6 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs && vitest run",
     "api:check": "npm run build && node scripts/check-api-contracts.mjs && node scripts/check-vk-ads-api-docs.mjs",
+    "matrix:generate": "node scripts/generate-api-coverage-matrix.mjs",
+    "matrix:check": "npm run build && node scripts/check-api-coverage-matrix.mjs",
     "repo:check": "node scripts/check-repository-boundaries.mjs",
     "start": "node dist/index.js"
   },

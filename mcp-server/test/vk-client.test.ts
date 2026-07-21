@@ -36,6 +36,45 @@ describe("VkAdsClient", () => {
     expect(receivedUrl).toBe("https://ads.vk.com/api/v2/remarketing/counters/7.json");
   });
 
+  it("перечитывает и обновляет metadata Apple и Google приложений только документированными fixed paths", async () => {
+    const requests: Array<{ url: string; method: string; body: string }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+        return new Response(JSON.stringify({ id: 7, title: "Public app", category_id: 4 }), { status: 200 });
+      },
+    });
+
+    await expect(client.getAppleApp(535176909)).resolves.toMatchObject({ id: 7 });
+    await expect(client.refreshAppleAppMetadata(535176909)).resolves.toMatchObject({ id: 7 });
+    await expect(client.getGoogleApp("com.example.app")).resolves.toMatchObject({ id: 7 });
+    await expect(client.refreshGoogleAppMetadata("com.example.app")).resolves.toMatchObject({ id: 7 });
+    await expect(client.refreshGoogleAppMetadata("../unsafe")).rejects.toThrow("недопустимые символы");
+    expect(requests).toEqual([
+      { url: "https://ads.vk.com/api/v2/apple_apps/535176909.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v2/apple_apps/535176909.json", method: "POST", body: "{}" },
+      { url: "https://ads.vk.com/api/v2/google_apps/com.example.app.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v2/google_apps/com.example.app.json", method: "POST", body: "{}" },
+    ]);
+  });
+
+  it("создаёт v3-подписку только с документированными ресурсом и callback body", async () => {
+    let request: { url: string; method: string; body: string } | undefined;
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        request = { url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") };
+        return new Response(JSON.stringify({ id: 123 }), { status: 200 });
+      },
+    });
+
+    await expect(client.createSubscription({ resource: "BANNER", callbackUrl: "https://callback.example.test/vk" })).resolves.toEqual({ id: 123 });
+    expect(request).toEqual({ url: "https://ads.vk.com/api/v3/subscription.json", method: "POST", body: '{"resource":"BANNER","callback_url":"https://callback.example.test/vk"}' });
+  });
+
   it("изменяет и удаляет только предварительно проверенный test-счётчик", async () => {
     const requests: Array<{ url: string; method: string; body: string }> = [];
     const client = new VkAdsClient({
@@ -50,12 +89,148 @@ describe("VkAdsClient", () => {
     });
 
     await expect(client.renameTestRemarketingCounter(7, "__MCP_TEST__ renamed")).resolves.toMatchObject({ id: 7 });
+    await expect(client.createTestCounterGoal({ counterId: 7, name: "__MCP_TEST__ purchase", substr: "order_accepted", condition: "jse", goalType: "purchase", value: 45 })).resolves.toMatchObject({ id: 7 });
     await expect(client.deleteTestRemarketingCounter(7)).resolves.toEqual({});
+    await expect(client.deleteTestRemarketingCounterV2(7)).resolves.toEqual({});
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "POST", body: '{"name":"__MCP_TEST__ renamed"}' },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v2/remarketing/counters/7/goals.json", method: "POST", body: '{"substr":"order_accepted","condition":"jse","name":"__MCP_TEST__ purchase","goal_type":"purchase","value":45}' },
+      { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v1/remarketing_counters/7.json", method: "DELETE", body: "" },
+      { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "DELETE", body: "" },
+    ]);
+  });
+
+  it("вызывает опубликованные HTTP DELETE для группы, баннера и подписки", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method ?? "GET" });
+        if (init?.method === "DELETE") return new Response(null, { status: 204 });
+        if (String(url).includes("subscription.json")) return new Response(JSON.stringify({ count: 1, offset: 0, items: [{ id: 9 }] }), { status: 200 });
+        return new Response(JSON.stringify({ id: 7, name: "__MCP_TEST__ object" }), { status: 200 });
+      },
+    });
+
+    await expect(client.deleteAdGroupHttp(7)).resolves.toEqual({});
+    await expect(client.deleteBannerHttp(8)).resolves.toEqual({});
+    await expect(client.deleteSubscription(9)).resolves.toEqual({});
+    expect(requests).toEqual([
+      { url: "https://ads.vk.com/api/v2/ad_groups/7.json", method: "GET" },
+      { url: "https://ads.vk.com/api/v2/ad_groups/7.json", method: "DELETE" },
+      { url: "https://ads.vk.com/api/v2/banners/8.json", method: "GET" },
+      { url: "https://ads.vk.com/api/v2/banners/8.json", method: "DELETE" },
+      { url: "https://ads.vk.com/api/v3/subscription.json?offset=0&limit=200", method: "GET" },
+      { url: "https://ads.vk.com/api/v3/subscription/9.json", method: "DELETE" },
+    ]);
+  });
+
+  it("обновляет и удаляет связь manager-client только фиксированными URL", async () => {
+    const requests: Array<{ url: string; method: string; body: string }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+        if (init?.method === "DELETE") return new Response(null, { status: 204 });
+        if (init?.method === "POST") return new Response(null, { status: 204 });
+        return new Response(JSON.stringify({ count: 1, offset: 0, items: [{ id: 7, manager_id: 3, client_id: 9 }] }), { status: 200 });
+      },
+    });
+
+    await expect(client.updateAgencyManagerClient({ managerId: 3, clientId: 9, accessType: "readonly" })).resolves.toEqual({});
+    await expect(client.deleteAgencyManagerClient(3, 9)).resolves.toEqual({});
+    expect(requests).toEqual([
+      { url: "https://ads.vk.com/api/v3/manager/clients.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v2/agency/managers/3/clients/9.json", method: "POST", body: '{"access_type":"readonly"}' },
+      { url: "https://ads.vk.com/api/v3/manager/clients.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v2/agency/managers/3/clients/9.json", method: "DELETE", body: "" },
+    ]);
+  });
+
+  it("обновляет и удаляет связь agency-client только фиксированными URL", async () => {
+    const requests: Array<{ url: string; method: string; body: string }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+        if (init?.method === "DELETE" || init?.method === "POST") return new Response(null, { status: 204 });
+        return new Response(JSON.stringify({ items: [{ id: 9, access_type: "full_access" }] }), { status: 200 });
+      },
+    });
+
+    await expect(client.updateAgencyClient({ clientId: 9, isVkads: true, accessType: "full_access", additionalEmails: ["ops@example.test"], additionalInfo: { clientName: "Test client", clientInfo: "Test note" } })).resolves.toEqual({});
+    await expect(client.deleteAgencyClient(9)).resolves.toEqual({});
+    expect(requests).toEqual([
+      { url: "https://ads.vk.com/api/v2/agency/clients.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v2/agency/clients/9.json", method: "POST", body: '{"is_vkads":true,"access_type":"full_access","user":{"additional_emails":["ops@example.test"],"additional_info":{"client_name":"Test client","client_info":"Test note"}}}' },
+      { url: "https://ads.vk.com/api/v2/agency/clients.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v2/agency/clients/9.json", method: "DELETE", body: "" },
+    ]);
+  });
+
+  it("подключает существующий счётчик ремаркетинга без пароля только фиксированным URL", async () => {
+    let receivedUrl = "";
+    let receivedBody = "";
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        receivedUrl = String(url);
+        receivedBody = String(init?.body);
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    await expect(client.connectExistingRemarketingCounter({ counterId: 77, name: "Existing counter", flags: ["cookie_sync"] })).resolves.toEqual({});
+    expect(receivedUrl).toBe("https://ads.vk.com/api/v2/remarketing/counters.json");
+    expect(JSON.parse(receivedBody)).toEqual({ counter_id: 77, name: "Existing counter", flags: ["cookie_sync"] });
+  });
+
+  it("обновляет профиль только фиксированными v2 и v3 endpoint", async () => {
+    const requests: Array<{ url: string; body: string }> = [];
+    const client = new VkAdsClient({ tokenProvider: () => "test-token", timeoutMs: 1_000, fetchImplementation: async (url, init) => {
+      requests.push({ url: String(url), body: String(init?.body) });
+      return new Response(null, { status: 204 });
+    } });
+    await expect(client.updateUserProfile("v2", { language: "ru" })).resolves.toEqual({});
+    await expect(client.updateUserProfile("v3", { language: "en" })).resolves.toEqual({});
+    expect(requests).toEqual([{ url: "https://ads.vk.com/api/v2/user.json", body: '{"language":"ru"}' }, { url: "https://ads.vk.com/api/v3/user.json", body: '{"language":"en"}' }]);
+  });
+
+  it("отправляет ORD и billing writes только на документированные пути", async () => {
+    const requests: Array<{ url: string; method: string; body: string }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+        if (String(url).includes("subagents/42")) return new Response(JSON.stringify({ id: 42, name: "Контрагент" }), { status: 200 });
+        if (String(url).includes("acts/2026-07-01/7")) return new Response(JSON.stringify({ id: 7, acts_count: 1 }), { status: 200 });
+        if (String(url).includes("pads/7")) return new Response(null, { status: 204 });
+        if (String(url).includes("subagents.json")) return new Response(JSON.stringify({ id: 42, name: "Контрагент" }), { status: 201 });
+        if (String(url).includes("transactions/to/9")) return new Response(JSON.stringify({ amount: "10.00" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 7 }), { status: 200 });
+      },
+    });
+
+    await expect(client.updateOrdPartnerActs("2026-07-01", 7, [{ contract_id: 1, act_date: "2026-06-01", amount: "10.00", has_vat: false }])).resolves.toMatchObject({ id: 7 });
+    await expect(client.updateOrdPartnerPad(7, { name: "new" })).resolves.toEqual({});
+    await expect(client.createOrdPartnerSubagent({ user_type: "juridical", role: ["publisher"], name: "Контрагент" })).resolves.toMatchObject({ id: 42 });
+    await expect(client.updateOrdPartnerSubagent(42, { name: "Новое имя" })).resolves.toMatchObject({ id: 42 });
+    await expect(client.transferToClient(9, "10.00")).resolves.toMatchObject({ amount: "10.00" });
+    expect(requests).toEqual([
+      { url: "https://ads.vk.com/api/v1/ord/partner/acts/2026-07-01/7.json", method: "POST", body: '{"acts":[{"contract_id":1,"act_date":"2026-06-01","amount":"10.00","has_vat":false}]}' },
+      { url: "https://ads.vk.com/api/v1/ord/partner/pads/7.json", method: "POST", body: '{"name":"new"}' },
+      { url: "https://ads.vk.com/api/v1/ord/partner/subagents.json", method: "POST", body: '{"user_type":"juridical","role":["publisher"],"name":"Контрагент"}' },
+      { url: "https://ads.vk.com/api/v1/ord/partner/subagents/42.json", method: "POST", body: '{"name":"Новое имя"}' },
+      { url: "https://ads.vk.com/api/v2/billing/transactions/to/9.json", method: "POST", body: '{"amount":"10.00"}' },
     ]);
   });
 
@@ -149,11 +324,11 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url) => {
         receivedUrl = String(url);
-        return new Response(JSON.stringify({ items: [{ id: 1, total: { base: { clicks: 2 } } }], total: { base: { clicks: 2 } } }), { status: 200 });
+        return new Response(JSON.stringify({ items: [{ id: 1, total: { base: { clicks: 2 }, uniques: { reach: 0, total: 12 } } }], total: { base: { clicks: 2 }, uniques: { reach: 0, total: 12 } } }), { status: 200 });
       },
     });
 
-    await expect(client.getStatistics({ objectType: "banners", period: "summary", ids: [1], metrics: "base" })).resolves.toMatchObject({ items: [{ id: 1 }] });
+    await expect(client.getStatistics({ objectType: "banners", period: "summary", ids: [1], metrics: "base" })).resolves.toEqual({ items: [{ id: 1, total: { base: { clicks: 2 }, uniques: { total: 12 } } }], total: { base: { clicks: 2 }, uniques: { total: 12 } } });
     expect(receivedUrl).toBe("https://ads.vk.com/api/v2/statistics/banners/summary.json?metrics=base&id=1");
   });
 
@@ -169,6 +344,23 @@ describe("VkAdsClient", () => {
     });
     await expect(client.getStatistics({ objectType: "campaigns", period: "summary" })).resolves.toMatchObject({ items: [] });
     expect(receivedUrl).toBe("https://ads.vk.com/api/v2/statistics/campaigns/summary.json?metrics=base");
+  });
+
+  it("читает v3-дневную статистику только по документированному пути и полям", async () => {
+    let receivedUrl = "";
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url) => {
+        receivedUrl = String(url);
+        return new Response(JSON.stringify({ items: [{ id: 8, total: { uniques: { reach: 0, total: 9 } } }], total: { uniques: { reach: 0, total: 9 } } }), { status: 200 });
+      },
+    });
+
+    await expect(client.getStatistics({ apiVersion: "v3", objectType: "ad_groups", period: "day", ids: [8], dateFrom: "2026-07-01", dateTo: "2026-07-02", metrics: "uniques" })).resolves.toEqual({ items: [{ id: 8, total: { uniques: { total: 9 } } }], total: { uniques: { total: 9 } } });
+    expect(receivedUrl).toBe("https://ads.vk.com/api/v3/statistics/ad_groups/day.json?fields=uniques&id=8&date_from=2026-07-01&date_to=2026-07-02");
+    await expect(client.getStatistics({ apiVersion: "v3", objectType: "campaigns", period: "day", dateFrom: "2026-07-01", dateTo: "2026-07-02" })).rejects.toThrow("objectType=campaigns");
+    await expect(client.getStatistics({ apiVersion: "v3", objectType: "banners", period: "summary" })).rejects.toThrow("period=day");
   });
 
   it("поддерживает агрегированную статистику кабинета users", async () => {
@@ -221,6 +413,21 @@ describe("VkAdsClient", () => {
   it("требует диапазон дат для дневной статистики", async () => {
     const client = new VkAdsClient({ tokenProvider: () => "test-token", timeoutMs: 1_000, fetchImplementation: fetch });
     await expect(client.getStatistics({ objectType: "campaigns", period: "day" })).rejects.toThrow("period=day");
+  });
+
+  it("не удаляет подписку, если её нет в свежем v3 списке", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method ?? "GET" });
+        return new Response(JSON.stringify({ count: 0, offset: 0, items: [] }), { status: 200 });
+      },
+    });
+
+    await expect(client.deleteSubscription(9)).rejects.toThrow("только для v3-подписки");
+    expect(requests).toEqual([{ url: "https://ads.vk.com/api/v3/subscription.json?offset=0&limit=200", method: "GET" }]);
   });
 
   it("читает каталог packages без произвольного URL", async () => {
@@ -330,7 +537,7 @@ describe("VkAdsClient", () => {
     ]);
   });
 
-  it("читает только paged metadata прайс-листов и списков ремаркетинга", async () => {
+  it("читает только paged metadata прайс-листов и v2/v3 списков ремаркетинга, включая v3 detail", async () => {
     const urls: string[] = [];
     const client = new VkAdsClient({
       tokenProvider: () => "test-token",
@@ -340,6 +547,8 @@ describe("VkAdsClient", () => {
         urls.push(value);
         if (value.includes("offline_goals")) return new Response(JSON.stringify({ items: [{ id: 1 }] }), { status: 200 });
         if (value.includes("pricelists")) return new Response(JSON.stringify({ count: 1, offset: 2, items: [{ id: 2 }] }), { status: 200 });
+        if (value.includes("/api/v2/remarketing/users_lists.json")) return new Response(JSON.stringify({ count: 1, offset: 4, items: [{ id: 4, entries_count: 0 }] }), { status: 200 });
+        if (value.endsWith("/remarketing/users_lists/3.json")) return new Response(JSON.stringify({ id: 3, name: "metadata only", entries_count: 0 }), { status: 200 });
         return new Response(JSON.stringify({ count: 1, offset: 3, items: [{ id: 3, entries_count: 0 }] }), { status: 200 });
       },
     });
@@ -347,30 +556,49 @@ describe("VkAdsClient", () => {
     await expect(client.listOfflineGoals()).resolves.toEqual([{ id: 1 }]);
     await expect(client.listPricelists(2, 10)).resolves.toEqual({ count: 1, offset: 2, items: [{ id: 2 }] });
     await expect(client.listRemarketingUserLists(3, 10)).resolves.toEqual({ count: 1, offset: 3, items: [{ id: 3, entries_count: 0 }] });
+    await expect(client.listRemarketingUserListsV2(4, 10)).resolves.toEqual({ count: 1, offset: 4, items: [{ id: 4, entries_count: 0 }] });
+    await expect(client.getRemarketingUserListV3(3)).resolves.toEqual({ id: 3, name: "metadata only", entries_count: 0 });
     expect(urls).toEqual([
       "https://ads.vk.com/api/v2/remarketing/offline_goals.json",
       "https://ads.vk.com/api/v2/remarketing/pricelists.json?offset=2&limit=10",
       "https://ads.vk.com/api/v3/remarketing/users_lists.json?offset=3&limit=10",
+      "https://ads.vk.com/api/v2/remarketing/users_lists.json?offset=4&limit=10",
+      "https://ads.vk.com/api/v3/remarketing/users_lists/3.json",
     ]);
   });
 
-  it("изменяет только найденный __MCP_TEST__ прайс-лист фиксированным путём", async () => {
-    const requests: Array<{ url: string; method: string; body: string | null }> = [];
+  it("получает v1 технический URL ID только по публичному HTTPS-адресу", async () => {
+    let receivedUrl = "";
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url) => {
+        receivedUrl = String(url);
+        return new Response(JSON.stringify({ id: 42, url_types: ["external"], postback_trackers: ["private"] }), { status: 200 });
+      },
+    });
+
+    await expect(client.resolveUrlIdV1("https://example.test/path?a=1")).resolves.toMatchObject({ id: 42 });
+    expect(receivedUrl).toBe("https://ads.vk.com/api/v1/urls/?url=https%3A%2F%2Fexample.test%2Fpath%3Fa%3D1");
+    await expect(client.resolveUrlIdV1("http://example.test/")).rejects.toThrow("HTTPS");
+  });
+
+  it("создаёт пустой blocked test-прайслист без URL и credentials", async () => {
+    let receivedUrl = "";
+    let receivedBody = "";
     const client = new VkAdsClient({
       tokenProvider: () => "test-token",
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
-        requests.push({ url: String(url), method: init?.method ?? "GET", body: typeof init?.body === "string" ? init.body : null });
-        if ((init?.method ?? "GET") === "GET") return new Response(JSON.stringify({ count: 1, offset: 0, items: [{ id: 21, name: "__MCP_TEST__ catalogue" }] }), { status: 200 });
-        return new Response(JSON.stringify({ id: 21 }), { status: 200 });
+        receivedUrl = String(url);
+        receivedBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({ id: 22 }), { status: 201 });
       },
     });
 
-    await expect(client.updateTestPricelist({ id: 21, name: "__MCP_TEST__ catalogue v2", status: "blocked", removeUtmTags: true })).resolves.toEqual({ id: 21 });
-    expect(requests).toEqual([
-      { url: "https://ads.vk.com/api/v2/remarketing/pricelists.json?offset=0&limit=50", method: "GET", body: null },
-      { url: "https://ads.vk.com/api/v2/remarketing/pricelists/21.json", method: "POST", body: JSON.stringify({ name: "__MCP_TEST__ catalogue v2", status: "blocked", remove_utm_tags: true }) },
-    ]);
+    await expect(client.createTestPricelist("__MCP_TEST__ empty catalogue")).resolves.toEqual({ id: 22 });
+    expect(receivedUrl).toBe("https://ads.vk.com/api/v2/remarketing/pricelists.json");
+    expect(receivedBody).toBe(JSON.stringify({ name: "__MCP_TEST__ empty catalogue", status: "blocked", remove_utm_tags: true, source_type: "api" }));
   });
 
   it("читает цели счётчика только через документированный detail endpoint", async () => {
@@ -823,6 +1051,19 @@ describe("VkAdsClient", () => {
     await expect(client.getUser()).rejects.toEqual(expect.objectContaining<VkAdsApiError>({ status: 401, message: "VK Ads API вернул HTTP 401." }));
   });
 
+  it("выводит для write validation только код и имена полей", async () => {
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async () => new Response(JSON.stringify({ error: { code: "validation_failed", message: "private@example.test", fields: { goal_id: { message: "secret" }, counter_id: { message: "secret" } } } }), { status: 400 }),
+    });
+
+    await expect(client.createTestSegment({ name: "__MCP_TEST__ segment", counterId: 20, leftDays: 365, goalId: "uss" })).rejects.toEqual(expect.objectContaining<VkAdsApiError>({
+      status: 400,
+      message: "VK Ads API вернул HTTP 400. Диагностика: validation_failed; поля: goal_id, counter_id.",
+    }));
+  });
+
   it("один раз обновляет токен и повторяет только read-запрос", async () => {
     const authorizations: string[] = [];
     const client = new VkAdsClient({
@@ -838,6 +1079,21 @@ describe("VkAdsClient", () => {
 
     await expect(client.getUser()).resolves.toEqual({ id: 42, currency: "RUB" });
     expect(authorizations).toEqual(["Bearer expired-token", "Bearer fresh-token"]);
+  });
+
+  it("читает профиль через фиксированный v3 endpoint", async () => {
+    let receivedUrl = "";
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url) => {
+        receivedUrl = String(url);
+        return new Response(JSON.stringify({ id: 42, status: "active" }), { status: 200 });
+      },
+    });
+
+    await expect(client.getUserV3()).resolves.toEqual({ id: 42, status: "active" });
+    expect(receivedUrl).toBe("https://ads.vk.com/api/v3/user.json");
   });
 
   it("повторяет read один раз после 429 с ограниченной паузой Retry-After", async () => {
@@ -914,15 +1170,16 @@ describe("VkAdsClient", () => {
       },
     });
 
-    await expect(client.createTestSegment({ name: "__MCP_TEST__ segment", counterSourceId: 20, leftDays: 365 })).resolves.toEqual({ id: 33 });
+    await expect(client.createTestSegment({ name: "__MCP_TEST__ segment", counterId: 20, leftDays: 365, goalId: "uss" })).resolves.toEqual({ id: 33 });
     expect(receivedUrl).toBe("https://ads.vk.com/api/v2/remarketing/segments.json");
     expect(JSON.parse(receivedBody)).toEqual({
       name: "__MCP_TEST__ segment",
       pass_condition: 1,
-      relations: [{ object_type: "remarketing_counter", params: { source_id: 20, goal_id: "", left: 365, right: 0, type: "positive" } }],
+      relations: [{ object_type: "remarketing_counter", params: { source_id: 20, goal_id: "uss", left: 365, right: 0, type: "positive" } }],
     });
-    await expect(client.createTestSegment({ name: "ordinary", counterSourceId: 20, leftDays: 365 })).rejects.toThrow("__MCP_TEST__");
+    await expect(client.createTestSegment({ name: "ordinary", counterId: 20, leftDays: 365, goalId: "uss" })).rejects.toThrow("__MCP_TEST__");
   });
+
 
   it("изменяет и удаляет только test-сегмент по фиксированным endpoint", async () => {
     const calls: Array<{ url: string; method: string; body: string }> = [];
@@ -966,6 +1223,25 @@ describe("VkAdsClient", () => {
     await client.deleteTestSegmentRelation({ segmentId: 33, relationId: 77 });
     expect(calls.map((call) => `${call.method} ${call.url}`)).toContain("POST https://ads.vk.com/api/v2/remarketing/segments/33/relations.json");
     expect(calls.map((call) => `${call.method} ${call.url}`)).toContain("DELETE https://ads.vk.com/api/v2/remarketing/segments/33/relations/77.json");
+  });
+
+  it("изменяет params только связи между двумя test-сегментами", async () => {
+    const calls: Array<{ url: string; method: string; body: string }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        const call = { url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") };
+        calls.push(call);
+        if (call.method === "POST") return new Response(JSON.stringify({ id: 77, object_id: 34, object_type: "segment" }), { status: 200 });
+        if (call.url.includes("/relations.json")) return new Response(JSON.stringify({ items: [{ id: 77, object_id: 34, object_type: "segment" }] }), { status: 200 });
+        if (call.url.endsWith("/segments/33.json")) return new Response(JSON.stringify({ id: 33, name: "__MCP_TEST__ parent" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 34, name: "__MCP_TEST__ nested" }), { status: 200 });
+      },
+    });
+
+    await expect(client.updateTestSegmentRelation({ segmentId: 33, relationId: 77, left: 30, right: 1, type: "negative" })).resolves.toMatchObject({ id: 77 });
+    expect(calls.at(-1)).toEqual({ url: "https://ads.vk.com/api/v2/remarketing/segments/33/relations/77.json", method: "POST", body: JSON.stringify({ params: { left: 30, right: 1, type: "negative" } }) });
   });
 
   it("не отправляет remoderation, пока VK не разрешил её test-banner", async () => {
@@ -1207,6 +1483,63 @@ describe("VkAdsClient", () => {
     await expect(client.createUrl("https://127.0.0.1/")).rejects.toThrow("публичный домен");
   });
 
+  it("выполняет production CRUD ad plan без test-prefix и с фиксированными URL/payload", async () => {
+    const requests: Array<{ url: string; method: string; body: string }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+        if (init?.method === "GET") return new Response(JSON.stringify({ id: 42, name: "Production plan" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 42, name: "Production plan", status: "blocked" }), { status: 200 });
+      },
+    });
+
+    await expect(client.createAdPlan({ name: "Production plan", objective: "traffic", status: "blocked" })).resolves.toMatchObject({ id: 42 });
+    await expect(client.updateAdPlan(42, { name: "Production plan renamed", budget_limit_day: 1500 })).resolves.toMatchObject({ id: 42 });
+    await expect(client.deleteAdPlan(42)).resolves.toMatchObject({ id: 42 });
+    expect(requests).toEqual([
+      { url: "https://ads.vk.com/api/v2/ad_plans.json", method: "POST", body: '{"name":"Production plan","objective":"traffic","status":"blocked"}' },
+      { url: "https://ads.vk.com/api/v2/ad_plans/42.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v2/ad_plans/42.json", method: "POST", body: '{"name":"Production plan renamed","budget_limit_day":1500}' },
+      { url: "https://ads.vk.com/api/v2/ad_plans/42.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v2/ad_plans/42.json", method: "POST", body: '{"status":"deleted"}' },
+    ]);
+  });
+
+  it("читает currencies через фиксированный справочный endpoint", async () => {
+    let receivedUrl = "";
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url) => {
+        receivedUrl = String(url);
+        return new Response(JSON.stringify({ items: [{ name: "RUB" }] }), { status: 200 });
+      },
+    });
+    await expect(client.listCurrencies()).resolves.toEqual([{ name: "RUB" }]);
+    expect(receivedUrl).toBe("https://ads.vk.com/api/v2/currencies.json");
+  });
+
+  it("отправляет production mass-action с документированным статусом", async () => {
+    const requests: Array<{ url: string; method: string; body: string }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+        if (init?.method === "GET") return new Response(JSON.stringify({ id: 7, name: "Production object" }), { status: 200 });
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    await expect(client.manageBanners([{ id: 7, status: "blocked" }])).resolves.toEqual({ items: [{ id: 7, status: "blocked" }] });
+    expect(requests).toEqual([
+      { url: "https://ads.vk.com/api/v2/banners/7.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v2/banners/mass_action.json", method: "POST", body: '[{"id":7,"status":"blocked"}]' },
+    ]);
+  });
+
   it("создаёт только остановленный test banner проверенного pattern 284", async () => {
     const requests: Array<{ url: string; method: string; body: string | undefined }> = [];
     const client = new VkAdsClient({
@@ -1315,6 +1648,25 @@ describe("VkAdsClient", () => {
     ]);
   });
 
+  it("soft-delete только существующую test campaign", async () => {
+    const requests: Array<{ url: string; method: string; body: string | undefined }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method ?? "", body: typeof init?.body === "string" ? init.body : undefined });
+        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 12, name: "__MCP_TEST__ campaign" }), { status: 200 });
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    await expect(client.deleteTestCampaign(12)).resolves.toEqual({});
+    expect(requests).toEqual([
+      { url: "https://ads.vk.com/api/v2/campaigns/12.json", method: "GET", body: undefined },
+      { url: "https://ads.vk.com/api/v2/campaigns/12.json", method: "POST", body: JSON.stringify({ status: "deleted" }) },
+    ]);
+  });
+
   it("изменяет дневной лимит существующей кампании через тот же endpoint", async () => {
     const requests: Array<{ url: string; method: string; body: string | undefined }> = [];
     const client = new VkAdsClient({
@@ -1396,6 +1748,92 @@ describe("VkAdsClient", () => {
     expect({ name, type, filename }).toEqual({ name: "__MCP_TEST__ audience", type: "vk", filename: "audience.txt" });
   });
 
+  it("загружает v3 test-список с name и type как multipart-полями", async () => {
+    let receivedUrl = "";
+    let filename = "";
+    let name = "";
+    let type = "";
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        receivedUrl = String(url);
+        const form = init?.body as FormData;
+        filename = (form.get("file") as File).name;
+        name = String(form.get("name"));
+        type = String(form.get("type"));
+        return new Response(JSON.stringify({ id: 100, status: "receiving" }), { status: 200 });
+      },
+    });
+
+    await expect(client.createTestRemarketingUserListV3({ name: "__MCP_TEST__ v3 audience", type: "vk", filename: "audience.csv", mimeType: "text/csv", bytes: Buffer.from("1\n2\n") })).resolves.toMatchObject({ id: 100 });
+    expect(receivedUrl).toBe("https://ads.vk.com/api/v3/remarketing/users_lists.json");
+    expect({ filename, name, type }).toEqual({ filename: "audience.csv", name: "__MCP_TEST__ v3 audience", type: "vk" });
+  });
+
+  it("загружает test-список офлайн-конверсий документированным multipart контрактом", async () => {
+    let receivedUrl = "";
+    let filename = "";
+    let data: Record<string, unknown> = {};
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        receivedUrl = String(url);
+        const form = init?.body as FormData;
+        filename = (form.get("list_users") as File).name;
+        data = JSON.parse(String(form.get("data"))) as Record<string, unknown>;
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    await expect(client.createTestOfflineGoal({
+      name: "__MCP_TEST__ offline", attributionPeriod: 90, type: "hash_email", filename: "offline.csv", mimeType: "text/csv", bytes: Buffer.from("hash\n"),
+    })).resolves.toEqual({});
+    expect(receivedUrl).toBe("https://ads.vk.com/api/v2/remarketing/offline_goals.json");
+    expect({ filename, data }).toEqual({ filename: "offline.csv", data: { name: "__MCP_TEST__ offline", attribution_period: 90, type: "hash_email" } });
+  });
+
+  it("обновляет только существующий test offline-goal документированным multipart контрактом", async () => {
+    const requests: string[] = [];
+    let receivedUrl = "";
+    let data: Record<string, unknown> = {};
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push(`${init?.method ?? "GET"} ${String(url)}`);
+        if (init?.method === "GET") return new Response(JSON.stringify({ items: [{ id: 42, name: "__MCP_TEST__ offline" }] }), { status: 200 });
+        receivedUrl = String(url);
+        data = JSON.parse(String((init?.body as FormData).get("data"))) as Record<string, unknown>;
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    await expect(client.updateTestOfflineGoal({ id: 42, name: "__MCP_TEST__ renamed" })).resolves.toEqual({});
+    expect(requests).toEqual(["GET https://ads.vk.com/api/v2/remarketing/offline_goals.json", "POST https://ads.vk.com/api/v2/remarketing/offline_goals/42.json"]);
+    expect({ receivedUrl, data }).toEqual({ receivedUrl: "https://ads.vk.com/api/v2/remarketing/offline_goals/42.json", data: { name: "__MCP_TEST__ renamed" } });
+  });
+
+  it("удаляет только предварительно подтверждённый __MCP_TEST__ список офлайн-конверсий", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method ?? "GET" });
+        if (init?.method === "DELETE") return new Response(null, { status: 204 });
+        return new Response(JSON.stringify({ items: [{ id: 42, name: "__MCP_TEST__ offline" }] }), { status: 200 });
+      },
+    });
+
+    await expect(client.deleteTestOfflineGoal(42)).resolves.toEqual({});
+    expect(requests).toEqual([
+      { url: "https://ads.vk.com/api/v2/remarketing/offline_goals.json", method: "GET" },
+      { url: "https://ads.vk.com/api/v2/remarketing/offline_goals/42.json", method: "DELETE" },
+    ]);
+  });
+
   it("переименовывает и удаляет только test-список ремаркетинга", async () => {
     const requests: Array<{ url: string; method: string; body?: string }> = [];
     const client = new VkAdsClient({
@@ -1410,12 +1848,29 @@ describe("VkAdsClient", () => {
 
     await client.renameTestRemarketingUserList(99, "__MCP_TEST__ renamed");
     await client.deleteTestRemarketingUserList(99);
+    await client.deleteTestRemarketingUserListV3(99);
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v2/remarketing/users_lists/99.json", method: "GET" },
       { url: "https://ads.vk.com/api/v2/remarketing/users_lists/99.json", method: "POST", body: JSON.stringify({ name: "__MCP_TEST__ renamed" }) },
       { url: "https://ads.vk.com/api/v2/remarketing/users_lists/99.json", method: "GET" },
-      { url: "https://ads.vk.com/api/v2/remarketing/users_lists/99.json", method: "DELETE" },
+      { url: "https://ads.vk.com/api/v1/remarketing_users_list/99.json", method: "DELETE" },
+      { url: "https://ads.vk.com/api/v2/remarketing/users_lists/99.json", method: "GET" },
+      { url: "https://ads.vk.com/api/v3/remarketing/users_lists/99.json", method: "DELETE" },
     ]);
+  });
+
+  it("переименовывает test-список через документированный v3 endpoint", async () => {
+    const requests: Array<{ url: string; method: string; body: string }> = [];
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token", timeoutMs: 1_000,
+      fetchImplementation: async (url, init) => {
+        requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+        if ((init?.method ?? "GET") === "GET") return new Response(JSON.stringify({ id: 99, name: "__MCP_TEST__ source" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 99, name: "__MCP_TEST__ renamed v3" }), { status: 200 });
+      },
+    });
+    await expect(client.renameTestRemarketingUserListV3(99, "__MCP_TEST__ renamed v3")).resolves.toMatchObject({ id: 99 });
+    expect(requests.at(-1)).toEqual({ url: "https://ads.vk.com/api/v3/remarketing/users_lists/99.json", method: "POST", body: JSON.stringify({ name: "__MCP_TEST__ renamed v3" }) });
   });
 
   it("подключает только существующего клиента агентства через фиксированный contract", async () => {
@@ -1458,6 +1913,8 @@ describe("VkAdsClient", () => {
       name: "__MCP_TEST__ geo",
       regions: [{ lat: 55.75583, lng: 37.6173, radius: 3000, label: "Центр" }],
     });
+    await expect(client.createTestLocalGeo({ name: "__MCP_TEST__ too small", regions: [{ lat: 0, lng: 0, radius: 499, label: "Точка" }] })).rejects.toThrow("от 500 до 10000");
+    await expect(client.createTestLocalGeo({ name: "__MCP_TEST__ too large", regions: [{ lat: 0, lng: 0, radius: 10_001, label: "Точка" }] })).rejects.toThrow("от 500 до 10000");
     await expect(client.createTestLocalGeo({ name: "Обычное гео", regions: [{ lat: 0, lng: 0, radius: 1, label: "Точка" }] })).rejects.toThrow("__MCP_TEST__");
   });
 
@@ -1502,7 +1959,7 @@ describe("VkAdsClient", () => {
     ]);
   });
 
-  it("использует фиксированные пути для отзыва ключа и SKAdNetwork", async () => {
+  it("использует фиксированные пути для активации и отзыва ключа, а также SKAdNetwork", async () => {
     const requests: Array<{ url: string; method: string; body?: string }> = [];
     const client = new VkAdsClient({
       tokenProvider: () => "test-token",
@@ -1513,10 +1970,12 @@ describe("VkAdsClient", () => {
       },
     });
 
+    await client.activateExternalSharingKey("safe_key-7");
     await client.revokeSharingKey("safe_key-7");
     await client.shareSkAdNetworkIds({ appId: 10, count: 2, recipient: "test@example.test" });
     await client.withdrawSkAdNetworkIds({ appId: 10, count: 1, recipient: "test@example.test" });
     expect(requests).toEqual([
+      { url: "https://ads.vk.com/api/v2/sharing_keys/safe_key-7.json", method: "POST", body: "{}" },
       { url: "https://ads.vk.com/api/v2/sharing_keys/safe_key-7.json", method: "DELETE" },
       { url: "https://ads.vk.com/api/v2/apple_apps/10/sk_ad_network_ids/share.json", method: "POST", body: JSON.stringify({ count: 2, username: "test@example.test" }) },
       { url: "https://ads.vk.com/api/v2/apple_apps/10/sk_ad_network_ids/withdraw.json", method: "POST", body: JSON.stringify({ count: 1, username: "test@example.test" }) },

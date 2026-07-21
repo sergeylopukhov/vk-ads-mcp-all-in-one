@@ -4,7 +4,7 @@ import { config as loadDotenv } from "dotenv";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadConfig } from "./config.js";
+import { loadConfig, resolveProfileStorage } from "./config.js";
 import { EnvFile } from "./env-file.js";
 import { createServer } from "./server.js";
 import { TokenRateLimiter } from "./rate-limiter.js";
@@ -12,18 +12,22 @@ import { instrumentFetch } from "./observability.js";
 import { VkAdsClient } from "./vk-client.js";
 import { VkAdsTokenManager } from "./vk-ads-token.js";
 
-/** .env лежит рядом с package.json, независимо от текущей папки MCP-клиента. */
+/** Профиль выбирается только при запуске; MCP не может подменить credential. */
 const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-loadDotenv({ path: resolve(packageDirectory, ".env"), override: false, quiet: true });
+const startupProfile = process.env.VK_ADS_PROFILE?.trim() || "default";
+const profileStorage = resolveProfileStorage(packageDirectory, startupProfile);
+process.env.VK_ADS_PROFILE = startupProfile;
+loadDotenv({ path: profileStorage.envFile, override: false, quiet: true });
 
 const config = loadConfig();
-const envFile = new EnvFile(resolve(packageDirectory, ".env"));
+const envFile = new EnvFile(profileStorage.envFile);
 const tokenManager = config.clientCredentials
   ? new VkAdsTokenManager({
       credentials: config.clientCredentials,
       envFile,
       getAccessToken: config.tokenProvider,
       getRefreshToken: () => process.env.VK_ADS_REFRESH_TOKEN?.trim() || undefined,
+      getTokenExpiresAt: () => process.env.VK_ADS_TOKEN_EXPIRES_AT?.trim() || undefined,
       setAccessToken: config.setAccessToken,
       timeoutMs: config.timeoutMs,
     })
@@ -41,21 +45,28 @@ const client = new VkAdsClient({
   fetchImplementation: instrumentFetch(fetch, process.env.VK_ADS_LOG === "1"),
   waitForRequest: () => rateLimiter.wait(),
 });
+// Не принимаем MCP-запросы с почти истёкшим токеном; ошибки OAuth останавливают старт.
+await tokenManager?.renewOnStartup();
 const server = createServer(client, config.mode, {
   connectionId: config.connectionId,
   profileName: config.profileName,
+  previewTtlMs: config.previewTtlMs,
+  requireWriteConfirmation: config.requireWriteConfirmation,
   ...(config.uploadDir ? { uploadDir: config.uploadDir } : {}),
   ...(config.piiUploadDir ? { piiUploadDir: config.piiUploadDir } : {}),
   allowPiiUploads: config.allowPiiUploads,
   allowAgencyWrites: config.allowAgencyWrites,
+  allowProfileWrites: config.allowProfileWrites,
   allowSharingKeyRevoke: config.allowSharingKeyRevoke,
+  ...(config.externalSharingKey ? { externalSharingKey: config.externalSharingKey } : {}),
   allowSkAdNetworkWrites: config.allowSkAdNetworkWrites,
   skAdNetworkTestAppIds: config.skAdNetworkTestAppIds,
   allowInAppEventCategoryWrites: config.allowInAppEventCategoryWrites,
   inAppEventTestAppIds: config.inAppEventTestAppIds,
   allowRemarketingCounterWrites: config.allowRemarketingCounterWrites,
   remarketingCounterTestIds: config.remarketingCounterTestIds,
-  auditFile: config.auditFile,
+  ...(tokenManager ? { tokenRecovery: { recover: () => tokenManager.recoverTokenLimit() } } : {}),
+  auditFile: process.env.VK_ADS_AUDIT_FILE ? config.auditFile : profileStorage.auditFile,
 });
 
 await server.connect(new StdioServerTransport());

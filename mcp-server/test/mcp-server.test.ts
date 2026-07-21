@@ -81,6 +81,18 @@ describe("MCP-контракт", () => {
     await Promise.all([client.close(), server.close()]);
   });
 
+  it("не готовит preview для legacy write-пути вне текущего официального индекса", async () => {
+    const server = createServer(createClientStub(), "write");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const result = await client.callTool({ name: "write_preview", arguments: { operation: "create_campaign", payload: {} } });
+    expect(result.isError).toBe(true);
+    expect(result.content.map((item) => item.type === "text" ? item.text : "").join(" ")).toContain("отсутствует в текущем официальном индексе");
+    await Promise.all([client.close(), server.close()]);
+  });
+
   it("отдаёт профиль и проверенный список полей banner через read-only инструменты", async () => {
     const server = createServer(createClientStub(), "readonly");
     const client = new Client({ name: "test-client", version: "0.0.0" });
@@ -89,9 +101,45 @@ describe("MCP-контракт", () => {
 
     const account = await client.callTool({ name: "call_read_tool", arguments: { tool_name: "vk_get_user", arguments: {} } });
     expect(account.structuredContent).toMatchObject({ data: { account: { id: 1, currency: "RUB" } } });
+    expect(JSON.stringify(account.structuredContent)).not.toContain("username");
 
     const fields = await client.callTool({ name: "banner_fields_list", arguments: {} });
     expect(fields.structuredContent).toMatchObject({ fields: expect.arrayContaining(["content", "textblocks", "urls"]) });
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("читает связи сегмента только по явному segment_id", async () => {
+    const requested: number[] = [];
+    const server = createServer({
+      ...createClientStub(),
+      listSegmentRelations: async (segmentId: number) => {
+        requested.push(segmentId);
+        return [{ id: 5, object_id: 8, object_type: "segment", params: { left: 30, right: 1 } }];
+      },
+    } as unknown as VkAdsClient, "readonly");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const result = await client.callTool({ name: "segment_relations_list", arguments: { segment_id: 8 } });
+    expect(result.structuredContent).toEqual({ items: [{ id: 5, object_id: 8, object_type: "segment", params: { left: 30, right: 1 } }] });
+    expect(requested).toEqual([8]);
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("получает v1 URL ID без tracker и исходного URL в ответе", async () => {
+    const server = createServer({
+      ...createClientStub(),
+      resolveUrlIdV1: async () => ({ id: 42, url: "https://example.test/private", url_types: ["external"], postback_trackers: ["private"], has_goals: false }),
+    } as unknown as VkAdsClient, "readonly");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const result = await client.callTool({ name: "url_id_resolve_v1", arguments: { url: "https://example.test/" } });
+    expect(result.structuredContent).toEqual({ item: { id: 42, url_types: ["external"], has_goals: false } });
 
     await Promise.all([client.close(), server.close()]);
   });
@@ -111,6 +159,21 @@ describe("MCP-контракт", () => {
     const keys = await client.callTool({ name: "vk_get_sharing_keys", arguments: { arguments: {} } });
     expect(keys.structuredContent).toEqual({ data: { items: [{ id: 7, source_types: ["segments"], recipients_count: 1 }] } });
 
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("фильтрует receipt и client metadata из финансовых групп", async () => {
+    const server = createServer({
+      ...createClientStub(),
+      listTransactionGroups: async () => ({ count: 1, offset: 0, items: [{ id: 1, amount: "10", receipt: "https://private.example/receipt", description: "private", client_name: "Private" }] }),
+    } as unknown as VkAdsClient, "readonly");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const groups = await client.callTool({ name: "transaction_groups_list", arguments: { offset: 0, limit: 1 } });
+    expect(groups.structuredContent).toEqual({ count: 1, offset: 0, items: [{ id: 1, amount: "10" }] });
+    expect(JSON.stringify(groups.structuredContent)).not.toContain("private.example");
     await Promise.all([client.close(), server.close()]);
   });
 
@@ -198,6 +261,22 @@ describe("MCP-контракт", () => {
     const response = await client.callTool({ name: "call_read_tool", arguments: { tool_name: "vk_get_urls", arguments: { id: 42 } } });
     expect(response.structuredContent).toMatchObject({ data: { id: 42 } });
     expect(calls).toEqual([42]);
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("маршрутизирует v3 профиль отдельно и скрывает PII", async () => {
+    const server = createServer({
+      ...createClientStub(),
+      getUserV3: async () => ({ id: 42, status: "active", username: "private@example.test", phone: "+79990000000" }),
+    } as unknown as VkAdsClient, "readonly");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const response = await client.callTool({ name: "call_read_tool", arguments: { tool_name: "vk_get_user", arguments: { api_version: "v3" } } });
+    expect(response.structuredContent).toMatchObject({ data: { account: { id: 42, currency: null, info_currency: null, status: "active", timezone: null }, api_version: "v3" } });
+    expect(JSON.stringify(response.structuredContent)).not.toContain("private@example.test");
 
     await Promise.all([client.close(), server.close()]);
   });
@@ -296,6 +375,26 @@ describe("MCP-контракт", () => {
     await client.callTool({ name: "call_read_tool", arguments: { tool_name: "vk_get_ad_groups", arguments: { fields: ["id", "targetings"] } } });
     expect(planArgs).toEqual([[0, 100, ["id", "budget_limit"]]]);
     expect(groupArgs).toEqual([[0, 100, ["id", "targetings"]]]);
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("маршрутизирует v3-дневную статистику через строгую schema", async () => {
+    const received: unknown[] = [];
+    const server = createServer({
+      ...createClientStub(),
+      getStatistics: async (input: unknown) => {
+        received.push(input);
+        return { items: [], total: {} };
+      },
+    } as unknown as VkAdsClient, "readonly");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const response = await client.callTool({ name: "call_read_tool", arguments: { tool_name: "vk_get_statistics", arguments: { api_version: "v3", object_type: "ad_groups", period: "day", ids: [8], date_from: "2026-07-01", date_to: "2026-07-02", metrics: "uniques" } } });
+    expect(response.isError).not.toBe(true);
+    expect(received).toEqual([{ apiVersion: "v3", objectType: "ad_groups", period: "day", ids: [8], dateFrom: "2026-07-01", dateTo: "2026-07-02", metrics: "uniques" }]);
 
     await Promise.all([client.close(), server.close()]);
   });
@@ -453,7 +552,7 @@ describe("MCP-контракт", () => {
   it("отдаёт только metadata списка ремаркетинга по ID", async () => {
     const server = createServer({
       ...createClientStub(),
-      listRemarketingUserLists: async () => ({ count: 1, offset: 0, items: [{ id: 88, name: "Список", status: "ready", contacts: ["скрыто"] }] }),
+      getRemarketingUserListV3: async () => ({ id: 88, name: "Список", status: "ready", contacts: ["скрыто"] }),
     } as unknown as VkAdsClient, "readonly");
     const client = new Client({ name: "test-client", version: "0.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -461,6 +560,26 @@ describe("MCP-контракт", () => {
 
     const result = await client.callTool({ name: "remarketing_list_get", arguments: { id: 88 } });
     expect(result.structuredContent).toEqual({ item: { id: 88, name: "Список", status: "ready" } });
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("маршрутизирует v2 и v3 списки ремаркетинга по явной версии", async () => {
+    const calls: string[] = [];
+    const server = createServer({
+      ...createClientStub(),
+      listRemarketingUserLists: async () => { calls.push("v3"); return { count: 0, offset: 0, items: [] }; },
+      listRemarketingUserListsV2: async () => { calls.push("v2"); return { count: 0, offset: 0, items: [] }; },
+    } as unknown as VkAdsClient, "readonly");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const v2 = await client.callTool({ name: "call_read_tool", arguments: { tool_name: "vk_get_remarketing_lists", arguments: { api_version: "v2", offset: 0, limit: 1 } } });
+    const v3 = await client.callTool({ name: "call_read_tool", arguments: { tool_name: "vk_get_remarketing_lists", arguments: { api_version: "v3", offset: 0, limit: 1 } } });
+    expect(v2.structuredContent).toMatchObject({ data: { api_version: "v2", count: 0 } });
+    expect(v3.structuredContent).toMatchObject({ data: { api_version: "v3", count: 0 } });
+    expect(calls).toEqual(["v2", "v3"]);
 
     await Promise.all([client.close(), server.close()]);
   });
@@ -660,7 +779,7 @@ describe("MCP-контракт", () => {
   it("показывает preflight, reread и audit для подтверждённой test-записи", async () => {
     const server = createServer({
       ...createClientStub(),
-      createTestAdPlan: async () => ({ id: 10 }),
+      createAdPlan: async () => ({ id: 10 }),
       getAdPlan: async () => ({ id: 10, name: "__MCP_TEST__ created", status: "blocked" }),
       listPackages: async () => [{ id: 1, objective: ["traffic"] }],
     } as unknown as VkAdsClient, "write", { connectionId: "agency-client-a", profileName: "agency_a" });
@@ -678,10 +797,10 @@ describe("MCP-контракт", () => {
     expect(writeTools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(["vk_create_ad_plan", "vk_update_ad_plan", "vk_delete_ad_plan", "vk_create_campaign", "vk_update_campaign", "vk_create_ad_group", "vk_create_banner", "vk_update_banner", "vk_manage_banners", "vk_remoderate_banners", "vk_create_segment", "vk_update_segment", "vk_delete_segment", "vk_manage_segment_relations", "vk_create_remarketing_list", "vk_update_remarketing_list", "vk_delete_remarketing_list", "vk_connect_client", "vk_manage_local_geo", "vk_export_leads", "survey_respondents_export", "lead_form_copy", "vk_update_lead_form", "survey_form_copy", "lead_forms_archive_manage", "survey_forms_archive_manage"]));
 
     const preview = await client.callTool({ name: "vk_create_ad_plan", arguments: {
-      name: "__MCP_TEST__ created", objective: "traffic", package_id: 1,
+      name: "Production created", objective: "traffic",
     } });
     const previewData = preview.structuredContent as { id: string; confirmation_statement: string; connection_id: string; preflight: { expected_change: string } };
-    expect(previewData).toMatchObject({ connection_id: "agency-client-a", preflight: { expected_change: expect.stringContaining("остановленный") } });
+    expect(previewData).toMatchObject({ connection_id: "agency-client-a", preflight: { expected_change: expect.stringContaining("blocked") } });
 
     const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: previewData.id, confirmation_statement: previewData.confirmation_statement } });
     expect(executed.structuredContent).toMatchObject({ after: { reread: true, item: { id: 10 } }, audit: { status: "succeeded", connection_id: "agency-client-a" } });
@@ -764,8 +883,10 @@ describe("MCP-контракт", () => {
     const calls: Array<{ source: number; days: number }> = [];
     const server = createServer({
       ...createClientStub(),
-      createTestSegment: async ({ counterSourceId, leftDays }: { counterSourceId: number; leftDays: number }) => {
-        calls.push({ source: counterSourceId, days: leftDays });
+      listRemarketingCounters: async () => [{ id: 1, counter_id: 99, system_status: "active" }],
+      getGoals: async () => ({ topmailru: [{ counter_id: 99, goal: "uss" }] }),
+      createTestSegment: async ({ counterId, leftDays }: { counterId: number; leftDays: number }) => {
+        calls.push({ source: counterId, days: leftDays });
         return { id: 81 };
       },
       getSegment: async () => ({ id: 81, name: "__MCP_TEST__ segment", pass_condition: 1 }),
@@ -774,7 +895,7 @@ describe("MCP-контракт", () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
-    const preview = await client.callTool({ name: "vk_create_segment", arguments: { name: "__MCP_TEST__ segment", counter_source_id: 99, left_days: 30 } });
+    const preview = await client.callTool({ name: "vk_create_segment", arguments: { name: "__MCP_TEST__ segment", counter_id: 99, left_days: 30, goal_id: "uss" } });
     const data = preview.structuredContent as { id: string; confirmation_statement: string; preflight: { expected_change: string } };
     expect(data.preflight.expected_change).toContain("__MCP_TEST__");
     const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
@@ -824,22 +945,108 @@ describe("MCP-контракт", () => {
     await Promise.all([client.close(), server.close()]);
   });
 
-  it("готовит и выполняет banner mass-action только для __MCP_TEST__", async () => {
+  it("готовит и выполняет production banner mass-action через фиксированный preview", async () => {
     const calls: number[][] = [];
     const server = createServer({
       ...createClientStub(),
       getBanner: async (id: number) => ({ id, name: `__MCP_TEST__ ${id}`, status: "blocked" }),
-      blockTestBanners: async (ids: number[]) => { calls.push(ids); return { ids, status: "blocked" }; },
+      manageBanners: async (items: Array<{ id: number }>) => { calls.push(items.map((item) => item.id)); return { items }; },
     } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
-    const preview = await client.callTool({ name: "vk_manage_banners", arguments: { banner_ids: [10] } });
+    const preview = await client.callTool({ name: "vk_manage_banners", arguments: { items: [{ id: 10, status: "blocked" }] } });
     const data = preview.structuredContent as { id: string; confirmation_statement: string };
     const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
-    expect(executed.structuredContent).toMatchObject({ operation: "block_test_banners", after: { reread: true } });
+    expect(executed.structuredContent).toMatchObject({ operation: "manage_banners", after: { reread: true } });
     expect(calls).toEqual([[10]]);
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("проводит manager-client write через preview, точное подтверждение и reread", async () => {
+    const calls: Array<{ managerId: number; clientId: number; accessType: string }> = [];
+    const server = createServer({
+      ...createClientStub(),
+      listManagerClients: async () => [{ id: 9, manager_id: 3, access_type: "readonly" }],
+      updateAgencyManagerClient: async (input: { managerId: number; clientId: number; accessType: string }) => { calls.push(input); return {}; },
+    } as unknown as VkAdsClient, "write", { allowAgencyWrites: true });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "manager_client_update", arguments: { manager_id: 3, client_id: 9, access_type: "full_access" } });
+    const data = preview.structuredContent as { id: string; confirmation_statement: string; preflight: { before: Record<string, unknown>; risk: string } };
+    expect(data.preflight).toMatchObject({ risk: "high", before: { id: 9 } });
+    const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
+    expect(executed.structuredContent).toMatchObject({ operation: "update_manager_client", after: { reread: true }, audit: { status: "succeeded" } });
+    expect(calls).toEqual([{ managerId: 3, clientId: 9, accessType: "full_access" }]);
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("проводит agency-client write через preview, точное подтверждение и reread", async () => {
+    const updates: Array<{ clientId: number; isVkads?: boolean; accessType?: string }> = [];
+    const server = createServer({
+      ...createClientStub(),
+      listAgencyClients: async () => [{ id: 9, access_type: "full_access" }],
+      updateAgencyClient: async (input: { clientId: number; isVkads?: boolean; accessType?: string }) => { updates.push(input); return {}; },
+    } as unknown as VkAdsClient, "write", { allowAgencyWrites: true });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "agency_client_update", arguments: { client_id: 9, is_vkads: true, access_type: "full_access" } });
+    const data = preview.structuredContent as { id: string; confirmation_statement: string; preflight: { before: Record<string, unknown>; risk: string } };
+    expect(data.preflight).toMatchObject({ risk: "high", before: { id: 9 } });
+    const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
+    expect(executed.structuredContent).toMatchObject({ operation: "update_agency_client", after: { reread: true }, audit: { status: "succeeded" } });
+    expect(updates).toEqual([{ clientId: 9, isVkads: true, accessType: "full_access" }]);
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("изменяет профиль только через отдельный opt-in, preview и reread", async () => {
+    const calls: Array<{ version: string; body: Record<string, unknown> }> = [];
+    const server = createServer({
+      ...createClientStub(),
+      getUserV3: async () => ({ id: 1, status: "active", username: "private@example.test" }),
+      updateUserProfile: async (version: string, body: Record<string, unknown>) => { calls.push({ version, body }); return {}; },
+    } as unknown as VkAdsClient, "write", { allowProfileWrites: true });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "user_profile_update", arguments: { api_version: "v3", language: "en", mailings: { finance: { email: [] } } } });
+    if (!preview.structuredContent) throw new Error(preview.content.map((item) => item.type === "text" ? item.text : "").join("\n"));
+    const data = preview.structuredContent as { id: string; confirmation_statement: string; preflight: { risk: string; before: Record<string, unknown> } };
+    expect(data.preflight).toMatchObject({ risk: "high", before: { id: 1 } });
+    const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
+    expect(calls).toEqual([{ version: "v3", body: { language: "en", mailings: { finance: { email: [] } } } }]);
+    expect(executed.structuredContent).toMatchObject({ operation: "update_user_profile", after: { reread: true, item: { id: 1 } } });
+    expect(JSON.stringify(executed.structuredContent)).not.toContain("private@example.test");
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("подключает существующий счётчик только после preview и проверки отсутствия связи", async () => {
+    const calls: Array<{ counterId: number; name: string; flags?: string[] }> = [];
+    const server = createServer({
+      ...createClientStub(),
+      listRemarketingCounters: async () => [],
+      connectExistingRemarketingCounter: async (input: { counterId: number; name: string; flags?: string[] }) => { calls.push(input); return {}; },
+    } as unknown as VkAdsClient, "write", { allowRemarketingCounterWrites: true });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "remarketing_counter_connect_existing", arguments: { counter_id: 77, name: "Existing counter" } });
+    const data = preview.structuredContent as { id: string; confirmation_statement: string; preflight: { before: Record<string, unknown>; risk: string } };
+    expect(data.preflight).toMatchObject({ risk: "high", before: { counter_already_connected: false } });
+    const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
+    expect(executed.structuredContent).toMatchObject({ operation: "connect_existing_remarketing_counter", after: { reread: false }, audit: { status: "succeeded" } });
+    expect(calls).toEqual([{ counterId: 77, name: "Existing counter", flags: ["cookie_sync"] }]);
 
     await Promise.all([client.close(), server.close()]);
   });
@@ -902,6 +1109,34 @@ describe("MCP-контракт", () => {
     expect(revokeData.preflight.risk).toBe("high");
     await client.callTool({ name: "write_execute", arguments: { preview_id: revokeData.id, confirmation_statement: revokeData.confirmation_statement } });
     expect(revoked).toEqual(["secret-key"]);
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("активирует настроенный внешний ключ только после preview и не раскрывает его", async () => {
+    const activated: string[] = [];
+    const externalKey = "private-sharing-key";
+    const server = createServer({
+      ...createClientStub(),
+      activateExternalSharingKey: async (key: string) => { activated.push(key); },
+    } as unknown as VkAdsClient, "write", { externalSharingKey: externalKey });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "sharing_key_activate_configured", arguments: {} });
+    const data = preview.structuredContent as { id: string; confirmation_statement: string; preflight: { risk: string } };
+    expect(data.preflight.risk).toBe("high");
+    expect(JSON.stringify(preview.structuredContent)).not.toContain(externalKey);
+    expect(activated).toEqual([]);
+
+    await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: "ПОДТВЕРЖДАЮ not-the-preview" } });
+    expect(activated).toEqual([]);
+
+    const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
+    expect(executed.structuredContent).toMatchObject({ operation: "activate_configured_sharing_key", result: { activated: true, activation_scope: "all_sources" }, after: { reread: false, activated: true } });
+    expect(JSON.stringify(executed.structuredContent)).not.toContain(externalKey);
+    expect(activated).toEqual([externalKey]);
 
     await Promise.all([client.close(), server.close()]);
   });
@@ -989,6 +1224,132 @@ describe("MCP-контракт", () => {
     const preview = await client.callTool({ name: "vk_update_inapp_event_category", arguments: { app_id: 65, tracker_id: 1, event_id: 7, category_id: 2 } });
     expect(preview.isError).toBe(true);
     expect(preview.content[0]?.type === "text" ? preview.content[0].text : "").toContain("VK_ADS_ALLOW_INAPP_EVENT_CATEGORY_WRITES");
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("восстанавливает лимит токенов только через свежий preview и точное подтверждение", async () => {
+    let recoveryCalls = 0;
+    const server = createServer(createClientStub(), "write", {
+      tokenRecovery: {
+        recover: async () => {
+          recoveryCalls += 1;
+          return { token_reissued: true, refresh_token_saved: true, expires_at: "2026-07-22T00:00:00.000Z" };
+        },
+      },
+    });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "vk_recover_token_limit", arguments: {} });
+    const data = preview.structuredContent as { id: string; confirmation_statement: string; operation: string; preflight: { risk: string; expected_change: string } };
+    expect(recoveryCalls).toBe(0);
+    expect(data).toMatchObject({ operation: "recover_token_limit", preflight: { risk: "high", expected_change: expect.stringContaining("все токены") } });
+
+    const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
+    expect(recoveryCalls).toBe(1);
+    expect(executed.structuredContent).toMatchObject({ operation: "recover_token_limit", result: { token_reissued: true, refresh_token_saved: true }, after: { reread: false }, audit: { status: "succeeded" } });
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("обновляет metadata приложений только после preview и точного подтверждения", async () => {
+    let appleRefreshes = 0;
+    let googleRefreshes = 0;
+    const server = createServer({
+      ...createClientStub(),
+      getAppleApp: async () => ({ id: 535176909, title: "private title", category_id: 4 }),
+      getGoogleApp: async () => ({ id: 7, title: "private title", category_id: 4 }),
+      refreshAppleAppMetadata: async () => { appleRefreshes += 1; return { id: 535176909, title: "private title", category_id: 4 }; },
+      refreshGoogleAppMetadata: async () => { googleRefreshes += 1; return { id: 7, title: "private title", category_id: 4 }; },
+    } as unknown as VkAdsClient, "write");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const applePreview = await client.callTool({ name: "apple_app_metadata_refresh", arguments: { app_id: 535176909 } });
+    const apple = applePreview.structuredContent as { id: string; confirmation_statement: string; operation: string; preflight: { risk: string; before: unknown } };
+    expect(appleRefreshes).toBe(0);
+    expect(apple).toMatchObject({ operation: "refresh_apple_app_metadata", preflight: { risk: "low", before: { id: 535176909, category_id: 4 } } });
+    expect(JSON.stringify(apple)).not.toContain("private title");
+    const rejected = await client.callTool({ name: "write_execute", arguments: { preview_id: apple.id, confirmation_statement: "ПОДТВЕРЖДАЮ wrong" } });
+    expect(rejected.isError).toBe(true);
+    expect(appleRefreshes).toBe(0);
+    const appleExecuted = await client.callTool({ name: "write_execute", arguments: { preview_id: apple.id, confirmation_statement: apple.confirmation_statement } });
+    expect(appleExecuted.structuredContent).toMatchObject({ operation: "refresh_apple_app_metadata", after: { reread: true, item: { id: 535176909, category_id: 4 } } });
+    expect(appleRefreshes).toBe(1);
+
+    const googlePreview = await client.callTool({ name: "google_app_metadata_refresh", arguments: { package_name: "com.example.app" } });
+    const google = googlePreview.structuredContent as { id: string; confirmation_statement: string };
+    await client.callTool({ name: "write_execute", arguments: { preview_id: google.id, confirmation_statement: google.confirmation_statement } });
+    expect(googleRefreshes).toBe(1);
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("создаёт подписку только через preview и скрывает callback URL при reread", async () => {
+    let creates = 0;
+    const server = createServer({
+      ...createClientStub(),
+      listSubscriptions: async () => ({ count: 1, offset: 0, items: [{ id: 123, resource: "BANNER", callback_url: "https://private.example.test/hook" }] }),
+      createSubscription: async () => { creates += 1; return { id: 123 }; },
+    } as unknown as VkAdsClient, "write");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "subscription_create", arguments: { resource: "BANNER", callback_url: "https://callback.example.test/vk" } });
+    const data = preview.structuredContent as { id: string; confirmation_statement: string; operation: string };
+    expect(creates).toBe(0);
+    expect(data.operation).toBe("create_subscription");
+    const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
+    expect(creates).toBe(1);
+    expect(executed.structuredContent).toMatchObject({ operation: "create_subscription", after: { reread: true, item: { id: 123, resource: "BANNER" } } });
+    expect(JSON.stringify(executed.structuredContent)).not.toContain("private.example.test");
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("удаляет offline goal только после preview и только с test-префиксом", async () => {
+    let deletes = 0;
+    const server = createServer({
+      ...createClientStub(),
+      listOfflineGoals: async () => [{ id: 42, name: "__MCP_TEST__ offline", entries_count: 1 }],
+      deleteTestOfflineGoal: async () => { deletes += 1; return {}; },
+    } as unknown as VkAdsClient, "write");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "offline_goal_delete", arguments: { offline_goal_id: 42 } });
+    const data = preview.structuredContent as { id: string; confirmation_statement: string; operation: string; preflight: { before: unknown } };
+    expect(deletes).toBe(0);
+    expect(data).toMatchObject({ operation: "delete_test_offline_goal", preflight: { before: { id: 42, entries_count: 1 } } });
+    const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
+    expect(deletes).toBe(1);
+    expect(executed.structuredContent).toMatchObject({ operation: "delete_test_offline_goal", after: { reread: false } });
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("обновляет offline goal только через preview и только с test-префиксом", async () => {
+    const updates: Array<{ id: number; name: string }> = [];
+    const server = createServer({
+      ...createClientStub(),
+      listOfflineGoals: async () => [{ id: 42, name: "__MCP_TEST__ offline", entries_count: 1 }],
+      updateTestOfflineGoal: async (input: { id: number; name: string }) => { updates.push(input); return {}; },
+    } as unknown as VkAdsClient, "write");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "offline_goal_update", arguments: { offline_goal_id: 42, name: "__MCP_TEST__ renamed" } });
+    const data = preview.structuredContent as { id: string; confirmation_statement: string; operation: string; preflight: { before: unknown } };
+    expect(data).toMatchObject({ operation: "update_test_offline_goal", preflight: { before: { id: 42 } } });
+    const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
+    expect(updates).toEqual([{ id: 42, name: "__MCP_TEST__ renamed" }]);
+    expect(executed.structuredContent).toMatchObject({ operation: "update_test_offline_goal", after: { reread: true } });
 
     await Promise.all([client.close(), server.close()]);
   });

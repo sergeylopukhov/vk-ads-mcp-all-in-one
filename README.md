@@ -24,43 +24,14 @@
 > [!IMPORTANT]
 > Проект работает только с VK Ads. Инструментов для сообществ VK здесь нет.
 
-## Быстрый старт
+## Быстрый старт ✨
 
-Нужны Node.js 20 или новее, `client_id` и `client_secret` вашего приложения VK Ads. Токен получать и вставлять вручную не нужно.
+Нужны Node.js 20 или новее, а также `client_id` и `client_secret` приложения VK Ads.
 
-### macOS
-
-```bash
-curl -fL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -o vk-ads-mcp-0.1.0.zip
-unzip vk-ads-mcp-0.1.0.zip
-cd vk-ads-mcp-0.1.0/mcp-server
-npm ci --omit=dev
-cp .env.example .env
-open -e .env
-```
-
-В открытом файле заполните только `VK_ADS_CLIENT_ID` и `VK_ADS_CLIENT_SECRET`, затем сохраните его.
-
-### Linux
-
-Выполните те же команды, но откройте файл так:
+### macOS и Linux
 
 ```bash
-nano .env
-```
-
-В файле `.env` укажите данные приложения после знака `=`:
-
-```text
-VK_ADS_CLIENT_ID=ваш_client_id
-VK_ADS_CLIENT_SECRET=ваш_client_secret
-```
-
-Сохраните файл и подключите сервер к Codex:
-
-```bash
-codex mcp remove vk-ads
-codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
+curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.sh | sh
 ```
 
 ### Windows
@@ -68,33 +39,51 @@ codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
 Откройте PowerShell и выполните:
 
 ```powershell
-Invoke-WebRequest https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -OutFile vk-ads-mcp-0.1.0.zip
-Expand-Archive vk-ads-mcp-0.1.0.zip -DestinationPath .
-Set-Location .\vk-ads-mcp-0.1.0
-Set-Location .\mcp-server
-npm.cmd ci --omit=dev
-Copy-Item .env.example .env
-notepad .env
+irm https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.ps1 | iex
 ```
 
-В Блокноте укажите `VK_ADS_CLIENT_ID=...` и `VK_ADS_CLIENT_SECRET=...`, сохраните файл и подключите сервер:
+Установщик запросит только `client_id`, скрытый `client_secret` и режим работы: только чтение или чтение и запись. При выборе записи расширенные возможности можно настроить отдельно; по умолчанию они выключены. Затем установщик загрузит сервер и подключит его к Codex. Токен получать и вставлять вручную не нужно.
 
-```powershell
-codex mcp remove vk-ads
-codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$($PWD.Path)\dist\index.js"
-```
-
-После подключения перезапустите клиент и отправьте ему:
+✅ После установки перезапустите Codex и отправьте запрос:
 
 ```text
 Покажи контекст подключения VK Ads и доступные рекламные планы. Ничего не меняй.
 ```
 
+Чтобы обновить сервер, снова выполните команду для своей системы. Установщик предложит сохранить текущие настройки или пройти настройку заново; профили, токены и локальный аудит не удаляются.
+
+Каталог установки по умолчанию:
+
+- macOS: `~/Library/Application Support/VK Ads MCP`;
+- Linux: `~/.local/share/vk-ads-mcp`;
+- Windows: `%LOCALAPPDATA%\VK Ads MCP`.
+
+Для Claude Code, Gemini CLI, Qwen Code и Kimi Code CLI используйте [короткие команды подключения](readme/setup-clients.md). Разработчики могут запустить `node install.mjs --help`, чтобы выбрать ветку или другой каталог установки.
+
 ## Как создаётся и хранится токен
 
-При первом запросе сервер получает токен VK Ads по `client_id` и `client_secret`, после чего сам записывает его в локальный `mcp-server/.env` рядом с `package.json`. Если VK Ads вернёт `refresh_token`, сервер также сохранит его локально.
+При первом запросе сервер получает токен VK Ads по `client_id` и `client_secret`, после чего записывает его в локальный профиль. Для профиля `default` это `.env` в каталоге установки; `refresh_token` также сохраняется локально и используется для продления access token без создания нового экземпляра.
 
 `client_secret`, токен и refresh-токен остаются только в `.env`. Файл исключён из Git, не попадает в релиз и не нужен в настройках MCP-клиента. Не передавайте его другим людям.
+
+## Разные роли VK Ads: advertiser, agency, manager, ОРД
+
+Сервер универсален: права определяет token пользователя VK Ads, а не сборка MCP. Не используйте один token на всех. Для каждого кабинета или роли создайте отдельный локальный профиль:
+
+```bash
+cd mcp-server
+mkdir -p profiles
+cp .env.example profiles/agency.env
+open -e profiles/agency.env
+```
+
+В файле укажите только credential этого пользователя. Затем подключите отдельный MCP-процесс:
+
+```bash
+codex mcp add vk-ads-agency --env VK_ADS_PROFILE=agency -- node "$(pwd)/dist/index.js"
+```
+
+Профиль `agency` хранит token и write-audit в `mcp-server/profiles/agency.env` и `mcp-server/profiles/agency.vk-ads-audit.json`. Они игнорируются Git. Аналогично работают `manager`, `ord_partner` и любые другие имена профилей. Один запущенный MCP-процесс всегда использует ровно один профиль; переключить credential через MCP-вызов нельзя.
 
 ## Что умеет сервер
 
@@ -115,12 +104,12 @@ codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$($PWD.Path)\dist\ind
 VK_ADS_MODE=write node dist/index.js
 ```
 
-Перед записью сервер проверяет данные, создаёт preview и ждёт точного подтверждения. Большинство операций доступно только для объектов с префиксом `__MCP_TEST__`. Изменение дневного лимита может затронуть выбранную кампанию: перед подтверждением проверьте preview и ID.
+Перед записью сервер проверяет данные и создаёт preview. По умолчанию `write_execute` ждёт точного подтверждения; владелец локального профиля может явно отключить это требование через `VK_ADS_REQUIRE_WRITE_CONFIRMATION=0`. Тестовые сценарии используют только новые объекты с префиксом `__MCP_TEST__`; production-операции доступны лишь через отдельные фиксированные схемы, preflight и reread. Изменение дневного лимита может затронуть выбранную кампанию: перед выполнением проверьте preview и ID.
 
 ## Ошибки подключения
 
 - «VK Ads не выдал токен»: проверьте `VK_ADS_CLIENT_ID` и `VK_ADS_CLIENT_SECRET` в `.env`.
-- `token_limit_exceeded`: VK Ads отклонил выпуск нового токена. Сервер не умеет просматривать и отзывать токены приложения. Не удаляйте локальный `.env`, чтобы не выпускать токен повторно. Если лимит уже исчерпан, обратитесь в поддержку VK Ads, указав ошибку и `client_id` приложения.
+- `token_limit_exceeded`: не удаляйте локальный `.env`. В write-режиме используйте `vk_recover_token_limit`: он подготовит preview, а после выполнения удалит токены текущей связки `client_id—user`, выпустит один новый токен и сохранит `refresh_token`. Кампании и бюджеты операция не изменяет.
 - Ошибка `403`: VK Ads отклонил запрос. Проверьте права приложения и доступ к рекламному кабинету.
 
 Инструкции для других MCP-клиентов: [readme/setup-clients.md](readme/setup-clients.md). Короткая инструкция для Codex: [readme/setup-codex.md](readme/setup-codex.md).
