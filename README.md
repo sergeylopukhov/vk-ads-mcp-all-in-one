@@ -27,7 +27,7 @@
 ### macOS и Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.sh | sh -s -- --ref main
 ```
 
 ### Windows
