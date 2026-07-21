@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { z } from "zod";
 
 import { accountAuditInputSchema, analyticsRowSchema, analyticsThresholdsSchema, analyticsTimeSeriesPointSchema, analyticsToolNames, buildAccountAudit, deliveryDiagnosticInputSchema, runAnalyticsTool } from "./analytics-tools.js";
@@ -7,7 +8,7 @@ import type { ServerMode } from "./config.js";
 import { statisticsToExportRows, toCsv, toXlsx, type ExportRow } from "./export.js";
 import { isExecutableTool, searchCatalog, toolCatalog } from "./tool-catalog.js";
 import { VERIFIED_AD_GROUP_FIELDS, VERIFIED_AD_PLAN_FIELDS, VERIFIED_BANNER_FIELDS, VkAdsApiError, VkAdsClient, type VkObject, type VkPagedResponse } from "./vk-client.js";
-import { WriteGate, type TestWriteOperation } from "./write-gate.js";
+import { WriteGate, type TestWriteOperation, type WriteOperation } from "./write-gate.js";
 import { validateHtml5Upload, validateImageUpload, validateLeadFormImageUpload, validateRemarketingUserListUpload, validateVideoUpload } from "./upload-policy.js";
 import { validateConfirmedTestBannerDraft, type KnownStaticImage } from "./banner-preflight.js";
 import { validateTestAdGroupParent, validateTestAdPlanDraft, type WritePreflightResult } from "./write-preflight.js";
@@ -19,6 +20,7 @@ const pagingSchema = {
 };
 
 const statisticsInputSchema = {
+  api_version: z.enum(["v2", "v3"]).default("v2"),
   object_type: z.enum(["ad_plans", "campaigns", "ad_groups", "banners", "users"]),
   period: z.enum(["summary", "day"]).default("summary"),
   ids: z.array(z.number().int()).max(50).optional(),
@@ -140,7 +142,19 @@ const verifiedBannerFields = VERIFIED_BANNER_FIELDS;
 
 const exportRowsSchema = z.array(z.record(z.string().min(1).max(120), z.union([z.string().max(10_000), z.number().finite(), z.boolean(), z.null()]))).min(1).max(1_000);
 
-const testWriteOperationSchema = z.enum(["create_url", "create_test_ad_plan", "create_test_campaign", "create_test_ad_group", "create_test_banner", "create_test_segment", "rename_test_ad_plan", "rename_test_campaign", "update_campaign_budget_limit_day", "rename_test_ad_group", "rename_test_banner", "rename_test_segment", "rename_test_lead_form", "rename_test_remarketing_counter", "delete_test_remarketing_counter", "update_test_counter_goal", "update_test_inapp_event_category", "update_test_pricelist", "create_test_async_report", "delete_test_async_report", "block_test_ad_plans", "block_test_ad_groups", "block_test_banners", "remoderate_test_banners", "delete_test_ad_plan", "delete_test_ad_group", "delete_test_segment", "add_test_segment_relation", "delete_test_segment_relation", "upload_static_image", "upload_html5", "upload_test_video", "upload_lead_form_logo", "create_test_offer_batch", "export_leads", "export_survey_respondents", "upload_test_remarketing_user_list", "rename_test_remarketing_user_list", "delete_test_remarketing_user_list", "connect_agency_client", "create_test_local_geo", "update_test_local_geo", "delete_test_local_geo", "copy_test_lead_form", "copy_test_survey_form", "manage_test_lead_forms_archive", "manage_test_survey_forms_archive", "send_test_lead", "create_test_sharing_key", "revoke_created_sharing_key", "share_test_skadnetwork_ids", "withdraw_test_skadnetwork_ids"]);
+const testWriteOperationSchema = z.enum(["recover_token_limit", "create_url", "create_test_ad_plan", "create_test_campaign", "create_test_ad_group", "create_test_banner", "create_test_segment", "create_test_pricelist", "rename_test_ad_plan", "rename_test_campaign", "update_campaign_budget_limit_day", "rename_test_ad_group", "rename_test_banner", "rename_test_segment", "rename_test_lead_form", "rename_test_remarketing_counter", "delete_test_remarketing_counter", "delete_test_remarketing_counter_v2", "create_test_counter_goal", "update_test_counter_goal", "update_test_inapp_event_category", "update_test_pricelist", "create_test_async_report", "delete_test_async_report", "block_test_ad_plans", "block_test_ad_groups", "block_test_banners", "remoderate_test_banners", "delete_test_ad_plan", "delete_test_ad_group", "delete_test_segment", "add_test_segment_relation", "update_test_segment_relation", "delete_test_segment_relation", "upload_static_image", "upload_html5", "upload_test_video", "upload_lead_form_logo", "create_test_offer_batch", "export_leads", "export_survey_respondents", "upload_test_remarketing_user_list", "upload_test_offline_goal", "update_test_offline_goal", "rename_test_remarketing_user_list", "delete_test_remarketing_user_list", "delete_test_remarketing_user_list_v3", "connect_agency_client", "update_agency_client", "delete_agency_client", "update_manager_client", "delete_manager_client", "connect_existing_remarketing_counter", "update_ord_partner_acts", "update_ord_partner_pad", "create_ord_partner_subagent", "update_ord_partner_subagent", "transfer_to_client", "create_test_local_geo", "update_test_local_geo", "delete_test_local_geo", "copy_test_lead_form", "copy_test_survey_form", "manage_test_lead_forms_archive", "manage_test_survey_forms_archive", "send_test_lead", "create_test_sharing_key", "revoke_created_sharing_key", "share_test_skadnetwork_ids", "withdraw_test_skadnetwork_ids", "create_ad_plan", "update_ad_plan", "delete_ad_plan", "manage_ad_plans", "create_campaign", "update_campaign", "delete_campaign", "create_ad_group", "update_ad_group", "delete_ad_group", "manage_ad_groups", "create_banner", "update_banner", "delete_banner", "manage_banners", "delete_subscription", "refresh_apple_app_metadata", "refresh_google_app_metadata", "create_subscription", "delete_test_offline_goal"]);
+const writeOperationSchema = z.union([testWriteOperationSchema.exclude(["update_test_pricelist"]), z.literal("activate_configured_sharing_key"), z.literal("update_user_profile"), z.literal("delete_test_campaign")]);
+
+/**
+ * Эти legacy-пути есть в старом коде, но отсутствуют в текущем официальном
+ * индексе контрактов. До публикации первичного контракта они не получают
+ * preview и не могут быть ошибочно выданы за поддерживаемый VK Ads API.
+ */
+const unindexedWriteOperations = new Set<WriteOperation>([
+  "create_test_campaign", "rename_test_campaign", "update_campaign_budget_limit_day", "delete_test_campaign",
+  "create_campaign", "update_campaign", "delete_campaign",
+  "create_test_async_report", "delete_test_async_report", "create_test_offer_batch",
+]);
 
 const confirmedTestGroupTargetingsSchema = z.object({
   geo: z.object({
@@ -152,8 +166,165 @@ const confirmedTestGroupTargetingsSchema = z.object({
   }).strict(),
 }).strict();
 
+const productionStatusSchema = z.enum(["active", "blocked", "deleted"]);
+const productionDateSchema = z.string().datetime({ offset: true });
+const productionMoneySchema = z.union([z.number().finite(), z.string().regex(/^\d+(?:\.\d+)?$/)]);
+const productionTargetingsSchema = z.object({
+  geo: z.object({ regions: z.array(z.number().int().positive()).max(200).optional(), local_geo: z.array(z.number().int().positive()).max(200).optional() }).strict().optional(),
+  age: z.object({ age_list: z.array(z.number().int().min(0).max(100)).max(101).optional(), expand: z.boolean().optional() }).strict().optional(),
+  sex: z.array(z.enum(["male", "female"])).max(2).optional(),
+  pads: z.array(z.number().int().positive()).max(500).optional(),
+  fulltime: z.array(z.number().int().min(0).max(167)).max(168).optional(),
+  interests: z.array(z.number().int()).max(500).optional(),
+  interests_soc_dem: z.array(z.number().int()).max(500).optional(),
+  interests_stable: z.array(z.number().int()).max(500).optional(),
+  mobile_operation_systems: z.array(z.number().int()).max(100).optional(),
+  mobile_operators: z.array(z.number().int()).max(100).optional(),
+  mobile_types: z.array(z.string().min(1).max(80)).max(50).optional(),
+  mobile_vendors: z.array(z.number().int()).max(100).optional(),
+  segments: z.array(z.number().int().positive()).max(500).optional(),
+}).strict();
+const productionAdPlanFieldsSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  status: productionStatusSchema.optional(),
+  date_start: productionDateSchema.optional(),
+  date_end: productionDateSchema.optional(),
+  autobidding_mode: z.string().min(1).max(80).optional(),
+  budget_limit_day: productionMoneySchema.optional(),
+  budget_limit: productionMoneySchema.optional(),
+  enable_utm: z.boolean().optional(),
+  enable_offline_goals: z.boolean().optional(),
+  objective: z.string().min(1).max(80).optional(),
+  ad_groups: z.array(z.object({
+    name: z.string().min(1).max(120),
+    status: productionStatusSchema.optional(),
+    package_id: z.number().int().positive(),
+    objective: z.string().min(1).max(80),
+    date_start: productionDateSchema.optional(),
+    date_end: productionDateSchema.optional(),
+    budget_limit_day: productionMoneySchema.optional(),
+    budget_limit: productionMoneySchema.optional(),
+    autobidding_mode: z.string().min(1).max(80).optional(),
+    targetings: productionTargetingsSchema.optional(),
+  }).strict()).max(200).optional(),
+}).strict();
+const productionCampaignFieldsSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  status: productionStatusSchema.optional(),
+  ad_plan_id: z.number().int().positive().optional(),
+  package_id: z.number().int().positive().optional(),
+  objective: z.string().min(1).max(80).optional(),
+  date_start: productionDateSchema.optional(),
+  date_end: productionDateSchema.optional(),
+  budget_limit_day: productionMoneySchema.optional(),
+  budget_limit: productionMoneySchema.optional(),
+  autobidding_mode: z.string().min(1).max(80).optional(),
+}).strict();
+const productionAdGroupFieldsSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  status: productionStatusSchema.optional(),
+  ad_plan_id: z.number().int().positive().optional(),
+  package_id: z.number().int().positive().optional(),
+  objective: z.string().min(1).max(80).optional(),
+  date_start: productionDateSchema.optional(),
+  date_end: productionDateSchema.optional(),
+  autobidding_mode: z.string().min(1).max(80).optional(),
+  budget_limit_day: productionMoneySchema.optional(),
+  budget_limit: productionMoneySchema.optional(),
+  mixing: z.string().min(1).max(80).optional(),
+  price: productionMoneySchema.optional(),
+  max_price: productionMoneySchema.optional(),
+  age_restrictions: z.string().max(80).optional(),
+  banner_uniq_shows_limit: z.number().int().nonnegative().optional(),
+  uniq_shows_period: z.string().min(1).max(80).optional(),
+  uniq_shows_limit: z.number().int().nonnegative().optional(),
+  audit_viewability: z.string().max(80).optional(),
+  enable_utm: z.boolean().optional(),
+  enable_offline_goals: z.boolean().optional(),
+  targetings: productionTargetingsSchema.optional(),
+}).strict();
+const productionCreativeRefSchema = z.object({ id: z.number().int().positive() }).strict();
+const productionBannerFieldsSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  status: productionStatusSchema.optional(),
+  content: z.object({
+    image_1080x607: productionCreativeRefSchema.optional(),
+    icon_256x256_app: productionCreativeRefSchema.optional(),
+    image_1080x1200: productionCreativeRefSchema.optional(),
+    video: productionCreativeRefSchema.optional(),
+    html5: productionCreativeRefSchema.optional(),
+  }).strict().optional(),
+  textblocks: z.object({
+    title_25: z.object({ text: z.string().min(1).max(25) }).strict().optional(),
+    title_40_vkads: z.object({ text: z.string().min(1).max(40) }).strict().optional(),
+    text_90: z.object({ text: z.string().min(1).max(90) }).strict().optional(),
+    cta_apps_full: z.object({ text: z.string().min(1).max(80) }).strict().optional(),
+  }).strict().optional(),
+  urls: z.object({ primary: productionCreativeRefSchema.optional(), additional: z.array(productionCreativeRefSchema).max(20).optional() }).strict().optional(),
+  ad_group_id: z.number().int().positive().optional(),
+}).strict();
+const productionAdPlanMassItemSchema = z.object({
+  id: z.number().int().positive(),
+  status: z.enum(["active", "blocked", "deleted"]).optional(),
+  budget_limit_day: productionMoneySchema.optional(),
+  date_start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  date_end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  max_price: productionMoneySchema.optional(),
+}).strict().refine((value) => Object.keys(value).length > 1, "Укажите хотя бы одно изменяемое поле mass-action.");
+const productionAdGroupMassItemSchema = z.object({
+  id: z.number().int().positive(),
+  status: z.enum(["active", "blocked"]).optional(),
+  max_price: productionMoneySchema.optional(),
+}).strict().refine((value) => Object.keys(value).length > 1, "Укажите хотя бы одно изменяемое поле mass-action.");
+const productionBannerMassItemSchema = z.object({
+  id: z.number().int().positive(),
+  status: z.enum(["active", "blocked"]).optional(),
+}).strict().refine((value) => Object.keys(value).length > 1, "Укажите status для banner mass-action.");
+const ordDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const ordMoneySchema = z.string().regex(/^\d+(?:\.\d{1,3})?$/);
+const ordSubagentFieldsSchema = z.object({
+  user_type: z.enum(["physical", "juridical", "ip", "foreign_physical", "foreign_juridical"]),
+  role: z.array(z.enum(["publisher", "ors"])).min(1).max(2),
+  name: z.string().min(1).max(255),
+  inn: z.string().regex(/^\d{10,12}$/).optional(),
+  site: z.string().url().max(2_048).optional(),
+  phone: z.string().min(3).max(32).optional(),
+  foreign_epayment_method: z.string().max(255).nullable().optional(),
+  foreign_oksm_country_code: z.string().regex(/^\d{3}$/).nullable().optional(),
+  foreign_registration_number: z.string().max(255).nullable().optional(),
+}).strict();
+const ordActItemSchema = z.object({ contract_id: z.number().int().positive(), act_date: ordDateSchema, amount: ordMoneySchema, has_vat: z.boolean() }).strict();
+const ordContractUpdateSchema = z.object({
+  id: z.number().int().positive(),
+  contract_number: z.string().max(255).optional(),
+  contract_date: ordDateSchema.optional(),
+  contract_subject: z.string().max(255).optional(),
+  vat: z.boolean().optional(),
+  subagent: ordSubagentFieldsSchema.partial().strict().optional(),
+}).strict();
+const userProfileBaseSchema = z.object({
+  info_currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  language: z.enum(["ru", "en"]).optional(),
+  status: z.enum(["active", "blocked"]).optional(),
+  additional_emails: z.array(z.string().email().max(254)).min(1).max(10).optional(),
+  additional_info: z.object({ name: z.string().trim().min(1).max(255).optional(), phone: z.string().trim().min(3).max(32).optional() }).strict().optional(),
+}).strict();
+const userProfileV2Schema = userProfileBaseSchema.extend({
+  mailing: z.array(z.enum(["finance", "moderation"])).min(1).max(2).optional(),
+}).strict();
+const userProfileV3Schema = userProfileBaseSchema.extend({
+  mailings: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), z.object({ email: z.array(z.string().email().max(254)).max(10) }).strict()).refine((value) => { const size = Object.keys(value).length; return size >= 1 && size <= 50; }, "Укажите от 1 до 50 типов рассылки.").optional(),
+  email_settings: z.array(z.object({ type: z.enum(["USER", "PARENT", "ADDITIONAL"]), email: z.string().email().max(254) }).strict()).min(1).max(10).optional(),
+}).strict();
+
+function requireAtLeastOneField(schema: { parse: (value: unknown) => Record<string, unknown> }, payload: Record<string, unknown>): Record<string, unknown> {
+  const parsed = schema.parse(payload);
+  if (Object.keys(parsed).length === 0) throw new Error("Укажите хотя бы одно изменяемое поле.");
+  return parsed;
+}
+
 function normalizeTestWritePayloadCore(
-  operation: TestWriteOperation,
+  operation: WriteOperation,
   payload: Record<string, unknown>,
   uploadDir?: string,
   piiUploadDir = process.env.VK_ADS_PII_UPLOAD_DIR,
@@ -161,12 +332,112 @@ function normalizeTestWritePayloadCore(
   allowAgencyWrites = process.env.VK_ADS_ALLOW_AGENCY_WRITES === "1",
 ): Record<string, unknown> {
   switch (operation) {
+    case "recover_token_limit":
+      return z.object({}).strict().parse(payload);
+    case "activate_configured_sharing_key":
+      return z.object({}).strict().parse(payload);
     case "create_url": {
       const parsed = z.object({
         url: z.string().min(1).max(2_048).url(),
       }).parse(payload);
       return { url: validateAdvertisingDestination(parsed.url).url };
     }
+    case "create_ad_plan": {
+      const parsed = productionAdPlanFieldsSchema.extend({
+        name: z.string().min(1).max(120),
+        objective: z.string().min(1).max(80),
+        status: productionStatusSchema.default("blocked"),
+      }).parse(payload);
+      return parsed;
+    }
+    case "update_ad_plan": {
+      const id = z.object({ ad_plan_id: z.number().int().positive() }).parse(payload).ad_plan_id;
+      return { ad_plan_id: id, ...requireAtLeastOneField(productionAdPlanFieldsSchema, payload) };
+    }
+    case "delete_ad_plan":
+      return z.object({ ad_plan_id: z.number().int().positive() }).strict().parse(payload);
+    case "manage_ad_plans":
+      return z.object({ items: z.array(productionAdPlanMassItemSchema).min(1).max(200) }).strict().parse(payload);
+    case "create_campaign": {
+      const parsed = productionCampaignFieldsSchema.extend({
+        name: z.string().min(1).max(120),
+        ad_plan_id: z.number().int().positive(),
+        package_id: z.number().int().positive(),
+        objective: z.string().min(1).max(80),
+        status: productionStatusSchema.default("blocked"),
+      }).parse(payload);
+      return parsed;
+    }
+    case "update_campaign": {
+      const id = z.object({ campaign_id: z.number().int().positive() }).parse(payload).campaign_id;
+      return { campaign_id: id, ...requireAtLeastOneField(productionCampaignFieldsSchema, payload) };
+    }
+    case "delete_campaign":
+      return z.object({ campaign_id: z.number().int().positive() }).strict().parse(payload);
+    case "create_ad_group": {
+      const parsed = productionAdGroupFieldsSchema.extend({
+        name: z.string().min(1).max(120),
+        ad_plan_id: z.number().int().positive(),
+        package_id: z.number().int().positive(),
+        targetings: productionTargetingsSchema,
+        status: productionStatusSchema.default("blocked"),
+      }).parse(payload);
+      return parsed;
+    }
+    case "update_ad_group": {
+      const id = z.object({ ad_group_id: z.number().int().positive() }).parse(payload).ad_group_id;
+      return { ad_group_id: id, ...requireAtLeastOneField(productionAdGroupFieldsSchema, payload) };
+    }
+    case "delete_ad_group":
+      return z.object({ ad_group_id: z.number().int().positive() }).strict().parse(payload);
+    case "manage_ad_groups":
+      return z.object({ items: z.array(productionAdGroupMassItemSchema).min(1).max(200) }).strict().parse(payload);
+    case "create_banner": {
+      const parsed = productionBannerFieldsSchema.extend({
+        ad_group_id: z.number().int().positive(),
+        name: z.string().min(1).max(120),
+        content: productionBannerFieldsSchema.shape.content.unwrap(),
+        textblocks: productionBannerFieldsSchema.shape.textblocks.unwrap(),
+        urls: productionBannerFieldsSchema.shape.urls.unwrap(),
+        status: productionStatusSchema.default("blocked"),
+      }).parse(payload);
+      return parsed;
+    }
+    case "update_banner": {
+      const id = z.object({ banner_id: z.number().int().positive() }).parse(payload).banner_id;
+      return { banner_id: id, ...requireAtLeastOneField(productionBannerFieldsSchema.omit({ ad_group_id: true }), payload) };
+    }
+    case "delete_banner":
+      return z.object({ banner_id: z.number().int().positive() }).strict().parse(payload);
+    case "manage_banners":
+      return z.object({ items: z.array(productionBannerMassItemSchema).min(1).max(200) }).strict().parse(payload);
+    case "delete_subscription":
+      return z.object({ subscription_id: z.number().int().positive() }).strict().parse(payload);
+    case "create_subscription": {
+      const parsed = z.object({
+        resource: z.enum(["BANNER", "CAMPAIGN", "OKLEADAD"]),
+        callback_url: z.string().min(1).max(2_048).url(),
+      }).strict().parse(payload);
+      return { resource: parsed.resource, callback_url: validateAdvertisingDestination(parsed.callback_url).url };
+    }
+    case "refresh_apple_app_metadata":
+      return z.object({ app_id: z.number().int().positive() }).strict().parse(payload);
+    case "refresh_google_app_metadata":
+      return z.object({ package_name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/) }).strict().parse(payload);
+    case "update_manager_client":
+      return z.object({ manager_id: z.number().int().positive(), client_id: z.number().int().positive(), access_type: z.enum(["full_access", "readonly", "fin_readonly", "ads_readonly"]) }).strict().parse(payload);
+    case "delete_manager_client":
+      return z.object({ manager_id: z.number().int().positive(), client_id: z.number().int().positive() }).strict().parse(payload);
+    case "update_ord_partner_acts":
+      return z.object({ month: z.string().regex(/^\d{4}-\d{2}-01$/), ord_pad_id: z.number().int().positive(), acts: z.array(ordActItemSchema).min(1).max(200) }).strict().parse(payload);
+    case "update_ord_partner_pad":
+      return z.object({ ord_pad_id: z.number().int().positive(), name: z.string().min(1).max(255).optional(), contracts: z.array(ordContractUpdateSchema).min(1).max(200).optional() }).strict().refine((value) => value.name !== undefined || value.contracts !== undefined, "Укажите name или contracts.").parse(payload);
+    case "create_ord_partner_subagent":
+      return ordSubagentFieldsSchema.parse(payload);
+    case "update_ord_partner_subagent":
+      return z.object({ id: z.number().int().positive() }).merge(ordSubagentFieldsSchema.partial()).strict().refine((value) => Object.keys(value).length > 1, "Укажите изменяемые поля контрагента.").parse(payload);
+    case "transfer_to_client":
+      return z.object({ client_id: z.number().int().positive(), amount: z.string().regex(/^\d+(?:\.\d{1,2})?$/) }).strict().parse(payload);
     case "create_test_ad_plan": {
       const parsed = z.object({
         name: z.string().min(1).max(120),
@@ -209,12 +480,14 @@ function normalizeTestWritePayloadCore(
     case "create_test_segment": {
       const parsed = z.object({
         name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
-        counter_source_id: z.number().int().positive(),
+        counter_id: z.number().int().positive(),
         left_days: z.number().int().min(1).max(365).default(365),
-        goal_id: z.string().max(120).default(""),
+        goal_id: z.string().min(1).max(120),
       }).parse(payload);
       return parsed;
     }
+    case "create_test_pricelist":
+      return z.object({ name: z.string().min(14).max(120).startsWith("__MCP_TEST__") }).parse(payload);
     case "copy_test_lead_form":
     case "copy_test_survey_form":
       return z.object({ form_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") }).parse(payload);
@@ -223,7 +496,27 @@ function normalizeTestWritePayloadCore(
     case "rename_test_remarketing_counter":
       return z.object({ counter_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") }).parse(payload);
     case "delete_test_remarketing_counter":
+    case "delete_test_remarketing_counter_v2":
       return z.object({ counter_id: z.number().int().positive() }).parse(payload);
+    case "delete_test_offline_goal":
+      return z.object({ offline_goal_id: z.number().int().positive() }).strict().parse(payload);
+    case "update_test_offline_goal": {
+      const parsed = z.object({
+        offline_goal_id: z.number().int().positive(),
+        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        file_path: z.string().min(1).max(1_024).optional(),
+      }).strict().parse(payload);
+      if (!parsed.file_path) return parsed;
+      if (!allowPiiUploads || !piiUploadDir) {
+        throw new Error("Дозагрузка офлайн-конверсий с PII отключена. Нужны VK_ADS_ALLOW_PII_UPLOADS=1 и отдельный VK_ADS_PII_UPLOAD_DIR.");
+      }
+      const list = validateRemarketingUserListUpload(parsed.file_path, piiUploadDir);
+      return { offline_goal_id: parsed.offline_goal_id, name: parsed.name, file_path: list.filePath, filename: list.filename, mime_type: list.mimeType, size: list.size, sha256: list.sha256, line_count: list.lineCount };
+    }
+    case "create_test_counter_goal":
+      return z.object({ counter_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), substr: z.string().trim().min(1).max(2_000), condition: z.enum(["uss", "rss", "jse", "hd", "ts"]), goal_type: z.enum(["content", "search", "basket", "wishlist", "checkout", "payment_info", "purchase", "lead", "registration", "custom"]), value: z.number().int().min(-2_147_483_647).max(2_147_483_647).nullable().optional() }).parse(payload);
+    case "delete_test_remarketing_user_list_v3":
+      return z.object({ list_id: z.number().int().positive() }).parse(payload);
     case "update_test_counter_goal":
       return z.object({ counter_id: z.number().int().positive(), goal_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), value: z.number().int().min(-2_147_483_647).max(2_147_483_647), goal_type: z.enum(["content", "search", "basket", "wishlist", "checkout", "payment_info", "purchase", "lead", "registration", "custom"]) }).parse(payload);
     case "update_test_inapp_event_category":
@@ -272,16 +565,6 @@ function normalizeTestWritePayloadCore(
     }
     case "rename_test_segment":
       return z.object({ segment_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") }).parse(payload);
-    case "update_test_pricelist": {
-      const parsed = z.object({
-        pricelist_id: z.number().int().positive(),
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
-        status: z.enum(["active", "blocked"]),
-        remove_utm_tags: z.boolean(),
-        export_url: z.string().min(1).max(2_048).url().optional(),
-      }).parse(payload);
-      return { ...parsed, ...(parsed.export_url ? { export_url: validateAdvertisingDestination(parsed.export_url).url } : {}) };
-    }
     case "create_test_async_report":
       return z.object({
         title: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
@@ -303,12 +586,16 @@ function normalizeTestWritePayloadCore(
       return z.object({ banner_ids: z.array(z.number().int().positive()).min(1).max(200) }).parse(payload);
     case "delete_test_ad_plan":
       return z.object({ ad_plan_id: z.number().int().positive() }).parse(payload);
+    case "delete_test_campaign":
+      return z.object({ campaign_id: z.number().int().positive() }).parse(payload);
     case "delete_test_ad_group":
       return z.object({ ad_group_id: z.number().int().positive() }).parse(payload);
     case "delete_test_segment":
       return z.object({ segment_id: z.number().int().positive() }).parse(payload);
     case "add_test_segment_relation":
       return z.object({ segment_id: z.number().int().positive(), nested_segment_id: z.number().int().positive() }).parse(payload);
+    case "update_test_segment_relation":
+      return z.object({ segment_id: z.number().int().positive(), relation_id: z.number().int().positive(), left: z.number().int().min(1).max(365), right: z.number().int().min(0).max(364), type: z.enum(["positive", "negative"]) }).refine((value) => value.left > value.right, "left должен быть больше right.").parse(payload);
     case "delete_test_segment_relation":
       return z.object({ segment_id: z.number().int().positive(), relation_id: z.number().int().positive() }).parse(payload);
     case "upload_static_image": {
@@ -361,29 +648,73 @@ function normalizeTestWritePayloadCore(
       if (!allowPiiUploads || !piiUploadDir) {
         throw new Error("Загрузка списка ремаркетинга с PII отключена. Нужны VK_ADS_ALLOW_PII_UPLOADS=1 и отдельный VK_ADS_PII_UPLOAD_DIR.");
       }
-      const { file_path, name, type } = z.object({
+      const { file_path, name, type, api_version } = z.object({
         file_path: z.string().min(1).max(1_024),
         name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
         type: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/),
+        api_version: z.enum(["v2", "v3"]).default("v2"),
       }).parse(payload);
       const list = validateRemarketingUserListUpload(file_path, piiUploadDir);
-      return { file_path: list.filePath, filename: list.filename, mime_type: list.mimeType, size: list.size, sha256: list.sha256, line_count: list.lineCount, name, type };
+      return { file_path: list.filePath, filename: list.filename, mime_type: list.mimeType, size: list.size, sha256: list.sha256, line_count: list.lineCount, name, type, api_version };
+    }
+    case "upload_test_offline_goal": {
+      if (!allowPiiUploads || !piiUploadDir) {
+        throw new Error("Загрузка офлайн-конверсий с PII отключена. Нужны VK_ADS_ALLOW_PII_UPLOADS=1 и отдельный VK_ADS_PII_UPLOAD_DIR.");
+      }
+      const { file_path, name, attribution_period, type } = z.object({
+        file_path: z.string().min(1).max(1_024),
+        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        attribution_period: z.number().int().min(1).max(365),
+        type: z.enum(["email", "hash_email", "phone", "hash_phone"]),
+      }).parse(payload);
+      const list = validateRemarketingUserListUpload(file_path, piiUploadDir);
+      return { file_path: list.filePath, filename: list.filename, mime_type: list.mimeType, size: list.size, sha256: list.sha256, line_count: list.lineCount, name, attribution_period, type };
     }
     case "rename_test_remarketing_user_list":
-      return z.object({ list_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") }).parse(payload);
+      return z.object({ list_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), api_version: z.enum(["v2", "v3"]).default("v2") }).parse(payload);
     case "delete_test_remarketing_user_list":
       return z.object({ list_id: z.number().int().positive() }).parse(payload);
     case "connect_agency_client": {
       if (!allowAgencyWrites) throw new Error("Агентское подключение отключено. Для него нужен отдельный VK_ADS_ALLOW_AGENCY_WRITES=1 при запуске.");
       return z.object({ user_id: z.number().int().positive(), access_type: z.literal("full_access") }).parse(payload);
     }
+    case "update_agency_client": {
+      const parsed = z.object({
+        client_id: z.number().int().positive(),
+        is_vkads: z.boolean().optional(),
+        access_type: z.literal("full_access").optional(),
+        additional_emails: z.array(z.string().email().max(254)).min(1).max(10).optional(),
+        additional_info: z.object({
+          client_name: z.string().trim().min(1).max(255).optional(),
+          client_info: z.string().trim().min(1).max(1_000).optional(),
+        }).strict().optional(),
+      }).strict().parse(payload);
+      if (parsed.is_vkads === undefined && parsed.access_type === undefined && parsed.additional_emails === undefined && parsed.additional_info === undefined) {
+        throw new Error("Укажите хотя бы одно изменяемое поле клиента агентства.");
+      }
+      if (parsed.additional_info && parsed.additional_info.client_name === undefined && parsed.additional_info.client_info === undefined) {
+        throw new Error("additional_info должен содержать client_name или client_info.");
+      }
+      return parsed;
+    }
+    case "delete_agency_client":
+      return z.object({ client_id: z.number().int().positive() }).strict().parse(payload);
+    case "update_user_profile": {
+      const header = z.object({ api_version: z.enum(["v2", "v3"]) }).parse(payload);
+      const parsed = (header.api_version === "v3" ? userProfileV3Schema : userProfileV2Schema).extend({ api_version: z.literal(header.api_version) }).parse(payload);
+      const { api_version: _apiVersion, ...body } = parsed as Record<string, unknown>;
+      if (Object.keys(body).length === 0) throw new Error("Укажите хотя бы одно изменяемое поле профиля.");
+      return { api_version: header.api_version, ...body };
+    }
+    case "connect_existing_remarketing_counter":
+      return z.object({ counter_id: z.number().int().positive(), name: z.string().trim().min(1).max(120), flags: z.array(z.literal("cookie_sync")).max(1).default(["cookie_sync"]) }).strict().parse(payload);
     case "create_test_local_geo": {
       const parsed = z.object({
         name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
         regions: z.array(z.object({
           lat: z.number().finite().min(-90).max(90),
           lng: z.number().finite().min(-180).max(180),
-          radius: z.number().int().min(1).max(100_000),
+          radius: z.number().int().min(500).max(10_000),
           label: z.string().trim().min(1).max(200),
           address: z.string().trim().min(1).max(500).optional(),
         }).strict()).min(1).max(200),
@@ -397,7 +728,7 @@ function normalizeTestWritePayloadCore(
         regions: z.array(z.object({
           lat: z.number().finite().min(-90).max(90),
           lng: z.number().finite().min(-180).max(180),
-          radius: z.number().int().min(1).max(100_000),
+          radius: z.number().int().min(500).max(10_000),
           label: z.string().trim().min(1).max(200),
           address: z.string().trim().min(1).max(500).optional(),
         }).strict()).min(1).max(200),
@@ -455,6 +786,12 @@ function resolveAdvertisingUrl(source: string): VkObject {
     query,
     utm,
   };
+}
+
+/** v1 URL-lookup может вернуть trackers и служебные ссылки; наружу только безопасная metadata. */
+function publicUrlMetadata(item: VkObject): VkObject {
+  const allowed = ["id", "url_types", "url_object_id", "has_bad_landing", "has_nonhttps_redirects", "has_mobile_app", "mobile_app_type", "has_goals", "has_postback_trackers"];
+  return Object.fromEntries(allowed.flatMap((key) => Object.hasOwn(item, key) ? [[key, item[key]]] : []));
 }
 
 function remarketingListMetadata(item: VkObject): VkObject {
@@ -592,14 +929,7 @@ function packageFromList(items: VkObject[], id: number): VkObject {
 }
 
 async function remarketingListFromPages(client: VkAdsClient, id: number): Promise<VkObject> {
-  const pageSize = 200;
-  for (let offset = 0; offset < 2_000; offset += pageSize) {
-    const page = await client.listRemarketingUserLists(offset, pageSize);
-    const item = page.items.find((candidate) => Number(candidate.id) === id);
-    if (item) return remarketingListMetadata(item);
-    if (offset + page.items.length >= page.count) break;
-  }
-  throw new Error("Список ремаркетинга не найден среди metadata списков, доступных текущему кабинету.");
+  return remarketingListMetadata(await client.getRemarketingUserListV3(id));
 }
 
 async function leadFormFromPages(client: VkAdsClient, id: number): Promise<VkObject> {
@@ -661,14 +991,47 @@ async function pricelistFromPages(client: VkAdsClient, id: number): Promise<VkOb
   throw new Error("Прайс-лист не найден среди metadata объектов, доступных текущему кабинету.");
 }
 
-function writeImpact(operation: TestWriteOperation): { risk: "low" | "medium" | "high"; expected_change: string } {
+function writeImpact(operation: WriteOperation): { risk: "low" | "medium" | "high"; expected_change: string } {
   switch (operation) {
+    case "recover_token_limit": return { risk: "high", expected_change: "Удалить все токены текущей связки VK Ads clientId--user, затем выпустить ровно один новый токен и сохранить его refresh_token локально. Кампании, группы, баннеры, бюджеты и аудитории не изменяются." };
+    case "activate_configured_sharing_key": return { risk: "high", expected_change: "Активировать внешний ключ шаринга и добавить все связанные с ним источники в текущий кабинет. Кампании, бюджеты и существующие сущности не изменяются, но новые источники станут доступны." };
     case "create_url": return { risk: "low", expected_change: "Зарегистрировать HTTPS landing URL в VK Ads; показы, banner и расход не создаются." };
+    case "create_ad_plan": return { risk: "medium", expected_change: "Создать production ad plan с переданными документированными параметрами; по умолчанию он будет blocked и не начнёт показы." };
+    case "update_ad_plan": return { risk: "medium", expected_change: "Изменить указанные поля существующего production ad plan; остальные поля и дочерние объекты не изменяются." };
+    case "delete_ad_plan": return { risk: "high", expected_change: "Перевести существующий production ad plan в status=deleted; операция затрагивает его дочернюю иерархию." };
+    case "manage_ad_plans": return { risk: "high", expected_change: "Массово установить указанный статус для перечисленных production ad plans." };
+    case "create_campaign": return { risk: "medium", expected_change: "Создать production campaign в указанном ad plan; по умолчанию campaign будет blocked." };
+    case "update_campaign": return { risk: "medium", expected_change: "Изменить указанные поля существующей production campaign." };
+    case "delete_campaign": return { risk: "high", expected_change: "Перевести существующую production campaign в status=deleted." };
+    case "create_ad_group": return { risk: "medium", expected_change: "Создать production ad group в указанном ad plan; по умолчанию group будет blocked." };
+    case "update_ad_group": return { risk: "medium", expected_change: "Изменить указанные поля существующей production ad group, включая budget, bid и targeting." };
+    case "delete_ad_group": return { risk: "high", expected_change: "Перевести существующую production ad group в status=deleted." };
+    case "manage_ad_groups": return { risk: "high", expected_change: "Массово установить указанный статус для перечисленных production ad groups." };
+    case "create_banner": return { risk: "medium", expected_change: "Создать production banner в указанной ad group; по умолчанию banner будет blocked." };
+    case "update_banner": return { risk: "medium", expected_change: "Изменить указанные поля существующего production banner." };
+    case "delete_banner": return { risk: "high", expected_change: "Перевести существующий production banner в status=deleted." };
+    case "manage_banners": return { risk: "high", expected_change: "Массово установить указанный статус для перечисленных production banners." };
+    case "delete_subscription": return { risk: "high", expected_change: "Удалить одну подписку VK Ads через официальный HTTP DELETE; уведомления по ней прекратятся." };
+    case "create_subscription": return { risk: "medium", expected_change: "Создать одну новую подписку на уведомления указанного ресурса; кампании, группы, объявления, бюджеты и аудитории не изменяются." };
+    case "refresh_apple_app_metadata": return { risk: "low", expected_change: "Обновить только справочные metadata указанного iOS-приложения из App Store; кампании, группы, объявления, бюджеты и аудитории не изменяются." };
+    case "refresh_google_app_metadata": return { risk: "low", expected_change: "Обновить только справочные metadata указанного Android-приложения из Google Play; кампании, группы, объявления, бюджеты и аудитории не изменяются." };
+    case "update_manager_client": return { risk: "high", expected_change: "Изменить уровень доступа клиента у менеджера агентства." };
+    case "delete_manager_client": return { risk: "high", expected_change: "Вывести клиента из ведения указанного менеджера; кабинет клиента не удаляется." };
+    case "update_agency_client": return { risk: "high", expected_change: "Изменить документированные параметры связи уже привязанного клиента агентства; рекламные кампании и бюджеты клиента не меняются." };
+    case "delete_agency_client": return { risk: "high", expected_change: "Удалить только связь указанного клиента с агентством; рекламный кабинет и его объекты не удаляются." };
+    case "update_user_profile": return { risk: "high", expected_change: "Изменить только документированные настройки профиля и уведомлений текущего кабинета; кампании, бюджеты и аудитории не затрагиваются." };
+    case "connect_existing_remarketing_counter": return { risk: "high", expected_change: "Подключить указанный существующий счётчик Top.Mail.ru к текущему кабинету без передачи пароля; кампании, бюджеты и уже подключённые счётчики не меняются." };
+    case "update_ord_partner_acts": return { risk: "high", expected_change: "Изменить цепочку актов ОРД для одной площадки и месяца." };
+    case "update_ord_partner_pad": return { risk: "high", expected_change: "Изменить отчётную площадку и/или договорную цепочку ОРД." };
+    case "create_ord_partner_subagent": return { risk: "high", expected_change: "Создать контрагента ОРД; запрос может содержать юридические и контактные данные." };
+    case "update_ord_partner_subagent": return { risk: "high", expected_change: "Изменить данные контрагента ОРД." };
+    case "transfer_to_client": return { risk: "high", expected_change: "Перевести указанную сумму с агентского баланса клиенту; это финансовая операция." };
     case "create_test_ad_plan": return { risk: "low", expected_change: "Создать остановленный изолированный test ad plan; показы и расход не запускаются." };
     case "create_test_campaign": return { risk: "low", expected_change: "Создать остановленную test campaign package 2860 внутри test ad plan; показы и расход не запускаются." };
     case "create_test_ad_group": return { risk: "low", expected_change: "Создать остановленную test ad group внутри test ad plan; показы и расход не запускаются." };
     case "create_test_banner": return { risk: "low", expected_change: "Создать остановленный banner только в __MCP_TEST__ группе package_id=2860; расход не запускается." };
     case "create_test_segment": return { risk: "low", expected_change: "Создать изолированный __MCP_TEST__ сегмент с read-only источником; существующие объекты не изменяются." };
+    case "create_test_pricelist": return { risk: "low", expected_change: "Создать пустой blocked __MCP_TEST__ каталог без внешнего URL, credentials, кампаний или товаров." };
     case "copy_test_lead_form": return { risk: "low", expected_change: "Создать копию только существующей __MCP_TEST__ лид-формы; новая форма также получает test-префикс." };
     case "rename_test_lead_form": return { risk: "low", expected_change: "Переименовать только существующую __MCP_TEST__ лид-форму; контактные поля, страницы и уведомления не изменяются." };
     case "update_test_inapp_event_category": return { risk: "medium", expected_change: "Изменить категорию только одного события разрешённого тестового мобильного приложения; настройки кампаний и объявления не изменяются." };
@@ -683,13 +1046,17 @@ function writeImpact(operation: TestWriteOperation): { risk: "low" | "medium" | 
     case "rename_test_ad_plan": return { risk: "low", expected_change: "Переименовать только test ad plan." };
     case "rename_test_remarketing_counter": return { risk: "low", expected_change: "Переименовать только allowlist test-счётчик ремаркетинга." };
     case "delete_test_remarketing_counter": return { risk: "high", expected_change: "Удалить только allowlist test-счётчик ремаркетинга; операция необратима." };
+    case "delete_test_remarketing_counter_v2": return { risk: "high", expected_change: "Удалить только allowlist test-счётчик ремаркетинга через документированный v2 DELETE; операция необратима." };
+    case "delete_test_offline_goal": return { risk: "high", expected_change: "Удалить только существующий __MCP_TEST__ список офлайн-конверсий; исходные записи и PII не читаются." };
+    case "update_test_offline_goal": return { risk: "medium", expected_change: "Переименовать и/или дозагрузить только существующий __MCP_TEST__ список офлайн-конверсий; PII остаётся в multipart body и не попадает в audit." };
+    case "create_test_counter_goal": return { risk: "medium", expected_change: "Создать новую __MCP_TEST__ цель только внутри allowlist test-счётчика ремаркетинга." };
+    case "delete_test_remarketing_user_list_v3": return { risk: "high", expected_change: "Удалить только изолированный __MCP_TEST__ список ремаркетинга через документированный v3 DELETE; операция необратима." };
     case "update_test_counter_goal": return { risk: "low", expected_change: "Изменить только allowlist __MCP_TEST__ цель test-счётчика ремаркетинга." };
     case "rename_test_campaign": return { risk: "low", expected_change: "Переименовать только test campaign." };
     case "update_campaign_budget_limit_day": return { risk: "medium", expected_change: "Изменить дневной лимит выбранной кампании; показы и статус не меняются." };
     case "rename_test_ad_group": return { risk: "low", expected_change: "Переименовать только test ad group." };
     case "rename_test_banner": return { risk: "low", expected_change: "Переименовать только test banner." };
     case "rename_test_segment": return { risk: "low", expected_change: "Переименовать только test-сегмент." };
-    case "update_test_pricelist": return { risk: "low", expected_change: "Изменить только test-каталог __MCP_TEST__; кампании и товары не создаются." };
     case "create_test_async_report": return { risk: "low", expected_change: "Создать только временный __MCP_TEST__ серверный отчёт; кампании и расход не меняются." };
     case "delete_test_async_report": return { risk: "medium", expected_change: "Удалить только временный __MCP_TEST__ серверный отчёт." };
     case "block_test_ad_plans": return { risk: "low", expected_change: "Массово оставить только __MCP_TEST__ ad plan в статусе blocked; показы и расход не запускаются." };
@@ -697,9 +1064,11 @@ function writeImpact(operation: TestWriteOperation): { risk: "low" | "medium" | 
     case "block_test_banners": return { risk: "low", expected_change: "Массово оставить только __MCP_TEST__ banner в статусе blocked; показы и расход не запускаются." };
     case "remoderate_test_banners": return { risk: "low", expected_change: "Запросить повторную модерацию только для __MCP_TEST__ banner, если VK Ads явно разрешает её; бюджет и статус не меняются." };
     case "delete_test_ad_plan": return { risk: "medium", expected_change: "Пометить test ad plan как deleted; операция необратима в интерфейсе сервера." };
+    case "delete_test_campaign": return { risk: "medium", expected_change: "Пометить только test campaign как deleted; операция необратима в интерфейсе сервера." };
     case "delete_test_ad_group": return { risk: "medium", expected_change: "Пометить test ad group как deleted; операция необратима в интерфейсе сервера." };
     case "delete_test_segment": return { risk: "medium", expected_change: "Удалить только test-сегмент; операция необратима." };
     case "add_test_segment_relation": return { risk: "low", expected_change: "Добавить связь только между двумя test-сегментами." };
+    case "update_test_segment_relation": return { risk: "low", expected_change: "Изменить только params существующей связи между двумя test-сегментами." };
     case "delete_test_segment_relation": return { risk: "medium", expected_change: "Удалить связь только из test-сегмента." };
     case "upload_static_image": return { risk: "low", expected_change: "Загрузить статичное изображение в контент VK Ads; banner и показы не создаются." };
     case "upload_html5": return { risk: "low", expected_change: "Загрузить проверенный HTML5 ZIP-креатив в контент VK Ads; banner и показы не создаются." };
@@ -709,6 +1078,7 @@ function writeImpact(operation: TestWriteOperation): { risk: "low" | "medium" | 
     case "export_leads": return { risk: "medium", expected_change: "Получить экспорт лидов с персональными данными в памяти текущего MCP-сеанса; данные не попадут в audit." };
     case "export_survey_respondents": return { risk: "medium", expected_change: "Получить экспорт ответов опроса с персональными данными в памяти текущего MCP-сеанса; данные не попадут в audit." };
     case "upload_test_remarketing_user_list": return { risk: "medium", expected_change: "Загрузить новый __MCP_TEST__ список ремаркетинга из отдельно разрешённого PII-файла; содержимое не попадёт в ответ или audit." };
+    case "upload_test_offline_goal": return { risk: "medium", expected_change: "Загрузить новый __MCP_TEST__ список офлайн-конверсий из отдельно разрешённого PII-файла; содержимое не попадёт в ответ или audit." };
     case "rename_test_remarketing_user_list": return { risk: "low", expected_change: "Переименовать только существующий __MCP_TEST__ список ремаркетинга." };
     case "delete_test_remarketing_user_list": return { risk: "medium", expected_change: "Удалить только неиспользуемый __MCP_TEST__ список ремаркетинга; операция необратима." };
     case "connect_agency_client": return { risk: "medium", expected_change: "Привязать существующий рекламный кабинет к агентству с полным доступом; операция меняет отношения кабинетов." };
@@ -718,15 +1088,54 @@ function writeImpact(operation: TestWriteOperation): { risk: "low" | "medium" | 
   }
 }
 
-async function captureWriteBefore(client: VkAdsClient, operation: TestWriteOperation, payload: Record<string, unknown>): Promise<VkObject | null> {
+async function captureWriteBefore(client: VkAdsClient, operation: WriteOperation, payload: Record<string, unknown>): Promise<VkObject | null> {
   switch (operation) {
+    case "activate_configured_sharing_key": return { external_key_configured: true, activation_scope: "all_sources" };
+    case "update_ad_plan":
+    case "delete_ad_plan": return client.getAdPlan(payload.ad_plan_id as number);
+    case "manage_ad_plans": return { items: await Promise.all((payload.items as VkObject[]).map((item) => client.getAdPlan(Number(item.id))) ) };
+    case "create_campaign": return client.getAdPlan(payload.ad_plan_id as number);
+    case "update_campaign":
+    case "delete_campaign": return client.getCampaign(payload.campaign_id as number);
+    case "create_ad_group": return client.getAdPlan(payload.ad_plan_id as number);
+    case "update_ad_group":
+    case "delete_ad_group": return client.getAdGroup(payload.ad_group_id as number);
+    case "manage_ad_groups": return { items: await Promise.all((payload.items as VkObject[]).map((item) => client.getAdGroup(Number(item.id))) ) };
+    case "create_banner": return client.getAdGroup(payload.ad_group_id as number);
+    case "update_banner":
+    case "delete_banner": return client.getBanner(payload.banner_id as number);
+    case "manage_banners": return { items: await Promise.all((payload.items as VkObject[]).map((item) => client.getBanner(Number(item.id))) ) };
+    case "delete_subscription": return subscriptionFromPages(client, payload.subscription_id as number);
+    case "create_subscription": return { existing_subscriptions: (await client.listSubscriptions(0, 50)).count };
+    case "refresh_apple_app_metadata": return publicMobileAppMetadata(await client.getAppleApp(payload.app_id as number));
+    case "refresh_google_app_metadata": return publicMobileAppMetadata(await client.getGoogleApp(payload.package_name as string));
+    case "update_manager_client":
+    case "delete_manager_client": return findAgencyClient(await client.listManagerClients(), payload.client_id as number, payload.manager_id as number);
+    case "update_agency_client":
+    case "delete_agency_client": return findAgencyClient(await client.listAgencyClients(), payload.client_id as number);
+    case "update_user_profile": return publicAccount(payload.api_version === "v3" ? await client.getUserV3() : await client.getUser());
+    case "connect_existing_remarketing_counter": {
+      const existing = await client.listRemarketingCounters();
+      return { counter_already_connected: existing.some((item) => Number(item.id) === Number(payload.counter_id)) };
+    }
+    case "update_ord_partner_acts": return publicSensitiveMetadata(await client.getOrdPartnerActStatByPad(payload.month as string, payload.ord_pad_id as number)) as VkObject;
+    case "update_ord_partner_pad": return publicSensitiveMetadata(await client.getOrdPartnerPad(payload.ord_pad_id as number)) as VkObject;
+    case "update_ord_partner_subagent": return publicSensitiveMetadata(await client.getOrdPartnerSubagent(payload.id as number)) as VkObject;
+    case "transfer_to_client": return publicAgencyClientMetadata(findAgencyClient(await client.listAgencyClients(), payload.client_id as number));
     case "create_test_ad_group": return client.getAdPlan(payload.ad_plan_id as number);
     case "create_test_campaign": return client.getAdPlan(payload.ad_plan_id as number);
     case "create_test_banner": return client.getAdGroup(payload.ad_group_id as number);
+    case "create_test_pricelist": return { existing_test_pricelists: (await client.listPricelists(0, 50)).items.filter((item) => typeof item.name === "string" && item.name.startsWith("__MCP_TEST__")).map(publicSensitiveMetadata) };
     case "copy_test_lead_form": return publicFormConfiguration(await client.getLeadFormDetail(payload.form_id as number));
     case "rename_test_lead_form": return publicFormConfiguration(await client.getLeadFormDetail(payload.form_id as number));
     case "rename_test_remarketing_counter":
     case "delete_test_remarketing_counter": return publicCounterMetadata(await client.getRemarketingCounter(payload.counter_id as number));
+    case "delete_test_remarketing_counter_v2": return publicCounterMetadata(await client.getRemarketingCounter(payload.counter_id as number));
+    case "create_test_counter_goal": return publicCounterMetadata(await client.getRemarketingCounter(payload.counter_id as number));
+    case "delete_test_remarketing_user_list_v3": return publicSensitiveMetadata(await remarketingListFromPages(client, payload.list_id as number)) as VkObject;
+    case "delete_test_offline_goal": return publicSensitiveMetadata((await client.listOfflineGoals()).find((item) => Number(item.id) === Number(payload.offline_goal_id))) as VkObject;
+    case "update_test_offline_goal": return publicSensitiveMetadata((await client.listOfflineGoals()).find((item) => Number(item.id) === Number(payload.offline_goal_id))) as VkObject;
+    case "upload_test_offline_goal": return { existing_test_offline_goals: (await client.listOfflineGoals()).filter((item) => typeof item.name === "string" && item.name.startsWith("__MCP_TEST__")).map(publicSensitiveMetadata) };
     case "update_test_counter_goal": return publicCounterMetadata(await client.getRemarketingCounter(payload.counter_id as number));
     case "update_test_inapp_event_category": return publicSensitiveMetadata(await inAppEventFromPages(client, { appId: payload.app_id as number, trackerId: payload.tracker_id as number, eventId: payload.event_id as number })) as VkObject;
     case "send_test_lead": return publicFormConfiguration(await client.getLeadFormDetail(payload.form_id as number));
@@ -740,10 +1149,12 @@ async function captureWriteBefore(client: VkAdsClient, operation: TestWriteOpera
     case "rename_test_segment":
     case "delete_test_segment":
     case "add_test_segment_relation":
+    case "update_test_segment_relation":
     case "delete_test_segment_relation": return client.getSegment(payload.segment_id as number);
     case "rename_test_ad_plan":
     case "delete_test_ad_plan": return client.getAdPlan(payload.ad_plan_id as number);
     case "rename_test_campaign":
+    case "delete_test_campaign":
     case "update_campaign_budget_limit_day": return client.getCampaign(payload.campaign_id as number);
     case "block_test_ad_plans": return { items: await Promise.all((payload.ad_plan_ids as number[]).map((id) => client.getAdPlan(id))) };
     case "block_test_ad_groups": return { items: await Promise.all((payload.ad_group_ids as number[]).map((id) => client.getAdGroup(id))) };
@@ -752,7 +1163,6 @@ async function captureWriteBefore(client: VkAdsClient, operation: TestWriteOpera
     case "rename_test_ad_group":
     case "delete_test_ad_group": return client.getAdGroup(payload.ad_group_id as number);
     case "rename_test_banner": return client.getBanner(payload.banner_id as number);
-    case "update_test_pricelist": return pricelistFromPages(client, payload.pricelist_id as number);
     case "delete_test_async_report": return client.getCustomReport(payload.report_id as number);
     case "export_leads": return { lead_form: await leadFormFromPages(client, payload.form_id as number), sensitive: true };
     case "export_survey_respondents": return { survey_form: publicFormConfiguration(await client.getSurveyFormDetail(payload.form_id as number)), sensitive: true };
@@ -813,10 +1223,84 @@ async function preflightTestAdGroup(
   return validateTestAdGroupParent(adPlan, payload.package_id as number, await client.listPackages());
 }
 
-async function captureWriteAfter(client: VkAdsClient, operation: TestWriteOperation, payload: Record<string, unknown>, result: VkObject): Promise<VkObject> {
+/** Сегмент принимает именно Top.Mail.ru counter_id, а не внутренний ID источника VK Ads. */
+async function preflightTestSegment(
+  client: VkAdsClient,
+  payload: Record<string, unknown>,
+): Promise<{ ready: boolean; checks: Array<{ code: string; status: "pass" | "fail"; message: string }> }> {
+  const counterId = payload.counter_id as number;
+  const counter = (await client.listRemarketingCounters()).find((item) => Number(item.counter_id) === counterId);
+  const found = counter !== undefined;
+  const status = found ? String(counter.system_status ?? counter.status ?? "") : "";
+  const active = found && (status === "" || status === "active");
+  const goals = await client.getGoals();
+  const topMailGoals = Array.isArray(goals.topmailru) ? goals.topmailru : [];
+  const goalFound = topMailGoals.some((goal) => Number(goal.counter_id) === counterId && goal.goal === payload.goal_id);
+  const checks = [
+    { code: "counter_source_exists", status: found ? "pass" as const : "fail" as const, message: found ? "Счётчик найден среди источников, доступных текущему кабинету." : "counter_id не найден среди доступных источников ремаркетинга." },
+    { code: "counter_source_active", status: active ? "pass" as const : "fail" as const, message: active ? "Счётчик активен для использования в сегменте." : "Счётчик недоступен или не активен для использования в сегменте." },
+    { code: "counter_goal_exists", status: goalFound ? "pass" as const : "fail" as const, message: goalFound ? "goal_id подтверждён среди целей указанного счётчика." : "goal_id не найден среди доступных целей указанного счётчика." },
+  ];
+  return { ready: checks.every((check) => check.status === "pass"), checks };
+}
+
+async function captureWriteAfter(client: VkAdsClient, operation: WriteOperation, payload: Record<string, unknown>, result: VkObject): Promise<VkObject> {
   try {
     switch (operation) {
+      case "recover_token_limit": return { reread: false, token_reissued: result.token_reissued === true, refresh_token_saved: result.refresh_token_saved === true, ...(typeof result.expires_at === "string" ? { expires_at: result.expires_at } : {}) };
+      case "activate_configured_sharing_key": return { reread: false, activated: result.activated === true, reason: "Перечитывание не выполняется: список ключей содержит bearer-secret, а ответ активации может содержать внешние metadata." };
       case "create_url": return { reread: true, item: await client.getUrl(result.id as number) };
+      case "create_ad_plan": return { reread: true, item: await client.getAdPlan(result.id as number) };
+      case "update_ad_plan":
+      case "delete_ad_plan": return { reread: true, item: await client.getAdPlan(payload.ad_plan_id as number) };
+      case "manage_ad_plans": return { reread: true, items: await Promise.all((payload.items as VkObject[]).map((item) => client.getAdPlan(Number(item.id))) ) };
+      case "create_campaign": return { reread: true, item: await client.getCampaign(result.id as number) };
+      case "update_campaign":
+      case "delete_campaign": return { reread: true, item: await client.getCampaign(payload.campaign_id as number) };
+      case "create_ad_group": return { reread: true, item: await client.getAdGroup(result.id as number) };
+      case "update_ad_group":
+      case "delete_ad_group": return { reread: true, item: await client.getAdGroup(payload.ad_group_id as number) };
+      case "manage_ad_groups": return { reread: true, items: await Promise.all((payload.items as VkObject[]).map((item) => client.getAdGroup(Number(item.id))) ) };
+      case "create_banner": {
+        const banners = await client.listBanners(0, 200, { adGroupId: payload.ad_group_id as number, fields: ["id", "name", "status", "ad_group_id", "content", "textblocks", "urls"] });
+        const item = banners.items.find((banner) => Number(banner.id) === Number(result.id));
+        return item ? { reread: true, item } : { reread: false, reason: "Созданный banner не найден при повторном чтении группы." };
+      }
+      case "update_banner":
+      case "delete_banner": return { reread: true, item: await client.getBanner(payload.banner_id as number) };
+      case "manage_banners": return { reread: true, items: await Promise.all((payload.items as VkObject[]).map((item) => client.getBanner(Number(item.id))) ) };
+      case "delete_subscription": {
+        try {
+          await subscriptionFromPages(client, payload.subscription_id as number);
+          return { reread: true, deleted: false, reason: "Подписка всё ещё найдена после DELETE." };
+        } catch {
+          return { reread: true, deleted: true };
+        }
+      }
+      case "create_subscription": return { reread: true, item: subscriptionMetadata(await subscriptionFromPages(client, Number(result.id))) };
+      case "refresh_apple_app_metadata": return { reread: true, item: publicMobileAppMetadata(await client.getAppleApp(payload.app_id as number)) };
+      case "refresh_google_app_metadata": return { reread: true, item: publicMobileAppMetadata(await client.getGoogleApp(payload.package_name as string)) };
+      case "update_manager_client": return { reread: true, item: findAgencyClient(await client.listManagerClients(), payload.client_id as number, payload.manager_id as number) };
+      case "delete_manager_client": {
+        const items = await client.listManagerClients();
+        const found = items.some((item) => Number(item.client_id ?? item.user_id ?? item.id) === Number(payload.client_id) && Number(item.manager_id ?? (item.manager && typeof item.manager === "object" ? (item.manager as VkObject).id : undefined)) === Number(payload.manager_id));
+        return { reread: true, deleted: !found };
+      }
+      case "update_agency_client": return { reread: true, item: findAgencyClient(await client.listAgencyClients(), payload.client_id as number) };
+      case "update_user_profile": return { reread: true, item: publicAccount(payload.api_version === "v3" ? await client.getUserV3() : await client.getUser()) };
+      case "delete_agency_client": {
+        const found = (await client.listAgencyClients()).some((item) => Number(item.client_id ?? item.user_id ?? item.id) === Number(payload.client_id));
+        return { reread: true, deleted: !found };
+      }
+      case "connect_existing_remarketing_counter": {
+        const item = (await client.listRemarketingCounters()).find((counter) => Number(counter.id) === Number(payload.counter_id));
+        return item ? { reread: true, item: publicCounterMetadata(item) } : { reread: false, reason: "Счётчик не найден при повторном чтении после подключения." };
+      }
+      case "update_ord_partner_acts": return { reread: true, item: publicSensitiveMetadata(await client.getOrdPartnerActStatByPad(payload.month as string, payload.ord_pad_id as number)) as VkObject };
+      case "update_ord_partner_pad": return { reread: true, item: publicSensitiveMetadata(await client.getOrdPartnerPad(payload.ord_pad_id as number)) as VkObject };
+      case "create_ord_partner_subagent": return { reread: true, item: publicSensitiveMetadata(await client.getOrdPartnerSubagent(result.id as number)) as VkObject };
+      case "update_ord_partner_subagent": return { reread: true, item: publicSensitiveMetadata(await client.getOrdPartnerSubagent(payload.id as number)) as VkObject };
+      case "transfer_to_client": return { reread: false, reason: "Финансовый ответ не перечитывается и не сохраняется в audit; возвращены только безопасные metadata операции." };
       case "create_test_ad_plan": return { reread: true, item: await client.getAdPlan(result.id as number) };
       case "create_test_campaign": return { reread: true, item: await client.getCampaign(result.id as number) };
       case "create_test_ad_group": return { reread: true, item: await client.getAdGroup(result.id as number) };
@@ -826,10 +1310,16 @@ async function captureWriteAfter(client: VkAdsClient, operation: TestWriteOperat
         return item ? { reread: true, item } : { reread: false, reason: "Созданный banner не найден при повторном чтении группы." };
       }
       case "create_test_segment": return { reread: true, item: await client.getSegment(result.id as number) };
+      case "create_test_pricelist": return { reread: true, item: await pricelistFromPages(client, result.id as number) };
       case "copy_test_lead_form": return { reread: true, item: publicFormConfiguration(await client.getLeadFormDetail(result.id as number)) };
       case "rename_test_lead_form": return { reread: true, item: publicFormConfiguration(await client.getLeadFormDetail(payload.form_id as number)) };
       case "rename_test_remarketing_counter": return { reread: true, item: publicCounterMetadata(await client.getRemarketingCounter(payload.counter_id as number)) };
-      case "delete_test_remarketing_counter": return { reread: false, reason: "Test-счётчик удалён; detail-чтение после удаления не выполняется." };
+    case "delete_test_remarketing_counter": return { reread: false, reason: "Test-счётчик удалён; detail-чтение после удаления не выполняется." };
+    case "delete_test_remarketing_counter_v2": return { reread: false, reason: "Test-счётчик удалён через v2; detail-чтение после удаления не выполняется." };
+    case "create_test_counter_goal": return { reread: true, items: (await client.listRemarketingCounterGoals(payload.counter_id as number)).filter((item) => item.name === payload.name && item.substr === payload.substr).map(publicCounterMetadata) };
+    case "delete_test_remarketing_user_list_v3": return { reread: false, reason: "Test-список удалён через v3; detail-чтение после удаления не выполняется." };
+    case "delete_test_offline_goal": return { reread: false, reason: "Test-список офлайн-конверсий удалён; исходные записи не перечитываются." };
+    case "update_test_offline_goal": return { reread: true, items: (await client.listOfflineGoals()).filter((item) => Number(item.id) === Number(payload.offline_goal_id)).map(publicSensitiveMetadata) };
       case "update_test_counter_goal": return { reread: true, items: (await client.listRemarketingCounterGoals(payload.counter_id as number)).filter((item) => Number(item.id) === Number(payload.goal_id)).map(publicCounterMetadata) };
       case "update_test_inapp_event_category": return { reread: true, item: publicSensitiveMetadata(await inAppEventFromPages(client, { appId: payload.app_id as number, trackerId: payload.tracker_id as number, eventId: payload.event_id as number })) as VkObject };
       case "send_test_lead": return { reread: true, item: publicFormConfiguration(await client.getLeadFormDetail(payload.form_id as number)), test_lead_sent: true };
@@ -843,6 +1333,7 @@ async function captureWriteAfter(client: VkAdsClient, operation: TestWriteOperat
       case "rename_test_ad_plan":
       case "delete_test_ad_plan": return { reread: true, item: await client.getAdPlan(payload.ad_plan_id as number) };
       case "rename_test_campaign":
+      case "delete_test_campaign":
       case "update_campaign_budget_limit_day": return { reread: true, item: await client.getCampaign(payload.campaign_id as number) };
       case "block_test_ad_plans": return { reread: true, items: await Promise.all((payload.ad_plan_ids as number[]).map((id) => client.getAdPlan(id))) };
       case "block_test_ad_groups": return { reread: true, items: await Promise.all((payload.ad_group_ids as number[]).map((id) => client.getAdGroup(id))) };
@@ -854,8 +1345,8 @@ async function captureWriteAfter(client: VkAdsClient, operation: TestWriteOperat
       case "rename_test_segment":
       case "delete_test_segment":
       case "add_test_segment_relation":
+      case "update_test_segment_relation":
       case "delete_test_segment_relation": return { reread: true, item: await client.getSegment(payload.segment_id as number) };
-      case "update_test_pricelist": return { reread: true, item: await pricelistFromPages(client, payload.pricelist_id as number) };
       case "create_test_async_report": return { reread: true, item: await client.getCustomReport(result.id as number) };
       case "delete_test_async_report": return { reread: false, reason: "Временный отчёт удалён; detail-чтение после удаления не выполняется." };
       case "upload_static_image": return { reread: false, reason: "Для static content не подтверждён безопасный GET endpoint; возвращён ответ upload.", content_id: result.id ?? null };
@@ -865,8 +1356,18 @@ async function captureWriteAfter(client: VkAdsClient, operation: TestWriteOperat
       case "create_test_offer_batch": return { reread: false, reason: "Batch API возвращает task metadata; detail-чтение доступно отдельным инструментом только для test-прайс-листа." };
       case "export_leads": return { reread: false, reason: "Экспорт лидов не сохраняется сервером и не попадает в audit." };
       case "export_survey_respondents": return { reread: false, reason: "Экспорт ответов опроса не сохраняется сервером и не попадает в audit." };
-      case "upload_test_remarketing_user_list": return { reread: false, reason: "Содержимое списка и его история не читаются после загрузки; возвращён ответ VK Ads без исходных записей." };
-      case "rename_test_remarketing_user_list":
+    case "upload_test_remarketing_user_list": {
+      if (payload.api_version === "v3") {
+        const id = Number(result.id);
+        return { reread: true, items: (await client.listRemarketingUserLists(0, 50)).items.filter((item) => Number(item.id) === id).map(publicSensitiveMetadata) };
+      }
+      return { reread: false, reason: "Содержимое списка и его история не читаются после загрузки; возвращён ответ VK Ads без исходных записей." };
+    }
+    case "upload_test_offline_goal": return { reread: true, items: (await client.listOfflineGoals()).filter((item) => item.name === payload.name).map(publicSensitiveMetadata) };
+      case "rename_test_remarketing_user_list": {
+        if (payload.api_version === "v3") return { reread: true, items: (await client.listRemarketingUserLists(0, 50)).items.filter((item) => Number(item.id) === Number(payload.list_id)).map(remarketingListMetadata) };
+        return { reread: true, item: remarketingListMetadata(await client.getRemarketingUserList(payload.list_id as number)) };
+      }
       case "delete_test_remarketing_user_list": return { reread: true, item: remarketingListMetadata(await client.getRemarketingUserList(payload.list_id as number)) };
       case "connect_agency_client": return { reread: false, reason: "Повторное чтение клиентов агентства может содержать PII; возвращён ответ операции подключения." };
       case "create_test_local_geo": {
@@ -885,7 +1386,6 @@ function publicAccount(user: VkObject) {
   const text = (value: unknown): string | null => value === null || value === undefined ? null : String(value);
   return {
     id: user.id ?? null,
-    username: text(user.username),
     currency: text(user.currency),
     info_currency: text(user.info_currency),
     status: text(user.status),
@@ -933,6 +1433,24 @@ function publicSensitiveMetadata(value: unknown): unknown {
     const safe = publicSensitiveMetadata(child);
     return safe === undefined ? [] : [[key, safe]];
   }));
+}
+
+/** App Store/Google Play могут вернуть текст и URL; для preview и reread оставляем лишь технические признаки приложения. */
+function publicMobileAppMetadata(value: VkObject): VkObject {
+  const allowed = ["id", "type", "category_id", "content_rating", "age_restrictions", "updated"];
+  return Object.fromEntries(allowed.flatMap((key) => Object.hasOwn(value, key) ? [[key, value[key]]] : []));
+}
+
+/** Callback URL может быть закрытым адресом; в preview и reread подписки не возвращаем его. */
+function subscriptionMetadata(value: VkObject): VkObject {
+  const allowed = ["id", "resource", "created", "updated", "status"];
+  return Object.fromEntries(allowed.flatMap((key) => Object.hasOwn(value, key) ? [[key, value[key]]] : []));
+}
+
+/** Финансовые списки могут содержать receipt, description и client metadata. Они не входят в MCP-выход. */
+function publicTransactionGroup(value: VkObject): VkObject {
+  const allowed = ["id", "name", "amount", "tax_amount", "payments_total", "is_commercial", "type", "first_at", "last_at", "object_id", "object_type", "is_autopayment"];
+  return Object.fromEntries(allowed.flatMap((key) => Object.hasOwn(value, key) ? [[key, value[key]]] : []));
 }
 
 /** Клиент агентства может быть физлицом: оставляем только технические признаки связи. */
@@ -984,8 +1502,10 @@ async function callReadTool(
   switch (toolName) {
     case "vk_status":
       return { authenticated: true, account: publicAccount(await client.getUser()) };
-    case "vk_get_user":
-      return { account: publicAccount(await client.getUser()) };
+    case "vk_get_user": {
+      const { api_version } = z.object({ api_version: z.enum(["v2", "v3"]).default("v2") }).parse(args);
+      return { account: publicAccount(api_version === "v3" ? await client.getUserV3() : await client.getUser()), api_version };
+    }
     case "vk_get_ad_plans": {
       const { offset, limit, fields, user_id } = z.object({ ...pagingSchema, fields: z.array(z.enum(VERIFIED_AD_PLAN_FIELDS)).min(1).max(VERIFIED_AD_PLAN_FIELDS.length).optional(), user_id: z.number().int().positive().optional() }).parse(args);
       return normalizePaged(await (user_id === undefined ? client.listAdPlans(offset, limit, fields) : client.listAdPlans(offset, limit, fields, user_id)));
@@ -1032,8 +1552,9 @@ async function callReadTool(
       return normalizePaged(await client.listBannerFieldDefinitions(offset, limit));
     }
     case "vk_get_statistics": {
-      const { object_type, period, ids, date_from, date_to, metrics } = z.object(statisticsInputSchema).parse(args);
+      const { api_version, object_type, period, ids, date_from, date_to, metrics } = z.object(statisticsInputSchema).parse(args);
       const statistics = await client.getStatistics({
+        apiVersion: api_version,
         objectType: object_type,
         period,
         ...(ids ? { ids } : {}),
@@ -1092,9 +1613,11 @@ async function callReadTool(
       }
     }
     case "vk_get_remarketing_lists": {
-      const { offset, limit } = page();
-      const result = await client.listRemarketingUserLists(offset, limit);
-      return { ...normalizePaged(result), items: result.items.map(remarketingListMetadata) };
+      const { offset, limit, api_version } = z.object({ ...pagingSchema, api_version: z.enum(["v2", "v3"]).default("v3") }).parse(args);
+      const result = api_version === "v2"
+        ? await client.listRemarketingUserListsV2(offset, limit)
+        : await client.listRemarketingUserLists(offset, limit);
+      return { ...normalizePaged(result), api_version, items: result.items.map(remarketingListMetadata) };
     }
     case "vk_get_remarketing_list":
       return { item: await remarketingListFromPages(client, readId(args)) };
@@ -1245,8 +1768,8 @@ async function callReadTool(
   }
 }
 
-export function createServer(client: VkAdsClient, mode: ServerMode, options: { uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowSharingKeyRevoke?: boolean; allowSkAdNetworkWrites?: boolean; skAdNetworkTestAppIds?: number[]; inAppEventTestAppIds?: number[]; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; remarketingCounterTestIds?: number[]; connectionId?: string; profileName?: string; auditFile?: string } = {}): McpServer {
-  const normalizeTestWritePayload = (operation: TestWriteOperation, payload: Record<string, unknown>, _legacyUploadDir?: string) => normalizeTestWritePayloadCore(
+export function createServer(client: VkAdsClient, mode: ServerMode, options: { uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowProfileWrites?: boolean; allowSharingKeyRevoke?: boolean; externalSharingKey?: string; allowSkAdNetworkWrites?: boolean; skAdNetworkTestAppIds?: number[]; inAppEventTestAppIds?: number[]; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; remarketingCounterTestIds?: number[]; tokenRecovery?: { recover: () => Promise<{ token_reissued: true; refresh_token_saved: true; expires_at?: string }> }; connectionId?: string; profileName?: string; auditFile?: string; previewTtlMs?: number; requireWriteConfirmation?: boolean } = {}): McpServer {
+  const normalizeTestWritePayload = (operation: WriteOperation, payload: Record<string, unknown>, _legacyUploadDir?: string) => normalizeTestWritePayloadCore(
     operation,
     payload,
     options.uploadDir,
@@ -1255,7 +1778,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
     options.allowAgencyWrites,
   );
   const server = new McpServer({ name: "vk-ads-mcp", version: "0.1.0" });
-  const writeGate = new WriteGate(mode === "write", Date.now, randomUUID, options.auditFile);
+  const writeGate = new WriteGate(mode === "write", Date.now, randomUUID, options.auditFile, options.previewTtlMs, options.requireWriteConfirmation ?? true);
   const connectionId = options.connectionId ?? "default";
   const profileName = options.profileName ?? "default";
   /** Только content, загруженный этим MCP после локальной проверки размеров. */
@@ -1534,8 +2057,9 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
-    async ({ object_type, period, ids, date_from, date_to, metrics, format, include_total }) => {
+    async ({ api_version, object_type, period, ids, date_from, date_to, metrics, format, include_total }) => {
       const statistics = await client.getStatistics({
+        apiVersion: api_version,
         objectType: object_type,
         period,
         ...(ids ? { ids } : {}),
@@ -1701,7 +2225,6 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
         authenticated: z.boolean(),
         account: z.object({
           id: z.union([z.string(), z.number()]).nullable(),
-          username: z.string().nullable(),
           currency: z.string().nullable(),
           info_currency: z.string().nullable(),
           status: z.string().nullable(),
@@ -1724,7 +2247,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       outputSchema: {
         authenticated: z.boolean(), profile: z.string(), connection_id: z.string(), mode: z.enum(["readonly", "write"]),
         rate_limit: z.string(), catalog: z.object({ total: z.number().int(), executable: z.number().int() }),
-        account: z.object({ id: z.union([z.string(), z.number()]).nullable(), username: z.string().nullable(), currency: z.string().nullable(), info_currency: z.string().nullable(), status: z.string().nullable(), timezone: z.string().nullable() }),
+        account: z.object({ id: z.union([z.string(), z.number()]).nullable(), currency: z.string().nullable(), info_currency: z.string().nullable(), status: z.string().nullable(), timezone: z.string().nullable() }),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
@@ -1810,6 +2333,18 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
     async ({ url }) => textAndData({ result: resolveAdvertisingUrl(url) }, "Рекламная ссылка разобрана локально."),
+  );
+
+  server.registerTool(
+    "url_id_resolve_v1",
+    {
+      title: "Получить технический ID рекламной ссылки",
+      description: "Read-only: GET v1 /urls?url=… для публичного HTTPS-адреса. Не создаёт URL и не выполняет запрос к самому адресу.",
+      inputSchema: { url: z.string().min(1).max(2_048).url() },
+      outputSchema: { item: z.record(z.string(), z.unknown()) },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ url }) => textAndData({ item: publicUrlMetadata(await client.resolveUrlIdV1(validateAdvertisingDestination(url).url)) }, "Технический ID рекламной ссылки получен."),
   );
 
   server.registerTool(
@@ -1922,7 +2457,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
     "remarketing_list_get",
     {
       title: "Получить metadata списка ремаркетинга",
-      description: "Read-only: находит users list по ID в v3 metadata-списке. Контакты, хеши, файлы и история намеренно не запрашиваются.",
+      description: "Read-only: читает users list по ID через документированный v3 detail endpoint. Контакты, хеши, файлы и история намеренно не запрашиваются.",
       inputSchema: { id: z.number().int().positive() },
       outputSchema: { item: z.record(z.string(), z.unknown()) },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
@@ -2131,19 +2666,32 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
     },
     async ({ id }) => textAndData({ item: await searchPhraseFromList(client, id) }, "Список поисковых фраз получен."),
   );
-  registerList("subscriptions_list", "Подписки", "Read-only: GET v3 /subscription.json.", client.listSubscriptions.bind(client));
+  registerList("subscriptions_list", "Подписки", "Read-only: GET v3 /subscription.json; ресурс возвращает только v3-подписки, v2-подписки не затрагиваются.", client.listSubscriptions.bind(client));
   server.registerTool(
     "subscription_get",
     {
       title: "Получить подписку",
-      description: "Read-only: находит подписку по ID в подтверждённых metadata-страницах GET v3 /subscription.json. Не создаёт, не изменяет и не удаляет подписки.",
+      description: "Read-only: находит только v3-подписку по ID в подтверждённых metadata-страницах GET v3 /subscription.json. Не создаёт, не изменяет и не удаляет подписки v2 или v3.",
       inputSchema: { id: z.number().int().positive() },
       outputSchema: { item: z.record(z.string(), z.unknown()) },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
     async ({ id }) => textAndData({ item: await subscriptionFromPages(client, id) }, "Metadata подписки получены."),
   );
-  registerList("transaction_groups_list", "Группы транзакций", "Read-only: GET /billing/transaction_groups.json.", client.listTransactionGroups.bind(client));
+  server.registerTool(
+    "transaction_groups_list",
+    {
+      title: "Группы транзакций",
+      description: "Read-only: GET /billing/transaction_groups.json. Финансовые receipt, description и client metadata удаляются до MCP-ответа.",
+      inputSchema: pagingSchema,
+      outputSchema: { count: z.number().int().nonnegative(), offset: z.number().int().nonnegative(), items: z.array(z.record(z.string(), z.unknown())) },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ offset, limit }) => {
+      const page = await client.listTransactionGroups(offset, limit);
+      return textAndData({ count: page.count, offset: page.offset, items: page.items.map(publicTransactionGroup) }, "Группы транзакций получены; финансовые реквизиты отфильтрованы.");
+    },
+  );
   server.registerTool(
     "transaction_group_get",
     {
@@ -2153,7 +2701,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       outputSchema: { item: z.record(z.string(), z.unknown()) },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
-    async ({ id }) => textAndData({ item: await transactionGroupFromPages(client, id) }, "Группа транзакций получена."),
+    async ({ id }) => textAndData({ item: publicTransactionGroup(await transactionGroupFromPages(client, id)) }, "Группа транзакций получена; финансовые реквизиты отфильтрованы."),
   );
   server.registerTool(
     "segment_relations_list",
@@ -2371,7 +2919,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
     "write_capabilities",
     {
       title: "Статус операций записи",
-      description: "Показывает, почему write-инструменты пока недоступны или требуют отдельной проверки payload.",
+      description: "Показывает режим и границы операций записи.",
       outputSchema: {
         mode: z.enum(["readonly", "write"]),
         writes_registered: z.boolean(),
@@ -2384,7 +2932,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
         mode,
         writes_registered: mode === "write",
         reason: mode === "write"
-          ? "Доступны регистрация HTTPS URL, изолированные test ad plan/group/banner операции, загрузка static image, HTML5 ZIP или MP4-видео и чувствительные экспорты через preview и одноразовое подтверждение. Test-счётчики ремаркетинга дополнительно требуют allowlist и отдельный opt-in."
+          ? "Доступны production ad plan/campaign/ad group/banner операции через фиксированные схемы, preflight, preview, одноразовое точное подтверждение, redacted audit и reread. PII, финансовые, агентские, sharing-key, SKAdNetwork, in-app и counter операции сохраняют отдельные opt-in/ограничения."
           : "Сервер запущен в readonly: write-инструменты не зарегистрированы.",
       },
       "Статус write-возможностей получен.",
@@ -2394,7 +2942,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
   if (mode === "write") {
     const previewOutputSchema = {
       id: z.string().uuid(),
-      operation: testWriteOperationSchema,
+      operation: writeOperationSchema,
       connection_id: z.string(),
       payload: z.record(z.string(), z.unknown()),
       payload_hash: z.string().length(64),
@@ -2406,18 +2954,42 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
         expected_change: z.string(),
       }),
     };
-    const prepareWritePreview = async (operation: TestWriteOperation, payload: Record<string, unknown>) => {
+    const prepareWritePreview = async (operation: WriteOperation, payload: Record<string, unknown>) => {
+      if (unindexedWriteOperations.has(operation)) {
+        throw new Error("Операция отключена: её endpoint отсутствует в текущем официальном индексе VK Ads API. Нужен первичный опубликованный контракт.");
+      }
       const normalized = normalizeTestWritePayload(operation, payload, options.uploadDir);
+      if (operation === "recover_token_limit" && !options.tokenRecovery) {
+        throw new Error("Восстановление токенов недоступно: сервер запущен без локальных VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET.");
+      }
+      if (operation === "activate_configured_sharing_key" && !options.externalSharingKey) {
+        throw new Error("Активация внешнего ключа недоступна: укажите VK_ADS_EXTERNAL_SHARING_KEY только в локальном .env и перезапустите MCP.");
+      }
       if ((operation === "share_test_skadnetwork_ids" || operation === "withdraw_test_skadnetwork_ids") && !options.allowSkAdNetworkWrites) {
         throw new Error("SKAdNetwork-запись отключена. Нужен отдельный VK_ADS_ALLOW_SKADNETWORK_WRITES=1 при запуске.");
       }
       if (operation === "update_test_inapp_event_category" && !options.allowInAppEventCategoryWrites) {
         throw new Error("Изменение категории in-app события отключено. Нужен отдельный VK_ADS_ALLOW_INAPP_EVENT_CATEGORY_WRITES=1 при запуске.");
       }
-      if ((operation === "rename_test_remarketing_counter" || operation === "delete_test_remarketing_counter" || operation === "update_test_counter_goal") && !options.allowRemarketingCounterWrites) {
+      if (["update_agency_client", "delete_agency_client", "update_manager_client", "delete_manager_client"].includes(operation) && !options.allowAgencyWrites) {
+        throw new Error("Управление связью agency-client или manager-client отключено. Нужен отдельный VK_ADS_ALLOW_AGENCY_WRITES=1 при запуске.");
+      }
+      if (operation === "update_user_profile" && !options.allowProfileWrites) {
+        throw new Error("Изменение профиля отключено. Нужен отдельный VK_ADS_ALLOW_PROFILE_WRITES=1 при запуске.");
+      }
+      if (["update_ord_partner_acts", "update_ord_partner_pad", "create_ord_partner_subagent", "update_ord_partner_subagent"].includes(operation) && process.env.VK_ADS_ALLOW_ORD_WRITES !== "1") {
+        throw new Error("ОРД-записи отключены. Нужен отдельный VK_ADS_ALLOW_ORD_WRITES=1 при запуске.");
+      }
+      if (operation === "transfer_to_client" && process.env.VK_ADS_ALLOW_FINANCIAL_WRITES !== "1") {
+        throw new Error("Финансовые переводы отключены. Нужен отдельный VK_ADS_ALLOW_FINANCIAL_WRITES=1 при запуске.");
+      }
+      if ((operation === "rename_test_remarketing_counter" || operation === "delete_test_remarketing_counter" || operation === "delete_test_remarketing_counter_v2" || operation === "create_test_counter_goal" || operation === "update_test_counter_goal") && !options.allowRemarketingCounterWrites) {
         throw new Error("Изменение test-счётчика ремаркетинга отключено. Нужен отдельный VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES=1 при запуске.");
       }
-      if (operation === "rename_test_remarketing_counter" || operation === "delete_test_remarketing_counter" || operation === "update_test_counter_goal") {
+      if (operation === "connect_existing_remarketing_counter" && !options.allowRemarketingCounterWrites) {
+        throw new Error("Подключение существующего счётчика ремаркетинга отключено. Нужен отдельный VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES=1 при запуске.");
+      }
+      if (operation === "rename_test_remarketing_counter" || operation === "delete_test_remarketing_counter" || operation === "delete_test_remarketing_counter_v2" || operation === "create_test_counter_goal" || operation === "update_test_counter_goal") {
         const counterId = normalized.counter_id as number;
         if (!(options.remarketingCounterTestIds ?? []).includes(counterId)) {
           throw new Error("Счётчик не входит в VK_ADS_TEST_COUNTER_IDS; запись заблокирована.");
@@ -2427,12 +2999,34 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       let preflight: WritePreflightResult | { ready: boolean; checks: Array<{ code: string; status: "pass" | "fail"; message: string }> } | undefined;
       if (operation === "create_test_ad_plan") {
         preflight = await preflightTestAdPlan(client, normalized);
+      } else if (operation === "create_test_segment") {
+        preflight = await preflightTestSegment(client, normalized);
       } else if (operation === "create_test_campaign") {
         preflight = await preflightTestAdGroup(client, normalized, before);
       } else if (operation === "create_test_ad_group") {
         preflight = await preflightTestAdGroup(client, normalized, before);
       } else if (operation === "create_test_banner") {
         preflight = await preflightConfirmedTestBanner(client, normalized, uploadedImages, before);
+      } else if (operation === "connect_existing_remarketing_counter") {
+        const alreadyConnected = before?.counter_already_connected === true;
+        preflight = {
+          ready: !alreadyConnected,
+          checks: [{
+            code: "counter_not_connected",
+            status: alreadyConnected ? "fail" : "pass",
+            message: alreadyConnected ? "Счётчик уже подключён к текущему кабинету; повторная запись заблокирована." : "Счётчик не найден среди уже подключённых к текущему кабинету.",
+          }],
+        };
+      } else if (["create_ad_plan", "create_campaign", "update_campaign", "delete_campaign", "create_ad_group", "update_ad_group", "delete_ad_group", "create_banner", "update_banner", "delete_banner", "update_ad_plan", "delete_ad_plan", "manage_ad_plans", "manage_ad_groups", "manage_banners", "delete_subscription", "create_subscription", "refresh_apple_app_metadata", "refresh_google_app_metadata", "update_agency_client", "delete_agency_client", "update_user_profile", "update_manager_client", "delete_manager_client", "update_ord_partner_acts", "update_ord_partner_pad", "create_ord_partner_subagent", "update_ord_partner_subagent", "transfer_to_client"].includes(operation)) {
+        const existing = operation.startsWith("create_") || operation === "manage_ad_plans" || operation === "manage_ad_groups" || operation === "manage_banners" ? true : before !== null;
+        preflight = {
+          ready: existing,
+          checks: [{
+            code: "existing_objects",
+            status: existing ? "pass" : "fail",
+            message: existing ? "Все target objects перечитаны перед production write." : "Target object не найден при preflight.",
+          }],
+        };
       } else if (operation === "share_test_skadnetwork_ids" || operation === "withdraw_test_skadnetwork_ids") {
         preflight = await preflightSkAdNetwork(client, operation, normalized, options.skAdNetworkTestAppIds ?? []);
       } else if (operation === "update_test_inapp_event_category") {
@@ -2458,7 +3052,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       name: string,
       title: string,
       description: string,
-      operation: TestWriteOperation,
+      operation: WriteOperation,
       inputSchema: Record<string, z.ZodTypeAny>,
     ) => server.registerTool(
       name,
@@ -2472,13 +3066,127 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       async (payload) => prepareWritePreview(operation, payload as Record<string, unknown>),
     );
 
+    registerWritePreviewAlias(
+      "vk_recover_token_limit",
+      "Подготовить восстановление лимита токенов",
+      "Удалит все токены текущей связки clientId--user в VK Ads и выпустит один новый с refresh_token. Операция не затрагивает рекламные сущности, но отзовёт доступ у других локальных процессов с тем же приложением и пользователем.",
+      "recover_token_limit",
+      {},
+    );
+
+    registerWritePreviewAlias(
+      "subscription_delete",
+      "Подготовить удаление подписки",
+      "Удаляет только v3-подписку через опубликованный DELETE /api/v3/subscription/{id}.json. Перед выполнением она должна быть найдена свежим v3 list-запросом; операция высокорисковая и не затрагивает кампании.",
+      "delete_subscription",
+      { subscription_id: z.number().int().positive() },
+    );
+    registerWritePreviewAlias(
+      "subscription_create",
+      "Подготовить создание подписки",
+      "Создаёт одну v3-подписку на BANNER, CAMPAIGN или OKLEADAD и отправляет уведомления только на проверенный public HTTPS callback URL.",
+      "create_subscription",
+      { resource: z.enum(["BANNER", "CAMPAIGN", "OKLEADAD"]), callback_url: z.string().url().max(2_048) },
+    );
+    registerWritePreviewAlias(
+      "apple_app_metadata_refresh",
+      "Подготовить обновление metadata iOS-приложения",
+      "Перечитывает справочные metadata указанного App Store ID через документированный POST. Рекламные сущности и бюджеты не затрагиваются.",
+      "refresh_apple_app_metadata",
+      { app_id: z.number().int().positive() },
+    );
+    registerWritePreviewAlias(
+      "google_app_metadata_refresh",
+      "Подготовить обновление metadata Android-приложения",
+      "Перечитывает справочные metadata указанного Google Play package name через документированный POST. Рекламные сущности и бюджеты не затрагиваются.",
+      "refresh_google_app_metadata",
+      { package_name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/) },
+    );
+    registerWritePreviewAlias(
+      "user_profile_update",
+      "Подготовить изменение профиля VK Ads",
+      "Изменяет только фиксированные настройки текущего профиля v2/v3. Нужен VK_ADS_ALLOW_PROFILE_WRITES=1; PII не сохраняются в audit.",
+      "update_user_profile",
+      { api_version: z.enum(["v2", "v3"]), info_currency: z.string().regex(/^[A-Z]{3}$/).optional(), language: z.enum(["ru", "en"]).optional(), status: z.enum(["active", "blocked", "deleted"]).optional(), additional_emails: z.array(z.string().email().max(254)).min(1).max(10).optional(), additional_info: z.object({ name: z.string().min(1).max(255).optional(), phone: z.string().min(3).max(32).optional() }).strict().optional(), mailing: z.array(z.enum(["finance", "moderation"])).min(1).max(2).optional(), mailings: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), z.object({ email: z.array(z.string().email().max(254)).max(10) }).strict()).refine((value) => { const size = Object.keys(value).length; return size >= 1 && size <= 50; }, "Укажите от 1 до 50 типов рассылки.").optional(), email_settings: z.array(z.object({ type: z.enum(["USER", "PARENT", "ADDITIONAL"]), email: z.string().email().max(254) }).strict()).min(1).max(10).optional() },
+    );
+    registerWritePreviewAlias(
+      "remarketing_counter_connect_existing",
+      "Подготовить подключение существующего счётчика ремаркетинга",
+      "Подключает только уже существующий счётчик Top.Mail.ru без пароля и URL. Нужен VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES=1; повторное подключение блокируется fresh preflight.",
+      "connect_existing_remarketing_counter",
+      { counter_id: z.number().int().positive(), name: z.string().min(1).max(120), flags: z.array(z.literal("cookie_sync")).max(1).optional() },
+    );
+    registerWritePreviewAlias(
+      "agency_client_update",
+      "Подготовить изменение связи agency-client",
+      "Изменяет только документированные параметры уже привязанного клиента агентства. Нужен VK_ADS_ALLOW_AGENCY_WRITES=1; контактные поля не сохраняются в audit.",
+      "update_agency_client",
+      { client_id: z.number().int().positive(), is_vkads: z.boolean().optional(), access_type: z.literal("full_access").optional(), additional_emails: z.array(z.string().email().max(254)).min(1).max(10).optional(), additional_info: z.object({ client_name: z.string().min(1).max(255).optional(), client_info: z.string().min(1).max(1_000).optional() }).strict().optional() },
+    );
+    registerWritePreviewAlias(
+      "agency_client_delete",
+      "Подготовить удаление связи agency-client",
+      "Удаляет только связь клиента с агентством через официальный DELETE; рекламный кабинет, кампании, бюджеты и аудитории не удаляются. Нужен VK_ADS_ALLOW_AGENCY_WRITES=1.",
+      "delete_agency_client",
+      { client_id: z.number().int().positive() },
+    );
+    registerWritePreviewAlias(
+      "manager_client_update",
+      "Подготовить изменение связи manager-client",
+      "Изменяет access_type через официальный POST; доступно только при VK_ADS_ALLOW_AGENCY_WRITES=1.",
+      "update_manager_client",
+      { manager_id: z.number().int().positive(), client_id: z.number().int().positive(), access_type: z.enum(["full_access", "readonly", "fin_readonly", "ads_readonly"]) },
+    );
+    registerWritePreviewAlias(
+      "manager_client_delete",
+      "Подготовить удаление связи manager-client",
+      "Удаляет связь клиента с менеджером через официальный DELETE; аккаунт клиента не удаляется. Нужен VK_ADS_ALLOW_AGENCY_WRITES=1.",
+      "delete_manager_client",
+      { manager_id: z.number().int().positive(), client_id: z.number().int().positive() },
+    );
+    registerWritePreviewAlias(
+      "ord_partner_acts_update",
+      "Подготовить изменение актов ОРД",
+      "Изменяет цепочку актов по документированной v1-схеме. Нужен VK_ADS_ALLOW_ORD_WRITES=1; юридические и контактные поля не попадают в audit.",
+      "update_ord_partner_acts",
+      { month: z.string().regex(/^\d{4}-\d{2}-01$/), ord_pad_id: z.number().int().positive(), acts: z.array(ordActItemSchema).min(1).max(200) },
+    );
+    registerWritePreviewAlias(
+      "ord_partner_pad_update",
+      "Подготовить изменение площадки ОРД",
+      "Изменяет name или договорную цепочку площадки. Нужен VK_ADS_ALLOW_ORD_WRITES=1.",
+      "update_ord_partner_pad",
+      { ord_pad_id: z.number().int().positive(), name: z.string().min(1).max(255).optional(), contracts: z.array(ordContractUpdateSchema).min(1).max(200).optional() },
+    );
+    registerWritePreviewAlias(
+      "ord_partner_subagent_create",
+      "Подготовить создание контрагента ОРД",
+      "Создаёт контрагента по фиксированной официальной схеме. Нужен VK_ADS_ALLOW_ORD_WRITES=1; PII и реквизиты не сохраняются в audit.",
+      "create_ord_partner_subagent",
+      { user_type: ordSubagentFieldsSchema.shape.user_type, role: ordSubagentFieldsSchema.shape.role, name: ordSubagentFieldsSchema.shape.name, inn: ordSubagentFieldsSchema.shape.inn, site: ordSubagentFieldsSchema.shape.site, phone: ordSubagentFieldsSchema.shape.phone, foreign_epayment_method: ordSubagentFieldsSchema.shape.foreign_epayment_method, foreign_oksm_country_code: ordSubagentFieldsSchema.shape.foreign_oksm_country_code, foreign_registration_number: ordSubagentFieldsSchema.shape.foreign_registration_number },
+    );
+    registerWritePreviewAlias(
+      "ord_partner_subagent_update",
+      "Подготовить изменение контрагента ОРД",
+      "Изменяет только перечисленные поля контрагента. Нужен VK_ADS_ALLOW_ORD_WRITES=1.",
+      "update_ord_partner_subagent",
+      { id: z.number().int().positive(), user_type: ordSubagentFieldsSchema.shape.user_type.optional(), role: ordSubagentFieldsSchema.shape.role.optional(), name: ordSubagentFieldsSchema.shape.name.optional(), inn: ordSubagentFieldsSchema.shape.inn, site: ordSubagentFieldsSchema.shape.site, phone: ordSubagentFieldsSchema.shape.phone, foreign_epayment_method: ordSubagentFieldsSchema.shape.foreign_epayment_method, foreign_oksm_country_code: ordSubagentFieldsSchema.shape.foreign_oksm_country_code, foreign_registration_number: ordSubagentFieldsSchema.shape.foreign_registration_number },
+    );
+    registerWritePreviewAlias(
+      "billing_transfer_to_client",
+      "Подготовить финансовый перевод клиенту",
+      "Перевод средств агентству запрещён по умолчанию и требует VK_ADS_ALLOW_FINANCIAL_WRITES=1. Payload и ответ с балансами не сохраняются в audit.",
+      "transfer_to_client",
+      { client_id: z.number().int().positive(), amount: z.string().regex(/^\d+(?:\.\d{1,2})?$/) },
+    );
+
     server.registerTool(
       "write_preview",
       {
         title: "Подготовить подтверждение тестовой записи",
         description: "Готовит одноразовый preview с hash payload для HTTPS URL, изолированных test-сущностей, static image или MP4-видео из VK_ADS_UPLOAD_DIR.",
         inputSchema: {
-          operation: testWriteOperationSchema,
+          operation: writeOperationSchema,
           payload: z.record(z.string(), z.unknown()),
         },
       outputSchema: previewOutputSchema,
@@ -2492,12 +3200,12 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       { url: z.string().min(1).max(2_048).url() },
     );
     registerWritePreviewAlias(
-      "vk_create_ad_plan", "Подготовить создание test ad plan", "Создаётся только остановленный `__MCP_TEST__` ad plan с одной остановленной campaign.", "create_test_ad_plan",
-      { name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), objective: z.string().min(1).max(80), package_id: z.number().int().positive() },
+      "vk_create_ad_plan", "Подготовить создание ad plan", "Создаёт ad plan с фиксированной схемой VK Ads. По умолчанию статус blocked; production ID разрешён только через preview и одноразовое подтверждение.", "create_ad_plan",
+      { name: z.string().min(1).max(120), objective: z.string().min(1).max(80), status: productionStatusSchema.optional(), date_start: productionDateSchema.optional(), date_end: productionDateSchema.optional(), autobidding_mode: z.string().min(1).max(80).optional(), budget_limit_day: productionMoneySchema.optional(), budget_limit: productionMoneySchema.optional(), enable_utm: z.boolean().optional(), enable_offline_goals: z.boolean().optional(), ad_groups: productionAdPlanFieldsSchema.shape.ad_groups },
     );
     registerWritePreviewAlias(
-      "vk_create_campaign", "Подготовить создание test campaign", "Подтверждён только blocked appinstalls package 2860 внутри `__MCP_TEST__` ad plan.", "create_test_campaign",
-      { ad_plan_id: z.number().int().positive(), package_id: z.literal(2860), objective: z.literal("appinstalls"), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+      "vk_create_campaign", "Подготовить создание campaign", "Создаёт campaign с документированными полями в существующем ad plan; по умолчанию blocked.", "create_campaign",
+      { ad_plan_id: z.number().int().positive(), package_id: z.number().int().positive(), objective: z.string().min(1).max(80), name: z.string().min(1).max(120), status: productionStatusSchema.optional(), date_start: productionDateSchema.optional(), date_end: productionDateSchema.optional(), budget_limit_day: productionMoneySchema.optional(), budget_limit: productionMoneySchema.optional(), autobidding_mode: z.string().min(1).max(80).optional() },
     );
     registerWritePreviewAlias(
       "lead_form_copy", "Подготовить копирование test-лид-формы", "Исходная форма и имя копии обязаны иметь префикс `__MCP_TEST__`. Контакты и ответы не читаются.", "copy_test_lead_form",
@@ -2522,6 +3230,10 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
     registerWritePreviewAlias(
       "sharing_key_revoke", "Подготовить отзыв ключа шаринга", "Отзывает только ключ, созданный текущим MCP-сеансом. Нужен отдельный opt-in при запуске: отзыв способен остановить кампании получателя.", "revoke_created_sharing_key",
       { key_handle: z.string().uuid() },
+    );
+    registerWritePreviewAlias(
+      "sharing_key_activate_configured", "Подготовить активацию внешнего ключа", "Активирует все источники только из bearer-key, уже сохранённого локально как VK_ADS_EXTERNAL_SHARING_KEY. Ключ не передаётся через MCP, не показывается и не попадает в audit.", "activate_configured_sharing_key",
+      {},
     );
     registerWritePreviewAlias(
       "skadnetwork_ids_share", "Подготовить передачу SKAdNetwork IDs", "Только iOS app ID из локального allowlist тестов и только свободные IDs. Нужен отдельный opt-in при запуске.", "share_test_skadnetwork_ids",
@@ -2558,8 +3270,8 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       async ({ action, form_ids }) => prepareWritePreview("manage_test_survey_forms_archive", { action, form_ids }),
     );
     registerWritePreviewAlias(
-      "vk_update_ad_plan", "Подготовить переименование test ad plan", "Подтверждён только rename существующего `__MCP_TEST__` ad plan; бюджеты и статусы не изменяются.", "rename_test_ad_plan",
-      { ad_plan_id: z.number().int().positive(), name: z.string().min(1).max(120) },
+      "vk_update_ad_plan", "Подготовить изменение ad plan", "Изменяет только перечисленные документированные поля существующего ad plan.", "update_ad_plan",
+      { ad_plan_id: z.number().int().positive(), name: z.string().min(1).max(120).optional(), status: productionStatusSchema.optional(), date_start: productionDateSchema.optional(), date_end: productionDateSchema.optional(), autobidding_mode: z.string().min(1).max(80).optional(), budget_limit_day: productionMoneySchema.optional(), budget_limit: productionMoneySchema.optional(), enable_utm: z.boolean().optional(), enable_offline_goals: z.boolean().optional(), objective: z.string().min(1).max(80).optional() },
     );
     server.registerTool(
       "vk_update_campaign",
@@ -2578,30 +3290,32 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
         if ((name === undefined) === (budget_limit_day === undefined)) {
           throw new Error("Укажите ровно одно поле: name или budget_limit_day.");
         }
-        return name === undefined
-          ? prepareWritePreview("update_campaign_budget_limit_day", { campaign_id, budget_limit_day })
-          : prepareWritePreview("rename_test_campaign", { campaign_id, name });
+        return prepareWritePreview("update_campaign", { campaign_id, ...(name === undefined ? { budget_limit_day } : { name }) });
       },
     );
     registerWritePreviewAlias(
-      "vk_delete_ad_plan", "Подготовить удаление test ad plan", "Только `__MCP_TEST__` ad plan; VK получает status=deleted.", "delete_test_ad_plan",
+      "vk_delete_ad_plan", "Подготовить удаление ad plan", "Переводит выбранный ad plan в status=deleted после reread и подтверждения.", "delete_ad_plan",
       { ad_plan_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
-      "vk_manage_campaigns", "Подготовить остановку test ad plans", "Подтверждён только массовый перевод `__MCP_TEST__` ad plan в blocked.", "block_test_ad_plans",
-      { ad_plan_ids: z.array(z.number().int().positive()).min(1).max(200) },
+      "vk_manage_campaigns", "Подготовить массовое изменение ad plans", "Массово изменяет status, budget_limit_day, dates или max_price для перечисленных ad plans по официальной AdPlanMassAction schema.", "manage_ad_plans",
+      { items: z.array(productionAdPlanMassItemSchema).min(1).max(200) },
     );
     registerWritePreviewAlias(
-      "vk_create_ad_group", "Подготовить создание test ad group", "Создаётся только остановленная `__MCP_TEST__` group внутри test ad plan.", "create_test_ad_group",
-      { ad_plan_id: z.number().int().positive(), package_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), targetings: confirmedTestGroupTargetingsSchema },
+      "vk_create_ad_group", "Подготовить создание ad group", "Создаёт ad group с фиксированными полями budget, bid, status, dates и targetings.", "create_ad_group",
+      { ad_plan_id: z.number().int().positive(), package_id: z.number().int().positive(), name: z.string().min(1).max(120), targetings: productionTargetingsSchema, status: productionStatusSchema.optional(), objective: z.string().min(1).max(80).optional(), date_start: productionDateSchema.optional(), date_end: productionDateSchema.optional(), autobidding_mode: z.string().min(1).max(80).optional(), budget_limit_day: productionMoneySchema.optional(), budget_limit: productionMoneySchema.optional(), mixing: z.string().min(1).max(80).optional(), price: productionMoneySchema.optional(), max_price: productionMoneySchema.optional(), age_restrictions: z.string().max(80).optional(), enable_utm: z.boolean().optional(), enable_offline_goals: z.boolean().optional() },
     );
     registerWritePreviewAlias(
-      "vk_update_ad_group", "Подготовить переименование test ad group", "Подтверждён только rename существующей `__MCP_TEST__` group; ставки, бюджет и таргетинги не изменяются.", "rename_test_ad_group",
-      { ad_group_id: z.number().int().positive(), name: z.string().min(1).max(120) },
+      "vk_update_ad_group", "Подготовить изменение ad group", "Изменяет только перечисленные документированные поля production ad group, включая ставки, бюджет и targetings.", "update_ad_group",
+      { ad_group_id: z.number().int().positive(), name: z.string().min(1).max(120).optional(), status: productionStatusSchema.optional(), date_start: productionDateSchema.optional(), date_end: productionDateSchema.optional(), autobidding_mode: z.string().min(1).max(80).optional(), budget_limit_day: productionMoneySchema.optional(), budget_limit: productionMoneySchema.optional(), mixing: z.string().min(1).max(80).optional(), price: productionMoneySchema.optional(), max_price: productionMoneySchema.optional(), targetings: productionTargetingsSchema.optional(), enable_utm: z.boolean().optional(), enable_offline_goals: z.boolean().optional() },
     );
     registerWritePreviewAlias(
-      "vk_update_banner", "Подготовить переименование test banner", "Подтверждён только rename существующего `__MCP_TEST__` banner; content, URLs, статусы и обычные объекты заблокированы.", "rename_test_banner",
-      { banner_id: z.number().int().positive(), name: z.string().min(1).max(120) },
+      "vk_update_banner", "Подготовить изменение banner", "Изменяет только перечисленные content, textblocks, URLs, name или status существующего banner.", "update_banner",
+      { banner_id: z.number().int().positive(), name: z.string().min(1).max(120).optional(), status: productionStatusSchema.optional(), content: productionBannerFieldsSchema.shape.content, textblocks: productionBannerFieldsSchema.shape.textblocks, urls: productionBannerFieldsSchema.shape.urls },
+    );
+    registerWritePreviewAlias(
+      "vk_delete_banner", "Подготовить удаление banner", "Удаляет выбранный banner через опубликованный HTTP DELETE после reread и подтверждения.", "delete_banner",
+      { banner_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
       "vk_update_remarketing_counter", "Подготовить переименование test-счётчика", "Только счётчик из VK_ADS_TEST_COUNTER_IDS с именем `__MCP_TEST__`; URL, учётные данные и flags не передаются.", "rename_test_remarketing_counter",
@@ -2612,32 +3326,52 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       { counter_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
+      "vk_delete_remarketing_counter_v2", "Подготовить v2-удаление test-счётчика", "Только счётчик из VK_ADS_TEST_COUNTER_IDS с именем `__MCP_TEST__`; выполняет документированный v2 DELETE и не заменяет legacy v1-операцию.", "delete_test_remarketing_counter_v2",
+      { counter_id: z.number().int().positive() },
+    );
+    registerWritePreviewAlias(
+      "offline_goal_delete", "Подготовить удаление test-списка офлайн-конверсий", "Удаляет только существующий `__MCP_TEST__` список офлайн-конверсий. Исходные записи и PII не читаются.", "delete_test_offline_goal",
+      { offline_goal_id: z.number().int().positive() },
+    );
+    registerWritePreviewAlias(
+      "offline_goal_update", "Подготовить обновление test-списка офлайн-конверсий", "Переименовывает и/или дозагружает только существующий `__MCP_TEST__` список. Файл принимается лишь из VK_ADS_PII_UPLOAD_DIR при VK_ADS_ALLOW_PII_UPLOADS=1; контакты не читаются и не логируются.", "update_test_offline_goal",
+      { offline_goal_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), file_path: z.string().min(1).max(1_024).optional() },
+    );
+    registerWritePreviewAlias(
+      "vk_create_counter_goal", "Подготовить создание test-цели счётчика", "Создаёт только __MCP_TEST__ цель в счётчике из VK_ADS_TEST_COUNTER_IDS; счётчик и существующие цели не изменяются.", "create_test_counter_goal",
+      { counter_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), substr: z.string().trim().min(1).max(2_000), condition: z.enum(["uss", "rss", "jse", "hd", "ts"]), goal_type: z.enum(["content", "search", "basket", "wishlist", "checkout", "payment_info", "purchase", "lead", "registration", "custom"]), value: z.number().int().min(-2_147_483_647).max(2_147_483_647).nullable().optional() },
+    );
+    registerWritePreviewAlias(
       "vk_update_counter_goal", "Подготовить изменение test-цели счётчика", "Только существующая `__MCP_TEST__` цель счётчика из VK_ADS_TEST_COUNTER_IDS; доступны документированные name, value и goal_type.", "update_test_counter_goal",
       { counter_id: z.number().int().positive(), goal_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), value: z.number().int().min(-2_147_483_647).max(2_147_483_647), goal_type: z.enum(["content", "search", "basket", "wishlist", "checkout", "payment_info", "purchase", "lead", "registration", "custom"]) },
     );
     registerWritePreviewAlias(
-      "vk_delete_ad_group", "Подготовить удаление test ad group", "Только `__MCP_TEST__` ad group; VK получает status=deleted.", "delete_test_ad_group",
+      "vk_delete_ad_group", "Подготовить удаление ad group", "Удаляет выбранную ad group через опубликованный HTTP DELETE после reread и подтверждения.", "delete_ad_group",
       { ad_group_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
-      "vk_manage_ad_groups", "Подготовить остановку test ad groups", "Подтверждён только массовый перевод `__MCP_TEST__` group в blocked.", "block_test_ad_groups",
-      { ad_group_ids: z.array(z.number().int().positive()).min(1).max(200) },
+      "vk_manage_ad_groups", "Подготовить массовое изменение ad groups", "Массово изменяет status или max_price для перечисленных ad groups по официальной AdGroupMassAction schema.", "manage_ad_groups",
+      { items: z.array(productionAdGroupMassItemSchema).min(1).max(200) },
     );
     registerWritePreviewAlias(
-      "vk_manage_banners", "Подготовить остановку test banners", "Документированный batch contract допускает только перевод `__MCP_TEST__` banner в blocked до отдельной live-проверки.", "block_test_banners",
-      { banner_ids: z.array(z.number().int().positive()).min(1).max(200) },
+      "vk_manage_banners", "Подготовить массовое изменение banners", "Массово изменяет status для перечисленных banners по официальной BannerMassAction schema.", "manage_banners",
+      { items: z.array(productionBannerMassItemSchema).min(1).max(200) },
     );
     registerWritePreviewAlias(
       "vk_remoderate_banners", "Подготовить повторную модерацию test banners", "Перед отправкой VK Ads обязан вернуть для каждого `__MCP_TEST__` banner user_can_request_remoderation=true. Иначе write-запрос не уйдёт.", "remoderate_test_banners",
       { banner_ids: z.array(z.number().int().positive()).min(1).max(200) },
     );
     registerWritePreviewAlias(
-      "vk_create_banner", "Подготовить создание test banner", "До preview проверяются group, URL, тексты и размеры локально загруженных изображений. Подтверждён только blocked banner в `__MCP_TEST__` group package_id=2860 по pattern 284.", "create_test_banner",
-      { ad_group_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), primary_url_id: z.number().int().positive(), landscape_image_id: z.number().int().positive(), icon_image_id: z.number().int().positive(), title: z.string().trim().min(1).max(40), text: z.string().trim().min(1).max(90), cta: z.literal("install") },
+      "vk_create_banner", "Подготовить создание banner", "Создаёт banner с фиксированными content, textblocks и URLs в существующей ad group; по умолчанию blocked.", "create_banner",
+      { ad_group_id: z.number().int().positive(), name: z.string().min(1).max(120), status: productionStatusSchema.optional(), content: productionBannerFieldsSchema.shape.content.unwrap(), textblocks: productionBannerFieldsSchema.shape.textblocks.unwrap(), urls: productionBannerFieldsSchema.shape.urls.unwrap() },
     );
     registerWritePreviewAlias(
       "vk_create_segment", "Подготовить создание test-сегмента", "Создаётся только `__MCP_TEST__` сегмент. Указанный счётчик используется только как источник: сам он не изменяется.", "create_test_segment",
-      { name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), counter_source_id: z.number().int().positive(), left_days: z.number().int().min(1).max(365).default(365), goal_id: z.string().max(120).default("") },
+      { name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), counter_id: z.number().int().positive(), left_days: z.number().int().min(1).max(365).default(365), goal_id: z.string().min(1).max(120) },
+    );
+    registerWritePreviewAlias(
+      "vk_create_pricelist", "Подготовить создание test-прайслиста", "Создаёт пустой `__MCP_TEST__` каталог с source_type=api и status=blocked. URL, фид, товары и credentials не передаются.", "create_test_pricelist",
+      { name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
     );
     registerWritePreviewAlias(
       "vk_update_segment", "Подготовить переименование test-сегмента", "Разрешено только переименование существующего `__MCP_TEST__` сегмента.", "rename_test_segment",
@@ -2653,10 +3387,13 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
         title: "Подготовить изменение связи test-сегментов",
         description: "Разрешено только добавить или удалить связь в `__MCP_TEST__` сегменте; запись выполняется после одноразового подтверждения.",
         inputSchema: {
-          action: z.enum(["add", "delete"]),
+          action: z.enum(["add", "update", "delete"]),
           segment_id: z.number().int().positive(),
           nested_segment_id: z.number().int().positive().optional(),
           relation_id: z.number().int().positive().optional(),
+          left: z.number().int().min(1).max(365).optional(),
+          right: z.number().int().min(0).max(364).optional(),
+          type: z.enum(["positive", "negative"]).optional(),
         },
         outputSchema: previewOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
@@ -2665,6 +3402,10 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
         if (payload.action === "add") {
           if (!payload.nested_segment_id) throw new Error("Для добавления связи укажите nested_segment_id.");
           return prepareWritePreview("add_test_segment_relation", { segment_id: payload.segment_id, nested_segment_id: payload.nested_segment_id });
+        }
+        if (payload.action === "update") {
+          if (!payload.relation_id || payload.left === undefined || payload.right === undefined || !payload.type) throw new Error("Для изменения связи укажите relation_id, left, right и type.");
+          return prepareWritePreview("update_test_segment_relation", { segment_id: payload.segment_id, relation_id: payload.relation_id, left: payload.left, right: payload.right, type: payload.type });
         }
         if (!payload.relation_id) throw new Error("Для удаления связи укажите relation_id.");
         return prepareWritePreview("delete_test_segment_relation", { segment_id: payload.segment_id, relation_id: payload.relation_id });
@@ -2695,16 +3436,28 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       { file_path: z.string().min(1).max(1_024), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), type: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/) },
     );
     registerWritePreviewAlias(
+      "vk_create_remarketing_list_v3", "Подготовить v3-загрузку test-списка ремаркетинга", "Только новый `__MCP_TEST__` список из VK_ADS_PII_UPLOAD_DIR при VK_ADS_ALLOW_PII_UPLOADS=1; v3 multipart не возвращает содержимое контактов.", "upload_test_remarketing_user_list",
+      { file_path: z.string().min(1).max(1_024), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), type: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/), api_version: z.literal("v3") },
+    );
+    registerWritePreviewAlias(
+      "vk_create_offline_goal", "Подготовить загрузку test-списка офлайн-конверсий", "Принимается только новый `__MCP_TEST__` список из отдельного VK_ADS_PII_UPLOAD_DIR при VK_ADS_ALLOW_PII_UPLOADS=1. Контакты не читаются и не логируются.", "upload_test_offline_goal",
+      { file_path: z.string().min(1).max(1_024), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), attribution_period: z.number().int().min(1).max(365), type: z.enum(["email", "hash_email", "phone", "hash_phone"]) },
+    );
+    registerWritePreviewAlias(
       "vk_update_remarketing_list", "Подготовить переименование test-списка ремаркетинга", "Разрешено только переименовать существующий `__MCP_TEST__` список; состав аудитории не меняется.", "rename_test_remarketing_user_list",
       { list_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+    );
+    registerWritePreviewAlias(
+      "vk_update_remarketing_list_v3", "Подготовить v3-переименование test-списка", "Разрешено только переименовать существующий `__MCP_TEST__` список через документированный v3 POST; состав аудитории не меняется.", "rename_test_remarketing_user_list",
+      { list_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), api_version: z.literal("v3") },
     );
     registerWritePreviewAlias(
       "vk_delete_remarketing_list", "Подготовить удаление test-списка ремаркетинга", "Разрешено удалить только неиспользуемый `__MCP_TEST__` список. VK Ads отклонит список, связанный с аудиторией или lookalike.", "delete_test_remarketing_user_list",
       { list_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
-      "vk_update_feed", "Подготовить изменение test-каталога", "Подтверждённый API прайс-листа. Разрешает изменить только существующий каталог `__MCP_TEST__`; URL источника проверяется как публичный HTTPS.", "update_test_pricelist",
-      { pricelist_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), status: z.enum(["active", "blocked"]), remove_utm_tags: z.boolean(), export_url: z.string().min(1).max(2_048).url().optional() },
+      "vk_delete_remarketing_list_v3", "Подготовить v3-удаление test-списка ремаркетинга", "Разрешено удалить только неиспользуемый `__MCP_TEST__` список. Операция использует документированный v3 DELETE и не заменяет legacy v1-операцию.", "delete_test_remarketing_user_list_v3",
+      { list_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
       "vk_create_async_report", "Подготовить создание test-отчёта", "Создаётся только серверный `__MCP_TEST__` отчёт с фиксированным v3 contract. Он не меняет кампании, ставки или бюджет.", "create_test_async_report",
@@ -2727,7 +3480,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
           action: z.enum(["create", "update", "delete"]),
           local_geo_id: z.number().int().positive().optional(),
           name: z.string().min(14).max(120).startsWith("__MCP_TEST__").optional(),
-          regions: z.array(z.object({ lat: z.number().finite().min(-90).max(90), lng: z.number().finite().min(-180).max(180), radius: z.number().int().min(1).max(100_000), label: z.string().trim().min(1).max(200), address: z.string().trim().min(1).max(500).optional() }).strict()).min(1).max(200).optional(),
+          regions: z.array(z.object({ lat: z.number().finite().min(-90).max(90), lng: z.number().finite().min(-180).max(180), radius: z.number().int().min(500).max(10_000), label: z.string().trim().min(1).max(200), address: z.string().trim().min(1).max(500).optional() }).strict()).min(1).max(200).optional(),
         },
         outputSchema: previewOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
@@ -2755,15 +3508,15 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
     server.registerTool(
       "write_execute",
       {
-        title: "Выполнить подтверждённую тестовую запись",
-        description: "Выполняет ровно один свежий preview. Не принимает произвольный endpoint, ID существующих кампаний или свободный payload.",
-        inputSchema: { preview_id: z.string().uuid(), confirmation_statement: z.string().min(1).max(100) },
+        title: "Выполнить подготовленную тестовую запись",
+        description: options.requireWriteConfirmation === false ? "Выполняет ровно один свежий preview без фразы: локальный владелец профиля явно отключил подтверждение при старте. Не принимает произвольный endpoint, ID существующих кампаний или свободный payload." : "Выполняет ровно один свежий preview после одноразового подтверждения. Не принимает произвольный endpoint, ID существующих кампаний или свободный payload.",
+        inputSchema: { preview_id: z.string().uuid(), confirmation_statement: z.string().min(1).max(100).optional() },
         outputSchema: {
-          operation: testWriteOperationSchema,
+          operation: writeOperationSchema,
           result: z.record(z.string(), z.unknown()),
           after: z.record(z.string(), z.unknown()),
           audit: z.object({
-            id: z.string().uuid(), operation: testWriteOperationSchema, connection_id: z.string(),
+            id: z.string().uuid(), operation: writeOperationSchema, connection_id: z.string(),
             status: z.literal("succeeded"), prepared_at: z.string().datetime(), completed_at: z.string().datetime(), result_hash: z.string().length(64),
           }),
         },
@@ -2774,9 +3527,187 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
         let result: VkObject;
         try {
           switch (preview.operation) {
+          case "recover_token_limit": {
+            if (!options.tokenRecovery) throw new Error("Восстановление токенов недоступно в этом профиле.");
+            result = await options.tokenRecovery.recover();
+            break;
+          }
+          case "activate_configured_sharing_key": {
+            if (!options.externalSharingKey) throw new Error("Внешний ключ шаринга не настроен в этом профиле.");
+            await client.activateExternalSharingKey(options.externalSharingKey);
+            result = { activated: true, activation_scope: "all_sources" };
+            break;
+          }
           case "create_url": {
             const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
             result = await client.createUrl(payload.url as string);
+            break;
+          }
+          case "create_ad_plan": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.createAdPlan(payload);
+            break;
+          }
+          case "update_ad_plan": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            const { ad_plan_id: _id, ...body } = payload;
+            result = await client.updateAdPlan(_id as number, body);
+            break;
+          }
+          case "delete_ad_plan": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.deleteAdPlan(payload.ad_plan_id as number);
+            break;
+          }
+          case "manage_ad_plans": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.manageAdPlans(payload.items as VkObject[]);
+            break;
+          }
+          case "create_campaign": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.createCampaign(payload);
+            break;
+          }
+          case "update_campaign": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            const { campaign_id: _id, ...body } = payload;
+            result = await client.updateCampaign(_id as number, body);
+            break;
+          }
+          case "delete_campaign": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.deleteCampaign(payload.campaign_id as number);
+            break;
+          }
+          case "create_ad_group": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.createAdGroup(payload);
+            break;
+          }
+          case "update_ad_group": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            const { ad_group_id: _id, ...body } = payload;
+            result = await client.updateAdGroup(_id as number, body);
+            break;
+          }
+          case "delete_ad_group": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.deleteAdGroup(payload.ad_group_id as number);
+            break;
+          }
+          case "manage_ad_groups": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.manageAdGroups(payload.items as VkObject[]);
+            break;
+          }
+          case "create_banner": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.createBanner(payload as VkObject & { ad_group_id: number });
+            break;
+          }
+          case "update_banner": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            const { banner_id: _id, ...body } = payload;
+            result = await client.updateBanner(_id as number, body);
+            break;
+          }
+          case "delete_banner": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.deleteBanner(payload.banner_id as number);
+            break;
+          }
+          case "manage_banners": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.manageBanners(payload.items as VkObject[]);
+            break;
+          }
+          case "delete_subscription": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.deleteSubscription(payload.subscription_id as number);
+            break;
+          }
+          case "create_subscription": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = subscriptionMetadata(await client.createSubscription({ resource: payload.resource as "BANNER" | "CAMPAIGN" | "OKLEADAD", callbackUrl: payload.callback_url as string }));
+            break;
+          }
+          case "refresh_apple_app_metadata": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = publicMobileAppMetadata(await client.refreshAppleAppMetadata(payload.app_id as number));
+            break;
+          }
+          case "refresh_google_app_metadata": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = publicMobileAppMetadata(await client.refreshGoogleAppMetadata(payload.package_name as string));
+            break;
+          }
+          case "update_manager_client": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.updateAgencyManagerClient({ managerId: payload.manager_id as number, clientId: payload.client_id as number, accessType: payload.access_type as "full_access" | "readonly" | "fin_readonly" | "ads_readonly" });
+            break;
+          }
+          case "delete_manager_client": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.deleteAgencyManagerClient(payload.manager_id as number, payload.client_id as number);
+            break;
+          }
+          case "update_agency_client": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.updateAgencyClient({
+              clientId: payload.client_id as number,
+              ...(payload.is_vkads === undefined ? {} : { isVkads: payload.is_vkads as boolean }),
+              ...(payload.access_type === undefined ? {} : { accessType: payload.access_type as "full_access" }),
+              ...(payload.additional_emails === undefined ? {} : { additionalEmails: payload.additional_emails as string[] }),
+              ...(payload.additional_info === undefined ? {} : { additionalInfo: {
+                ...((payload.additional_info as VkObject).client_name === undefined ? {} : { clientName: (payload.additional_info as VkObject).client_name as string }),
+                ...((payload.additional_info as VkObject).client_info === undefined ? {} : { clientInfo: (payload.additional_info as VkObject).client_info as string }),
+              } }),
+            });
+            break;
+          }
+          case "delete_agency_client": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.deleteAgencyClient(payload.client_id as number);
+            break;
+          }
+          case "update_user_profile": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            const { api_version, ...body } = payload;
+            result = await client.updateUserProfile(api_version as "v2" | "v3", body);
+            break;
+          }
+          case "connect_existing_remarketing_counter": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.connectExistingRemarketingCounter({ counterId: payload.counter_id as number, name: payload.name as string, flags: payload.flags as Array<"cookie_sync"> });
+            break;
+          }
+          case "update_ord_partner_acts": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = publicSensitiveMetadata(await client.updateOrdPartnerActs(payload.month as string, payload.ord_pad_id as number, payload.acts as VkObject[])) as VkObject;
+            break;
+          }
+          case "update_ord_partner_pad": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            const { ord_pad_id: _id, ...body } = payload;
+            result = publicSensitiveMetadata(await client.updateOrdPartnerPad(_id as number, body)) as VkObject;
+            break;
+          }
+          case "create_ord_partner_subagent": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = publicSensitiveMetadata(await client.createOrdPartnerSubagent(payload)) as VkObject;
+            break;
+          }
+          case "update_ord_partner_subagent": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            const { id: _id, ...body } = payload;
+            result = publicSensitiveMetadata(await client.updateOrdPartnerSubagent(_id as number, body)) as VkObject;
+            break;
+          }
+          case "transfer_to_client": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = { operation: "transfer_to_client", client_id: payload.client_id as number, status: "submitted" };
+            await client.transferToClient(payload.client_id as number, payload.amount as string);
             break;
           }
           case "create_test_ad_plan": {
@@ -2826,10 +3757,15 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
             const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
             result = await client.createTestSegment({
               name: payload.name as string,
-              counterSourceId: payload.counter_source_id as number,
+              counterId: payload.counter_id as number,
               leftDays: payload.left_days as number,
               goalId: payload.goal_id as string,
             });
+            break;
+          }
+          case "create_test_pricelist": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.createTestPricelist(payload.name as string);
             break;
           }
           case "copy_test_lead_form": {
@@ -2971,9 +3907,38 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
             result = await client.deleteTestRemarketingCounter(payload.counter_id as number);
             break;
           }
+          case "delete_test_remarketing_counter_v2": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.deleteTestRemarketingCounterV2(payload.counter_id as number);
+            break;
+          }
+          case "delete_test_offline_goal": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.deleteTestOfflineGoal(payload.offline_goal_id as number);
+            break;
+          }
+          case "update_test_offline_goal": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.updateTestOfflineGoal({
+              id: payload.offline_goal_id as number,
+              name: payload.name as string,
+              ...(payload.file_path === undefined ? {} : { filename: payload.filename as string, mimeType: payload.mime_type as string, bytes: await readFile(payload.file_path as string) }),
+            });
+            break;
+          }
+          case "create_test_counter_goal": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.createTestCounterGoal({ counterId: payload.counter_id as number, name: payload.name as string, substr: payload.substr as string, condition: payload.condition as "uss" | "rss" | "jse" | "hd" | "ts", goalType: payload.goal_type as "content" | "search" | "basket" | "wishlist" | "checkout" | "payment_info" | "purchase" | "lead" | "registration" | "custom", ...(payload.value === undefined ? {} : { value: payload.value as number | null }) });
+            break;
+          }
           case "delete_test_ad_group": {
             const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
             result = await client.deleteTestAdGroup(payload.ad_group_id as number);
+            break;
+          }
+          case "delete_test_campaign": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.deleteTestCampaign(payload.campaign_id as number);
             break;
           }
           case "delete_test_segment": {
@@ -2984,6 +3949,11 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
           case "add_test_segment_relation": {
             const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
             result = await client.addTestSegmentRelation({ segmentId: payload.segment_id as number, nestedSegmentId: payload.nested_segment_id as number });
+            break;
+          }
+          case "update_test_segment_relation": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.updateTestSegmentRelation({ segmentId: payload.segment_id as number, relationId: payload.relation_id as number, left: payload.left as number, right: payload.right as number, type: payload.type as "positive" | "negative" });
             break;
           }
           case "delete_test_segment_relation": {
@@ -3059,7 +4029,9 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
             if (list.sha256 !== payload.sha256 || list.size !== payload.size || list.lineCount !== payload.line_count) {
               throw new Error("Файл списка изменился после preview; подготовьте новое подтверждение.");
             }
-            result = await client.createTestRemarketingUserList({
+            result = payload.api_version === "v3" ? await client.createTestRemarketingUserListV3({
+              name: payload.name as string, type: payload.type as string, filename: list.filename, mimeType: list.mimeType, bytes: list.bytes,
+            }) : await client.createTestRemarketingUserList({
               name: payload.name as string,
               type: payload.type as string,
               filename: list.filename,
@@ -3068,14 +4040,39 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
             });
             break;
           }
+          case "upload_test_offline_goal": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            const piiRoot = options.piiUploadDir;
+            if (!piiRoot || !options.allowPiiUploads) {
+              throw new Error("Загрузка офлайн-конверсий с PII отключена до явного opt-in при запуске.");
+            }
+            const list = validateRemarketingUserListUpload(payload.file_path as string, piiRoot);
+            if (list.sha256 !== payload.sha256 || list.size !== payload.size || list.lineCount !== payload.line_count) {
+              throw new Error("Файл офлайн-конверсий изменился после preview; подготовьте новое подтверждение.");
+            }
+            result = await client.createTestOfflineGoal({
+              name: payload.name as string,
+              attributionPeriod: payload.attribution_period as number,
+              type: payload.type as "email" | "hash_email" | "phone" | "hash_phone",
+              filename: list.filename,
+              mimeType: list.mimeType,
+              bytes: list.bytes,
+            });
+            break;
+          }
           case "rename_test_remarketing_user_list": {
             const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
-            result = await client.renameTestRemarketingUserList(payload.list_id as number, payload.name as string);
+            result = payload.api_version === "v3" ? await client.renameTestRemarketingUserListV3(payload.list_id as number, payload.name as string) : await client.renameTestRemarketingUserList(payload.list_id as number, payload.name as string);
             break;
           }
           case "delete_test_remarketing_user_list": {
             const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
             result = await client.deleteTestRemarketingUserList(payload.list_id as number);
+            break;
+          }
+          case "delete_test_remarketing_user_list_v3": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await client.deleteTestRemarketingUserListV3(payload.list_id as number);
             break;
           }
           case "connect_agency_client": {
@@ -3096,17 +4093,6 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
           case "delete_test_local_geo": {
             const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
             result = await client.deleteTestLocalGeo(payload.local_geo_id as number);
-            break;
-          }
-          case "update_test_pricelist": {
-            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
-            result = await client.updateTestPricelist({
-              id: payload.pricelist_id as number,
-              name: payload.name as string,
-              status: payload.status as "active" | "blocked",
-              removeUtmTags: payload.remove_utm_tags as boolean,
-              ...(payload.export_url ? { exportUrl: payload.export_url as string } : {}),
-            });
             break;
           }
           case "create_test_async_report": {
@@ -3179,7 +4165,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
         description: "Read-only: возвращает метаданные preview и выполнения текущего процесса без токенов, payload и тел API-ответов.",
         inputSchema: { limit: z.number().int().min(1).max(100).default(50) },
         outputSchema: { items: z.array(z.object({
-          id: z.string().uuid(), operation: testWriteOperationSchema, connection_id: z.string(), status: z.enum(["prepared", "succeeded", "failed"]),
+          id: z.string().uuid(), operation: writeOperationSchema, connection_id: z.string(), status: z.enum(["prepared", "succeeded", "failed"]),
           prepared_at: z.string().datetime(), completed_at: z.string().datetime().nullable(), result_hash: z.string().length(64).nullable(),
         })) },
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },

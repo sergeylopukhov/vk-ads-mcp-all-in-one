@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { loadConfig } from "../src/config.js";
+import { loadConfig, resolveProfileStorage } from "../src/config.js";
 
 describe("локальная конфигурация", () => {
   it("выбирает профиль при запуске без переключения из MCP", () => {
@@ -13,6 +13,26 @@ describe("локальная конфигурация", () => {
 
   it("отклоняет небезопасное имя профиля", () => {
     expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_PROFILE: "../other" })).toThrow("VK_ADS_PROFILE");
+  });
+
+  it("задаёт ограниченный срок действия write preview только из локальной конфигурации", () => {
+    expect(loadConfig({ VK_ADS_TOKEN: "test-token" }).previewTtlMs).toBe(600_000);
+    expect(loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_PREVIEW_TTL_MINUTES: "60" }).previewTtlMs).toBe(3_600_000);
+    expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_PREVIEW_TTL_MINUTES: "61" })).toThrow("VK_ADS_PREVIEW_TTL_MINUTES");
+    expect(loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_REQUIRE_WRITE_CONFIRMATION: "0" }).requireWriteConfirmation).toBe(false);
+    expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_REQUIRE_WRITE_CONFIRMATION: "no" })).toThrow("VK_ADS_REQUIRE_WRITE_CONFIRMATION");
+  });
+
+  it("изолирует token и audit для named profile", () => {
+    expect(resolveProfileStorage("/tmp/vk-ads-mcp", "agency_a")).toEqual({
+      envFile: "/tmp/vk-ads-mcp/profiles/agency_a.env",
+      auditFile: "/tmp/vk-ads-mcp/profiles/agency_a.vk-ads-audit.json",
+    });
+    expect(resolveProfileStorage("/tmp/vk-ads-mcp", "default")).toEqual({
+      envFile: "/tmp/vk-ads-mcp/.env",
+      auditFile: "/tmp/vk-ads-mcp/.vk-ads-audit.json",
+    });
+    expect(() => resolveProfileStorage("/tmp/vk-ads-mcp", "../other")).toThrow("VK_ADS_PROFILE");
   });
 
   it("объясняет, где указать отсутствующий токен", () => {
@@ -41,5 +61,10 @@ describe("локальная конфигурация", () => {
     expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_TEST_IOS_APP_IDS: "1,not-an-id" })).toThrow("VK_ADS_TEST_IOS_APP_IDS");
     expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_TEST_MOBILE_APP_IDS: "1,not-an-id" })).toThrow("VK_ADS_TEST_MOBILE_APP_IDS");
     expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_TEST_COUNTER_IDS: "1,not-an-id" })).toThrow("VK_ADS_TEST_COUNTER_IDS");
+  });
+
+  it("держит внешний ключ шаринга только в локальной конфигурации", () => {
+    expect(loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_EXTERNAL_SHARING_KEY: "safe_key-7" }).externalSharingKey).toBe("safe_key-7");
+    expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_EXTERNAL_SHARING_KEY: "not safe" })).toThrow("VK_ADS_EXTERNAL_SHARING_KEY");
   });
 });
