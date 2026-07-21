@@ -5,13 +5,13 @@
 ### macOS и Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.sh | sh -s -- --ref main
+curl -fsSL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.sh | sh
 ```
 
 ### Windows
 
 ```powershell
-irm https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.ps1 | iex
+irm https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.ps1 | iex
 ```
 
 Установщик запросит данные приложения и режим `readonly/write`, затем напечатает каталог установки. Расширенные разрешения записи можно открыть отдельным необязательным шагом. Codex подключится автоматически. Для остальных клиентов укажите полный путь к `/dist/index.js` в нужной команде.

@@ -1,6 +1,6 @@
 {
   "name": "vk-ads-mcp-all-in-one",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "Локальный MCP-сервер для анализа и безопасной работы с VK Ads",

@@ -2,7 +2,7 @@
 
 set -eu
 
-INSTALLER_URL=${VK_ADS_INSTALLER_URL:-"https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.mjs"}
+INSTALLER_URL=${VK_ADS_INSTALLER_URL:-"https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.mjs"}
 
 if ! command -v node >/dev/null 2>&1; then
   echo "Ошибка: установите Node.js 20 или новее: https://nodejs.org/" >&2

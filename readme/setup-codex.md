@@ -5,7 +5,7 @@
 ## macOS и Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.sh | sh -s -- --ref main
+curl -fsSL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.sh | sh
 ```
 
 ## Windows
@@ -13,7 +13,7 @@ curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-on
 Откройте PowerShell и выполните:
 
 ```powershell
-irm https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.ps1 | iex
+irm https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.ps1 | iex
 ```
 
 Установщик запросит только `client_id`, скрытый `client_secret` и режим `readonly/write`. Расширенные разрешения записи доступны отдельным необязательным шагом и по умолчанию выключены. После настройки установщик зарегистрирует MCP-сервер под именем `vk-ads`. При первом запросе сервер сам получит и сохранит токен.

@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$installerUrl = "https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.mjs"
+$installerUrl = "https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.mjs"
 $installerFile = Join-Path ([System.IO.Path]::GetTempPath()) ("vk-ads-mcp-" + [System.Guid]::NewGuid().ToString("N") + ".mjs")
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {

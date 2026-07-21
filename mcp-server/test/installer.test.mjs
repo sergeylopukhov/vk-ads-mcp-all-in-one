@@ -43,7 +43,8 @@ test("defaultInstallDirectory is platform aware", () => {
   assert.equal(defaultInstallDirectory("linux", "/home/test", {}), "/home/test/.local/share/vk-ads-mcp");
 });
 
-test("resolveRef uses main unless the user explicitly selects a source", async () => {
-  assert.equal(await resolveRef(undefined), "main");
+test("resolveRef uses the latest release unless the user explicitly selects a source", async () => {
+  assert.equal(await resolveRef(undefined, async () => ({ tag_name: "v1.0.1" })), "v1.0.1");
+  assert.equal(await resolveRef(undefined, async () => undefined), "main");
   assert.equal(await resolveRef("v0.1.0"), "v0.1.0");
 });

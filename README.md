@@ -10,7 +10,7 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 20+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-stdio-1f6feb" alt="MCP stdio"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b8f60" alt="Лицензия MIT"></a>
-  <img src="https://img.shields.io/badge/version-0.1.0-6b7280" alt="Версия 0.1.0">
+  <img src="https://img.shields.io/badge/version-1.0.1-6b7280" alt="Версия 1.0.1">
 </p>
 
 Сервер подключает AI-клиент к кабинету VK Ads: читает рекламные планы, группы и объявления, получает статистику, работает с аудиториями, медиафайлами, отчётами и экспортом. По умолчанию запись выключена.
@@ -27,7 +27,7 @@
 ### macOS и Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.sh | sh -s -- --ref main
+curl -fsSL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.sh | sh
 ```
 
 ### Windows
@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-on
 Откройте PowerShell и выполните:
 
 ```powershell
-irm https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.ps1 | iex
+irm https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.ps1 | iex
 ```
 
 Установщик запросит только `client_id`, скрытый `client_secret` и режим работы: только чтение или чтение и запись. При выборе записи расширенные возможности можно настроить отдельно; по умолчанию они выключены. Затем установщик загрузит сервер и подключит его к Codex. Токен получать и вставлять вручную не нужно.
