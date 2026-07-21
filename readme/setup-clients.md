@@ -14,7 +14,7 @@ curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-on
 irm https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.ps1 | iex
 ```
 
-Установщик запросит данные приложения и напечатает каталог установки. Codex подключится автоматически. Для остальных клиентов добавьте к этому каталогу `/dist/index.js` и подставьте полный путь в команду ниже.
+Установщик запросит данные приложения, режим `readonly/write` и остальные поддерживаемые настройки, затем напечатает каталог установки. Codex подключится автоматически. Для остальных клиентов добавьте к этому каталогу `/dist/index.js` и подставьте полный путь в команду ниже.
 
 ## Codex
 

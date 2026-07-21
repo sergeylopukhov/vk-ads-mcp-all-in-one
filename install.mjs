@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, posix, resolve, win32 } from "node:path";
+import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 
@@ -34,13 +34,37 @@ export function selectServerFiles(tree) {
     );
 }
 
+function serializeEnvValue(value) {
+  return /^[A-Za-z0-9_./:@+-]*$/.test(value) ? value : JSON.stringify(value);
+}
+
+export function applyEnvValues(template, values) {
+  let output = template;
+  for (const [name, value] of Object.entries(values)) {
+    if (/[\r\n]/.test(value)) throw new Error(`${name} должен занимать одну строку.`);
+    const line = `${name}=${serializeEnvValue(value)}`;
+    const pattern = new RegExp(`^(?:#\\s*)?${name}=.*$`, "m");
+    output = pattern.test(output) ? output.replace(pattern, line) : `${output.trimEnd()}\n${line}\n`;
+  }
+  return output;
+}
+
 export function fillCredentials(template, clientId, clientSecret) {
-  const replace = (source, name, value) => {
-    const line = `${name}=${value}`;
-    const pattern = new RegExp(`^${name}=.*$`, "m");
-    return pattern.test(source) ? source.replace(pattern, line) : `${source.trimEnd()}\n${line}\n`;
-  };
-  return replace(replace(template, "VK_ADS_CLIENT_ID", clientId), "VK_ADS_CLIENT_SECRET", clientSecret);
+  return applyEnvValues(template, { VK_ADS_CLIENT_ID: clientId, VK_ADS_CLIENT_SECRET: clientSecret });
+}
+
+export function parseEnvValues(content) {
+  const values = {};
+  for (const line of content.split(/\r?\n/)) {
+    const match = line.match(/^([A-Z][A-Z0-9_]*)=(.*)$/);
+    if (!match) continue;
+    let value = match[2].trim();
+    if (value.startsWith('"') && value.endsWith('"')) {
+      try { value = JSON.parse(value); } catch { /* dotenv сообщит об ошибке при запуске. */ }
+    }
+    values[match[1]] = value;
+  }
+  return values;
 }
 
 function parseArguments(argv) {
@@ -184,31 +208,160 @@ async function promptHidden(question) {
   return value.trim();
 }
 
-async function ensureCredentials(installDirectory) {
-  const envPath = join(installDirectory, ".env");
-  if (await pathExists(envPath)) {
-    console.log("Существующий .env сохранён.");
-    return;
+async function ask(readline, question, defaultValue = "") {
+  const answer = (await readline.question(`${question}${defaultValue ? ` (${defaultValue})` : ""}: `)).trim();
+  return answer || defaultValue;
+}
+
+async function askBoolean(readline, question, defaultValue = false) {
+  const hint = defaultValue ? "Д/н" : "д/Н";
+  while (true) {
+    const answer = (await readline.question(`${question} [${hint}]: `)).trim().toLowerCase();
+    if (!answer) return defaultValue;
+    if (["д", "да", "y", "yes"].includes(answer)) return true;
+    if (["н", "нет", "n", "no"].includes(answer)) return false;
+    console.log("Введите «да» или «нет».");
   }
+}
+
+async function askInteger(readline, question, defaultValue, minimum, maximum) {
+  while (true) {
+    const value = Number(await ask(readline, question, String(defaultValue)));
+    if (Number.isInteger(value) && value >= minimum && value <= maximum) return value;
+    console.log(`Введите целое число от ${minimum} до ${maximum}.`);
+  }
+}
+
+async function askIdentifier(readline, question, defaultValue) {
+  while (true) {
+    const value = await ask(readline, question, defaultValue);
+    if (/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(value)) return value;
+    console.log("Разрешены буквы, цифры, _ и -; длина — до 64 символов.");
+  }
+}
+
+async function askMode(readline, defaultValue) {
+  while (true) {
+    const value = await ask(readline, "Режим: 1 — только чтение (рекомендуется), 2 — чтение и запись", defaultValue === "write" ? "2" : "1");
+    if (value === "1") return "readonly";
+    if (value === "2") return "write";
+    console.log("Введите 1 или 2.");
+  }
+}
+
+async function askOptionalAbsolutePath(readline, question, defaultValue = "") {
+  while (true) {
+    const value = await ask(readline, question, defaultValue);
+    if (!value || isAbsolute(value)) return value;
+    console.log("Укажите абсолютный путь или оставьте поле пустым.");
+  }
+}
+
+async function askPositiveIds(readline, question, defaultValue = "") {
+  while (true) {
+    const value = await ask(readline, question, defaultValue);
+    if (!value || value.split(",").every((item) => Number.isInteger(Number(item.trim())) && Number(item.trim()) > 0)) return value;
+    console.log("Укажите положительные ID через запятую или оставьте поле пустым.");
+  }
+}
+
+async function ensureConfiguration(installDirectory) {
+  const envPath = join(installDirectory, ".env");
+  const envExists = await pathExists(envPath);
 
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    await cp(join(installDirectory, ".env.example"), envPath);
-    await chmod(envPath, 0o600).catch(() => {});
-    console.log(`Создан ${envPath}. Заполните VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET.`);
-    return;
+    if (!envExists) {
+      await cp(join(installDirectory, ".env.example"), envPath);
+      await chmod(envPath, 0o600).catch(() => {});
+      console.log(`Создан ${envPath}. Заполните VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET.`);
+    } else {
+      console.log("Существующий .env сохранён.");
+    }
+    const current = envExists ? parseEnvValues(await readFile(envPath, "utf8")) : {};
+    return {
+      mode: current.VK_ADS_MODE === "write" ? "write" : "readonly",
+      profileName: current.VK_ADS_PROFILE || "default",
+    };
   }
 
+  const currentContent = envExists ? await readFile(envPath, "utf8") : "";
+  const current = parseEnvValues(currentContent);
   const readline = createInterface({ input: process.stdin, output: process.stdout });
-  const clientId = (await readline.question("VK Ads client_id: ")).trim();
-  readline.close();
-  const clientSecret = await promptHidden("VK Ads client_secret (ввод скрыт): ");
-  if (!clientId || !clientSecret) throw new Error("client_id и client_secret не могут быть пустыми.");
-  if (/[\r\n]/.test(clientId) || /[\r\n]/.test(clientSecret)) {
-    throw new Error("client_id и client_secret должны занимать одну строку.");
+  if (envExists && !(await askBoolean(readline, "Изменить сохранённые настройки?", false))) {
+    readline.close();
+    console.log("Существующий .env сохранён.");
+    return {
+      mode: current.VK_ADS_MODE === "write" ? "write" : "readonly",
+      profileName: current.VK_ADS_PROFILE || "default",
+    };
   }
+
+  console.log("\nНастройка VK Ads MCP. Нажмите Enter, чтобы принять значение в скобках.\n");
+  const clientId = await ask(readline, "VK Ads client_id", current.VK_ADS_CLIENT_ID || "");
+  const replaceSecret = !current.VK_ADS_CLIENT_SECRET || await askBoolean(readline, "Заменить сохранённый client_secret?", false);
+  const mode = await askMode(readline, current.VK_ADS_MODE === "write" ? "write" : "readonly");
+  const profileName = await askIdentifier(readline, "Имя профиля", current.VK_ADS_PROFILE || "default");
+  const connectionId = await askIdentifier(readline, "ID подключения", current.VK_ADS_CONNECTION_ID || profileName);
+  const timeoutMs = await askInteger(readline, "Таймаут запросов, мс", Number(current.VK_ADS_TIMEOUT_MS) || 30_000, 1_000, 120_000);
+  const logging = await askBoolean(readline, "Включить обезличенный журнал HTTP-запросов?", current.VK_ADS_LOG === "1");
+  const auditFile = await ask(readline, "Файл аудита записей; пусто — стандартный путь", current.VK_ADS_AUDIT_FILE || "");
+
+  let uploadDir = "";
+  let allowPiiUploads = false;
+  let piiUploadDir = "";
+  let allowAgencyWrites = false;
+  let allowSharingKeyRevoke = false;
+  let allowSkAdNetworkWrites = false;
+  let skAdNetworkTestAppIds = "";
+  let allowInAppEventCategoryWrites = false;
+  let inAppEventTestAppIds = "";
+  let allowRemarketingCounterWrites = false;
+  let remarketingCounterTestIds = "";
+
+  if (mode === "write") {
+    console.log("\nДополнительные разрешения записи. Оставляйте «нет», если функция не нужна.\n");
+    uploadDir = await askOptionalAbsolutePath(readline, "Каталог разрешённых медиафайлов", current.VK_ADS_UPLOAD_DIR || "");
+    allowPiiUploads = await askBoolean(readline, "Разрешить загрузку PII-аудиторий?", current.VK_ADS_ALLOW_PII_UPLOADS === "1");
+    if (allowPiiUploads) piiUploadDir = await askOptionalAbsolutePath(readline, "Каталог разрешённых PII-файлов", current.VK_ADS_PII_UPLOAD_DIR || "");
+    allowAgencyWrites = await askBoolean(readline, "Разрешить изменения агентских клиентов?", current.VK_ADS_ALLOW_AGENCY_WRITES === "1");
+    allowSharingKeyRevoke = await askBoolean(readline, "Разрешить отзыв ключей шаринга?", current.VK_ADS_ALLOW_SHARING_KEY_REVOKE === "1");
+    allowSkAdNetworkWrites = await askBoolean(readline, "Разрешить изменения SKAdNetwork?", current.VK_ADS_ALLOW_SKADNETWORK_WRITES === "1");
+    if (allowSkAdNetworkWrites) skAdNetworkTestAppIds = await askPositiveIds(readline, "Разрешённые тестовые iOS app ID через запятую", current.VK_ADS_TEST_IOS_APP_IDS || "");
+    allowInAppEventCategoryWrites = await askBoolean(readline, "Разрешить изменение категорий in-app событий?", current.VK_ADS_ALLOW_INAPP_EVENT_CATEGORY_WRITES === "1");
+    if (allowInAppEventCategoryWrites) inAppEventTestAppIds = await askPositiveIds(readline, "Разрешённые тестовые mobile app ID через запятую", current.VK_ADS_TEST_MOBILE_APP_IDS || "");
+    allowRemarketingCounterWrites = await askBoolean(readline, "Разрешить изменение счётчиков ремаркетинга?", current.VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES === "1");
+    if (allowRemarketingCounterWrites) remarketingCounterTestIds = await askPositiveIds(readline, "Разрешённые тестовые ID счётчиков через запятую", current.VK_ADS_TEST_COUNTER_IDS || "");
+  }
+  readline.close();
+  const clientSecret = replaceSecret ? await promptHidden("VK Ads client_secret (ввод скрыт): ") : current.VK_ADS_CLIENT_SECRET;
+  if (!clientId || !clientSecret) throw new Error("client_id и client_secret не могут быть пустыми.");
   const template = await readFile(join(installDirectory, ".env.example"), "utf8");
-  await writeFile(envPath, fillCredentials(template, clientId, clientSecret), { mode: 0o600 });
+  const base = envExists ? currentContent : template;
+  const content = applyEnvValues(base, {
+    VK_ADS_PROFILE: profileName,
+    VK_ADS_MODE: mode,
+    VK_ADS_LOG: logging ? "1" : "0",
+    VK_ADS_AUDIT_FILE: auditFile,
+    VK_ADS_CLIENT_ID: clientId,
+    VK_ADS_CLIENT_SECRET: clientSecret,
+    VK_ADS_CONNECTION_ID: connectionId,
+    VK_ADS_TIMEOUT_MS: String(timeoutMs),
+    VK_ADS_UPLOAD_DIR: uploadDir,
+    VK_ADS_ALLOW_PII_UPLOADS: allowPiiUploads ? "1" : "0",
+    VK_ADS_PII_UPLOAD_DIR: piiUploadDir,
+    VK_ADS_ALLOW_AGENCY_WRITES: allowAgencyWrites ? "1" : "0",
+    VK_ADS_ALLOW_SHARING_KEY_REVOKE: allowSharingKeyRevoke ? "1" : "0",
+    VK_ADS_ALLOW_SKADNETWORK_WRITES: allowSkAdNetworkWrites ? "1" : "0",
+    VK_ADS_TEST_IOS_APP_IDS: skAdNetworkTestAppIds,
+    VK_ADS_ALLOW_INAPP_EVENT_CATEGORY_WRITES: allowInAppEventCategoryWrites ? "1" : "0",
+    VK_ADS_TEST_MOBILE_APP_IDS: inAppEventTestAppIds,
+    VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES: allowRemarketingCounterWrites ? "1" : "0",
+    VK_ADS_TEST_COUNTER_IDS: remarketingCounterTestIds,
+  });
+  await writeFile(envPath, content, { mode: 0o600 });
   await chmod(envPath, 0o600).catch(() => {});
+  console.log(`Настройки сохранены: ${envPath}`);
+  return { mode, profileName };
 }
 
 function commandAvailable(command) {
@@ -216,13 +369,13 @@ function commandAvailable(command) {
   return !result.error && result.status === 0;
 }
 
-function registerCodex(installDirectory) {
+function registerCodex(installDirectory, profileName) {
   if (!commandAvailable("codex")) {
     console.log("Codex CLI не найден. Сервер установлен, но не подключён к клиенту.");
     return false;
   }
   spawnSync("codex", ["mcp", "remove", "vk-ads"], { stdio: "ignore", shell: false });
-  run("codex", ["mcp", "add", "vk-ads", "--env", "VK_ADS_PROFILE=default", "--", process.execPath, join(installDirectory, "dist", "index.js")]);
+  run("codex", ["mcp", "add", "vk-ads", "--env", `VK_ADS_PROFILE=${profileName}`, "--", process.execPath, join(installDirectory, "dist", "index.js")]);
   return true;
 }
 
@@ -241,10 +394,11 @@ export async function main(argv = process.argv.slice(2)) {
     const commitSha = await downloadServer(ref, stagingDirectory);
     await buildServer(stagingDirectory);
     await deployServer(stagingDirectory, installDirectory, ref, commitSha);
-    await ensureCredentials(installDirectory);
-    const registered = options.register ? registerCodex(installDirectory) : false;
+    const configuration = await ensureConfiguration(installDirectory);
+    const registered = options.register ? registerCodex(installDirectory, configuration.profileName) : false;
     console.log(`\nVK Ads MCP установлен: ${installDirectory}`);
     console.log(`Версия источника: ${ref} (${commitSha.slice(0, 12)})`);
+    console.log(`Профиль: ${configuration.profileName}. Режим: ${configuration.mode}.`);
     if (registered) console.log("Подключение Codex: vk-ads. Перезапустите Codex.");
     else console.log(`Команда сервера: ${process.execPath} ${join(installDirectory, "dist", "index.js")}`);
   } finally {

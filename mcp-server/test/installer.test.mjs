@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { defaultInstallDirectory, fillCredentials, selectServerFiles } from "../../install.mjs";
+import { applyEnvValues, defaultInstallDirectory, fillCredentials, parseEnvValues, selectServerFiles } from "../../install.mjs";
 
 test("selectServerFiles keeps only files required to build the server", () => {
   const files = selectServerFiles([
@@ -17,6 +17,24 @@ test("selectServerFiles keeps only files required to build the server", () => {
 test("fillCredentials replaces blank values without changing the rest of env", () => {
   const result = fillCredentials("VK_ADS_CLIENT_ID=\nVK_ADS_CLIENT_SECRET=\nVK_ADS_MODE=readonly\n", "123", "secret");
   assert.equal(result, "VK_ADS_CLIENT_ID=123\nVK_ADS_CLIENT_SECRET=secret\nVK_ADS_MODE=readonly\n");
+});
+
+test("applyEnvValues adds every configured option and quotes unsafe values", () => {
+  const result = applyEnvValues("VK_ADS_MODE=readonly\n# VK_ADS_UPLOAD_DIR=\n", {
+    VK_ADS_MODE: "write",
+    VK_ADS_UPLOAD_DIR: "/tmp/media files",
+    VK_ADS_ALLOW_PII_UPLOADS: "1",
+  });
+  assert.match(result, /^VK_ADS_MODE=write$/m);
+  assert.match(result, /^VK_ADS_UPLOAD_DIR="\/tmp\/media files"$/m);
+  assert.match(result, /^VK_ADS_ALLOW_PII_UPLOADS=1$/m);
+});
+
+test("parseEnvValues reads active values and ignores comments", () => {
+  assert.deepEqual(parseEnvValues("# VK_ADS_MODE=write\nVK_ADS_MODE=readonly\nVK_ADS_UPLOAD_DIR=\"/tmp/media files\"\n"), {
+    VK_ADS_MODE: "readonly",
+    VK_ADS_UPLOAD_DIR: "/tmp/media files",
+  });
 });
 
 test("defaultInstallDirectory is platform aware", () => {
