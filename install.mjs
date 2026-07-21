@@ -101,10 +101,8 @@ async function fetchJson(url, { allowNotFound = false } = {}) {
   return response.json();
 }
 
-async function resolveRef(requestedRef) {
-  if (requestedRef) return requestedRef;
-  const release = await fetchJson(`https://api.github.com/repos/${REPOSITORY}/releases/latest`, { allowNotFound: true });
-  return release?.tag_name || "main";
+export async function resolveRef(requestedRef) {
+  return requestedRef || "main";
 }
 
 async function downloadServer(ref, destination) {

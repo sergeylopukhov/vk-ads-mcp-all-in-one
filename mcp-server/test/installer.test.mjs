@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyEnvValues, defaultInstallDirectory, fillCredentials, parseEnvValues, selectServerFiles } from "../../install.mjs";
+import { applyEnvValues, defaultInstallDirectory, fillCredentials, parseEnvValues, resolveRef, selectServerFiles } from "../../install.mjs";
 
 test("selectServerFiles keeps only files required to build the server", () => {
   const files = selectServerFiles([
@@ -41,4 +41,9 @@ test("defaultInstallDirectory is platform aware", () => {
   assert.equal(defaultInstallDirectory("win32", "C:\\Users\\test", { LOCALAPPDATA: "C:\\Data" }), "C:\\Data\\VK Ads MCP");
   assert.equal(defaultInstallDirectory("darwin", "/Users/test", {}), "/Users/test/Library/Application Support/VK Ads MCP");
   assert.equal(defaultInstallDirectory("linux", "/home/test", {}), "/home/test/.local/share/vk-ads-mcp");
+});
+
+test("resolveRef uses main unless the user explicitly selects a source", async () => {
+  assert.equal(await resolveRef(undefined), "main");
+  assert.equal(await resolveRef("v0.1.0"), "v0.1.0");
 });
