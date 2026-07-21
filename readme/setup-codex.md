@@ -1,56 +1,31 @@
 # Подключение к Codex
 
-Нужны Node.js 20 или новее, `client_id` и `client_secret` вашего приложения VK Ads. Токен получать вручную не нужно.
+Нужны Node.js 20 или новее, а также `client_id` и `client_secret` приложения VK Ads.
 
-## macOS
-
-```bash
-curl -fL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -o vk-ads-mcp-0.1.0.zip
-unzip vk-ads-mcp-0.1.0.zip
-cd vk-ads-mcp-0.1.0/mcp-server
-npm ci --omit=dev
-cp .env.example .env
-open -e .env
-```
-
-В Linux вместо `open -e .env` используйте `nano .env`.
-
-В файле `.env` укажите:
-
-```text
-VK_ADS_CLIENT_ID=ваш_client_id
-VK_ADS_CLIENT_SECRET=ваш_client_secret
-```
-
-Затем выполните:
+## macOS и Linux
 
 ```bash
-codex mcp remove vk-ads
-codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
+curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.sh | sh
 ```
 
 ## Windows
 
-В PowerShell:
+Откройте PowerShell и выполните:
 
 ```powershell
-Invoke-WebRequest https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -OutFile vk-ads-mcp-0.1.0.zip
-Expand-Archive vk-ads-mcp-0.1.0.zip -DestinationPath .
-Set-Location .\vk-ads-mcp-0.1.0
-Set-Location .\mcp-server
-npm.cmd ci --omit=dev
-Copy-Item .env.example .env
-notepad .env
-codex mcp remove vk-ads
-codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$($PWD.Path)\dist\index.js"
+irm https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.ps1 | iex
 ```
 
-Сохраните `.env`, перезапустите Codex и отправьте запрос. Сервер сам получит токен и сохранит его в этом файле:
+Установщик запросит только `client_id`, скрытый `client_secret` и режим `readonly/write`. Расширенные разрешения записи доступны отдельным необязательным шагом и по умолчанию выключены. После настройки установщик зарегистрирует MCP-сервер под именем `vk-ads`. Токен он получит и сохранит самостоятельно.
+
+Перезапустите Codex и отправьте запрос:
 
 ```text
 Покажи контекст подключения VK Ads и доступные рекламные планы. Ничего не меняй.
 ```
 
-Полная инструкция: [README](../README.md).
+Для обновления снова выполните команду для своей системы. Установщик предложит сохранить текущие настройки или изменить их; профили и токены не удаляются.
+
+Подробности: [README](../README.md).
 
 Если VK Ads вернёт `token_limit_exceeded`, выпуск нового токена отклонён. Сервер не умеет просматривать и отзывать токены приложения. Не удаляйте локальный `.env`, чтобы не выпускать токен повторно. Если лимит уже исчерпан, обратитесь в поддержку VK Ads, указав ошибку и `client_id` приложения.

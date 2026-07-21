@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
-const publicRootFiles = new Set([".gitignore", "LICENSE", "NOTICE.md", "README.md", "SECURITY.md", "TOOLS.md"]);
+const publicRootFiles = new Set([".gitignore", "install.mjs", "install.ps1", "install.sh", "LICENSE", "NOTICE.md", "README.md", "SECURITY.md", "TOOLS.md"]);
 const allowedRoots = new Set([".github", "assets", "mcp-server", "readme"]);
 const forbiddenNames = new Set(["AGENTS.md", "plan.md", "secret.md"]);
 const tracked = execFileSync("git", ["-C", repositoryRoot, "ls-files"], { encoding: "utf8" })

@@ -2,10 +2,6 @@
   <img src="assets/cover.png" alt="VK Ads MCP: аналитика и управление рекламой" width="100%">
 </p>
 
-<p align="center">
-  <img src="assets/logo.png" alt="Логотип VK Ads MCP" width="160">
-</p>
-
 <h1 align="center">VK Ads MCP All in One</h1>
 
 <p align="center">Локальный MCP-сервер для анализа и безопасной работы с VK Ads.</p>
@@ -26,41 +22,12 @@
 
 ## Быстрый старт
 
-Нужны Node.js 20 или новее, `client_id` и `client_secret` вашего приложения VK Ads. Токен получать и вставлять вручную не нужно.
+Нужны Node.js 20 или новее, а также `client_id` и `client_secret` приложения VK Ads.
 
-### macOS
-
-```bash
-curl -fL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -o vk-ads-mcp-0.1.0.zip
-unzip vk-ads-mcp-0.1.0.zip
-cd vk-ads-mcp-0.1.0/mcp-server
-npm ci --omit=dev
-cp .env.example .env
-open -e .env
-```
-
-В открытом файле заполните только `VK_ADS_CLIENT_ID` и `VK_ADS_CLIENT_SECRET`, затем сохраните его.
-
-### Linux
-
-Выполните те же команды, но откройте файл так:
+### macOS и Linux
 
 ```bash
-nano .env
-```
-
-В файле `.env` укажите данные приложения после знака `=`:
-
-```text
-VK_ADS_CLIENT_ID=ваш_client_id
-VK_ADS_CLIENT_SECRET=ваш_client_secret
-```
-
-Сохраните файл и подключите сервер к Codex:
-
-```bash
-codex mcp remove vk-ads
-codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
+curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.sh | sh
 ```
 
 ### Windows
@@ -68,31 +35,30 @@ codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
 Откройте PowerShell и выполните:
 
 ```powershell
-Invoke-WebRequest https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -OutFile vk-ads-mcp-0.1.0.zip
-Expand-Archive vk-ads-mcp-0.1.0.zip -DestinationPath .
-Set-Location .\vk-ads-mcp-0.1.0
-Set-Location .\mcp-server
-npm.cmd ci --omit=dev
-Copy-Item .env.example .env
-notepad .env
+irm https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.ps1 | iex
 ```
 
-В Блокноте укажите `VK_ADS_CLIENT_ID=...` и `VK_ADS_CLIENT_SECRET=...`, сохраните файл и подключите сервер:
+Установщик запросит только `client_id`, скрытый `client_secret` и режим работы: только чтение или чтение и запись. При выборе записи расширенные возможности можно настроить отдельно; по умолчанию они выключены. Затем установщик загрузит сервер и подключит его к Codex. Токен получать и вставлять вручную не нужно.
 
-```powershell
-codex mcp remove vk-ads
-codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$($PWD.Path)\dist\index.js"
-```
-
-После подключения перезапустите клиент и отправьте ему:
+После установки перезапустите Codex и отправьте запрос:
 
 ```text
 Покажи контекст подключения VK Ads и доступные рекламные планы. Ничего не меняй.
 ```
 
+Чтобы обновить сервер, снова выполните команду для своей системы. Установщик предложит сохранить текущие настройки или пройти настройку заново; профили, токены и локальный аудит не удаляются.
+
+Каталог установки по умолчанию:
+
+- macOS: `~/Library/Application Support/VK Ads MCP`;
+- Linux: `~/.local/share/vk-ads-mcp`;
+- Windows: `%LOCALAPPDATA%\VK Ads MCP`.
+
+Для Claude Code, Gemini CLI, Qwen Code и Kimi Code CLI используйте [короткие команды подключения](readme/setup-clients.md). Разработчики могут запустить `node install.mjs --help`, чтобы выбрать ветку или другой каталог установки.
+
 ## Как создаётся и хранится токен
 
-При первом запросе сервер получает токен VK Ads по `client_id` и `client_secret`, после чего сам записывает его в локальный `mcp-server/.env` рядом с `package.json`. Если VK Ads вернёт `refresh_token`, сервер также сохранит его локально.
+При первом запросе сервер получает токен VK Ads по `client_id` и `client_secret`, после чего записывает его в локальный `.env` в каталоге установки. Если VK выдаёт `refresh_token`, сервер сохраняет и его для последующего обновления.
 
 `client_secret`, токен и refresh-токен остаются только в `.env`. Файл исключён из Git, не попадает в релиз и не нужен в настройках MCP-клиента. Не передавайте его другим людям.
 
