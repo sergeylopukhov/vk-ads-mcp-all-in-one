@@ -2,10 +2,6 @@
   <img src="assets/cover.png" alt="VK Ads MCP: аналитика и управление рекламой" width="100%">
 </p>
 
-<p align="center">
-  <img src="assets/logo.png" alt="Логотип VK Ads MCP" width="160">
-</p>
-
 <h1 align="center">VK Ads MCP All in One</h1>
 
 <p align="center">Локальный MCP-сервер для анализа и безопасной работы с VK Ads.</p>
