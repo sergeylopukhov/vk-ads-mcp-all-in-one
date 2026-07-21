@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 
 const REPOSITORY = "sergeylopukhov/vk-ads-mcp-all-in-one";
@@ -252,7 +253,8 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 const isDirectExecution = import.meta.url.startsWith("data:")
-  || (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href);
+  || (import.meta.url.startsWith("file:") && process.argv[1]
+    && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]));
 
 if (isDirectExecution) {
   try {

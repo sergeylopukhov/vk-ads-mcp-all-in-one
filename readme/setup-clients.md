@@ -1,9 +1,17 @@
 # Подключение к MCP-клиентам
 
-Сначала установите или обновите сервер одной командой. Она работает в PowerShell на Windows и в терминале macOS или Linux:
+Сначала установите или обновите сервер.
+
+### macOS и Linux
 
 ```bash
-node --input-type=module -e "const r=await fetch('https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.mjs');if(!r.ok)throw new Error('HTTP '+r.status);await import('data:text/javascript,'+encodeURIComponent(await r.text()))"
+curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.sh | sh
+```
+
+### Windows
+
+```powershell
+irm https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.ps1 | iex
 ```
 
 Установщик запросит данные приложения и напечатает каталог установки. Codex подключится автоматически. Для остальных клиентов добавьте к этому каталогу `/dist/index.js` и подставьте полный путь в команду ниже.

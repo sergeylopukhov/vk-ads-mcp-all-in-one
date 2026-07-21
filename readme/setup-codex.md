@@ -1,9 +1,19 @@
 # Подключение к Codex
 
-Нужны Node.js 20 или новее, а также `client_id` и `client_secret` приложения VK Ads. Одна и та же команда работает в PowerShell на Windows и в терминале macOS или Linux:
+Нужны Node.js 20 или новее, а также `client_id` и `client_secret` приложения VK Ads.
+
+## macOS и Linux
 
 ```bash
-node --input-type=module -e "const r=await fetch('https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.mjs');if(!r.ok)throw new Error('HTTP '+r.status);await import('data:text/javascript,'+encodeURIComponent(await r.text()))"
+curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.sh | sh
+```
+
+## Windows
+
+Откройте PowerShell и выполните:
+
+```powershell
+irm https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.ps1 | iex
 ```
 
 Установщик запросит `client_id` и скрытый `client_secret`, загрузит последнюю версию и зарегистрирует MCP-сервер под именем `vk-ads`. Токен он получит и сохранит самостоятельно.
@@ -14,7 +24,7 @@ node --input-type=module -e "const r=await fetch('https://raw.githubusercontent.
 Покажи контекст подключения VK Ads и доступные рекламные планы. Ничего не меняй.
 ```
 
-Для обновления снова выполните ту же команду. Настройки, профили и токены сохранятся.
+Для обновления снова выполните команду для своей системы. Настройки, профили и токены сохранятся.
 
 Подробности: [README](../README.md).
 

@@ -22,10 +22,20 @@
 
 ## Быстрый старт
 
-Нужны Node.js 20 или новее, а также `client_id` и `client_secret` приложения VK Ads. Откройте PowerShell или терминал и выполните одну команду:
+Нужны Node.js 20 или новее, а также `client_id` и `client_secret` приложения VK Ads.
+
+### macOS и Linux
 
 ```bash
-node --input-type=module -e "const r=await fetch('https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.mjs');if(!r.ok)throw new Error('HTTP '+r.status);await import('data:text/javascript,'+encodeURIComponent(await r.text()))"
+curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.sh | sh
+```
+
+### Windows
+
+Откройте PowerShell и выполните:
+
+```powershell
+irm https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.ps1 | iex
 ```
 
 Установщик запросит `client_id` и скрытый `client_secret`, загрузит последнюю версию сервера и подключит её к Codex. Токен получать и вставлять вручную не нужно.
@@ -36,7 +46,7 @@ node --input-type=module -e "const r=await fetch('https://raw.githubusercontent.
 Покажи контекст подключения VK Ads и доступные рекламные планы. Ничего не меняй.
 ```
 
-Чтобы обновить сервер, снова выполните ту же команду. Установщик сохранит настройки, профили, токены и локальный аудит.
+Чтобы обновить сервер, снова выполните команду для своей системы. Установщик сохранит настройки, профили, токены и локальный аудит.
 
 Каталог установки по умолчанию:
 
