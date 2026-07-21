@@ -2,6 +2,18 @@
 
 Нужны Node.js 20 или новее, `client_id` и `client_secret` вашего приложения VK Ads. Токен получать вручную не нужно.
 
+## Установка и обновление одной командой
+
+Одна и та же команда работает в PowerShell, macOS и Linux:
+
+```bash
+node --input-type=module -e "const r=await fetch('https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.mjs');if(!r.ok)throw new Error('HTTP '+r.status);await import('data:text/javascript,'+encodeURIComponent(await r.text()))"
+```
+
+При первом запуске установщик запросит данные приложения и подключит `vk-ads` к Codex. Повторный запуск обновит сервер, не меняя локальные профили и токены.
+
+## Ручная установка
+
 ## macOS
 
 ```bash
