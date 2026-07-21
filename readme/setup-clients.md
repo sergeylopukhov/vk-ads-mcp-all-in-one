@@ -1,39 +1,33 @@
 # Подключение к MCP-клиентам
 
-Распакуйте релиз, перейдите в папку `mcp-server` и установите зависимости:
+Сначала установите или обновите сервер одной командой. Она работает в PowerShell на Windows и в терминале macOS или Linux:
 
 ```bash
-npm ci --omit=dev
+node --input-type=module -e "const r=await fetch('https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.mjs');if(!r.ok)throw new Error('HTTP '+r.status);await import('data:text/javascript,'+encodeURIComponent(await r.text()))"
 ```
 
-Скопируйте `.env.example` в `.env` и укажите `VK_ADS_CLIENT_ID` и `VK_ADS_CLIENT_SECRET` вашего приложения VK Ads. При первом запросе сервер сам получит токен и сохранит его в `.env`. Токен не нужно добавлять в настройки клиента.
-
-Если вы запускаете сервер из исходников, выполните `npm ci`, затем `npm run build`.
-
-Во всех примерах путь к `dist/index.js` должен быть абсолютным.
+Установщик запросит данные приложения и напечатает каталог установки. Codex подключится автоматически. Для остальных клиентов добавьте к этому каталогу `/dist/index.js` и подставьте полный путь в команду ниже.
 
 ## Codex
 
-```bash
-codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
-```
+Дополнительные команды не нужны. Перезапустите Codex после установки.
 
 ## Claude Code
 
 ```bash
-claude mcp add --env VK_ADS_PROFILE=default --transport stdio --scope user vk-ads -- node "$(pwd)/dist/index.js"
+claude mcp add --env VK_ADS_PROFILE=default --transport stdio --scope user vk-ads -- node "/полный/путь/к/каталогу/установки/dist/index.js"
 ```
 
 ## Gemini CLI
 
 ```bash
-gemini mcp add vk-ads node "$(pwd)/dist/index.js" --env VK_ADS_PROFILE=default --scope user
+gemini mcp add vk-ads node "/полный/путь/к/каталогу/установки/dist/index.js" --env VK_ADS_PROFILE=default --scope user
 ```
 
 ## Qwen Code
 
 ```bash
-qwen mcp add vk-ads -e VK_ADS_PROFILE=default node "$(pwd)/dist/index.js"
+qwen mcp add vk-ads -e VK_ADS_PROFILE=default node "/полный/путь/к/каталогу/установки/dist/index.js"
 ```
 
 ## Kimi Code CLI
@@ -45,7 +39,7 @@ qwen mcp add vk-ads -e VK_ADS_PROFILE=default node "$(pwd)/dist/index.js"
   "mcpServers": {
     "vk-ads": {
       "command": "node",
-      "args": ["/полный/путь/vk-ads-mcp/mcp-server/dist/index.js"],
+      "args": ["/полный/путь/к/каталогу/установки/dist/index.js"],
       "env": { "VK_ADS_PROFILE": "default" },
       "enabled": true
     }

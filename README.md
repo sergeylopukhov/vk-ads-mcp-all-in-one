@@ -22,73 +22,33 @@
 
 ## Быстрый старт
 
-Нужны Node.js 20 или новее, `client_id` и `client_secret` вашего приложения VK Ads. Токен получать и вставлять вручную не нужно.
-
-### macOS
+Нужны Node.js 20 или новее, а также `client_id` и `client_secret` приложения VK Ads. Откройте PowerShell или терминал и выполните одну команду:
 
 ```bash
-curl -fL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -o vk-ads-mcp-0.1.0.zip
-unzip vk-ads-mcp-0.1.0.zip
-cd vk-ads-mcp-0.1.0/mcp-server
-npm ci --omit=dev
-cp .env.example .env
-open -e .env
+node --input-type=module -e "const r=await fetch('https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.mjs');if(!r.ok)throw new Error('HTTP '+r.status);await import('data:text/javascript,'+encodeURIComponent(await r.text()))"
 ```
 
-В открытом файле заполните только `VK_ADS_CLIENT_ID` и `VK_ADS_CLIENT_SECRET`, затем сохраните его.
+Установщик запросит `client_id` и скрытый `client_secret`, загрузит последнюю версию сервера и подключит её к Codex. Токен получать и вставлять вручную не нужно.
 
-### Linux
-
-Выполните те же команды, но откройте файл так:
-
-```bash
-nano .env
-```
-
-В файле `.env` укажите данные приложения после знака `=`:
-
-```text
-VK_ADS_CLIENT_ID=ваш_client_id
-VK_ADS_CLIENT_SECRET=ваш_client_secret
-```
-
-Сохраните файл и подключите сервер к Codex:
-
-```bash
-codex mcp remove vk-ads
-codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$(pwd)/dist/index.js"
-```
-
-### Windows
-
-Откройте PowerShell и выполните:
-
-```powershell
-Invoke-WebRequest https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/download/v0.1.0/vk-ads-mcp-0.1.0.zip -OutFile vk-ads-mcp-0.1.0.zip
-Expand-Archive vk-ads-mcp-0.1.0.zip -DestinationPath .
-Set-Location .\vk-ads-mcp-0.1.0
-Set-Location .\mcp-server
-npm.cmd ci --omit=dev
-Copy-Item .env.example .env
-notepad .env
-```
-
-В Блокноте укажите `VK_ADS_CLIENT_ID=...` и `VK_ADS_CLIENT_SECRET=...`, сохраните файл и подключите сервер:
-
-```powershell
-codex mcp remove vk-ads
-codex mcp add vk-ads --env VK_ADS_PROFILE=default -- node "$($PWD.Path)\dist\index.js"
-```
-
-После подключения перезапустите клиент и отправьте ему:
+После установки перезапустите Codex и отправьте запрос:
 
 ```text
 Покажи контекст подключения VK Ads и доступные рекламные планы. Ничего не меняй.
 ```
 
+Чтобы обновить сервер, снова выполните ту же команду. Установщик сохранит настройки, профили, токены и локальный аудит.
+
+Каталог установки по умолчанию:
+
+- macOS: `~/Library/Application Support/VK Ads MCP`;
+- Linux: `~/.local/share/vk-ads-mcp`;
+- Windows: `%LOCALAPPDATA%\VK Ads MCP`.
+
+Для Claude Code, Gemini CLI, Qwen Code и Kimi Code CLI используйте [короткие команды подключения](readme/setup-clients.md). Разработчики могут запустить `node install.mjs --help`, чтобы выбрать ветку или другой каталог установки.
+
 ## Как создаётся и хранится токен
 
-При первом запросе сервер получает токен VK Ads по `client_id` и `client_secret`, после чего сам записывает его в локальный `mcp-server/.env` рядом с `package.json`. Если VK выдаёт `refresh_token`, сервер сохраняет и его для последующего обновления.
+При первом запросе сервер получает токен VK Ads по `client_id` и `client_secret`, после чего записывает его в локальный `.env` в каталоге установки. Если VK выдаёт `refresh_token`, сервер сохраняет и его для последующего обновления.
 
 `client_secret`, токен и refresh-токен остаются только в `.env`. Файл исключён из Git, не попадает в релиз и не нужен в настройках MCP-клиента. Не передавайте его другим людям.
 
