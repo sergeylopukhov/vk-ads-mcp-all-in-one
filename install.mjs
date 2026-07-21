@@ -300,26 +300,33 @@ async function ensureConfiguration(installDirectory) {
   const clientId = await ask(readline, "VK Ads client_id", current.VK_ADS_CLIENT_ID || "");
   const replaceSecret = !current.VK_ADS_CLIENT_SECRET || await askBoolean(readline, "Заменить сохранённый client_secret?", false);
   const mode = await askMode(readline, current.VK_ADS_MODE === "write" ? "write" : "readonly");
-  const profileName = await askIdentifier(readline, "Имя профиля", current.VK_ADS_PROFILE || "default");
-  const connectionId = await askIdentifier(readline, "ID подключения", current.VK_ADS_CONNECTION_ID || profileName);
-  const timeoutMs = await askInteger(readline, "Таймаут запросов, мс", Number(current.VK_ADS_TIMEOUT_MS) || 30_000, 1_000, 120_000);
-  const logging = await askBoolean(readline, "Включить обезличенный журнал HTTP-запросов?", current.VK_ADS_LOG === "1");
-  const auditFile = await ask(readline, "Файл аудита записей; пусто — стандартный путь", current.VK_ADS_AUDIT_FILE || "");
+  const configureAdvanced = mode === "write"
+    && await askBoolean(readline, "Настроить дополнительные возможности записи?", false);
 
-  let uploadDir = "";
-  let allowPiiUploads = false;
-  let piiUploadDir = "";
-  let allowAgencyWrites = false;
-  let allowSharingKeyRevoke = false;
-  let allowSkAdNetworkWrites = false;
-  let skAdNetworkTestAppIds = "";
-  let allowInAppEventCategoryWrites = false;
-  let inAppEventTestAppIds = "";
-  let allowRemarketingCounterWrites = false;
-  let remarketingCounterTestIds = "";
+  let profileName = current.VK_ADS_PROFILE || "default";
+  let connectionId = current.VK_ADS_CONNECTION_ID || profileName;
+  let timeoutMs = Number(current.VK_ADS_TIMEOUT_MS) || 30_000;
+  let logging = current.VK_ADS_LOG === "1";
+  let auditFile = current.VK_ADS_AUDIT_FILE || "";
+  let uploadDir = current.VK_ADS_UPLOAD_DIR || "";
+  let allowPiiUploads = current.VK_ADS_ALLOW_PII_UPLOADS === "1";
+  let piiUploadDir = current.VK_ADS_PII_UPLOAD_DIR || "";
+  let allowAgencyWrites = current.VK_ADS_ALLOW_AGENCY_WRITES === "1";
+  let allowSharingKeyRevoke = current.VK_ADS_ALLOW_SHARING_KEY_REVOKE === "1";
+  let allowSkAdNetworkWrites = current.VK_ADS_ALLOW_SKADNETWORK_WRITES === "1";
+  let skAdNetworkTestAppIds = current.VK_ADS_TEST_IOS_APP_IDS || "";
+  let allowInAppEventCategoryWrites = current.VK_ADS_ALLOW_INAPP_EVENT_CATEGORY_WRITES === "1";
+  let inAppEventTestAppIds = current.VK_ADS_TEST_MOBILE_APP_IDS || "";
+  let allowRemarketingCounterWrites = current.VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES === "1";
+  let remarketingCounterTestIds = current.VK_ADS_TEST_COUNTER_IDS || "";
 
-  if (mode === "write") {
+  if (configureAdvanced) {
     console.log("\nДополнительные разрешения записи. Оставляйте «нет», если функция не нужна.\n");
+    profileName = await askIdentifier(readline, "Имя профиля", profileName);
+    connectionId = await askIdentifier(readline, "ID подключения", connectionId);
+    timeoutMs = await askInteger(readline, "Таймаут запросов, мс", timeoutMs, 1_000, 120_000);
+    logging = await askBoolean(readline, "Включить обезличенный журнал HTTP-запросов?", logging);
+    auditFile = await ask(readline, "Файл аудита записей; пусто — стандартный путь", auditFile);
     uploadDir = await askOptionalAbsolutePath(readline, "Каталог разрешённых медиафайлов", current.VK_ADS_UPLOAD_DIR || "");
     allowPiiUploads = await askBoolean(readline, "Разрешить загрузку PII-аудиторий?", current.VK_ADS_ALLOW_PII_UPLOADS === "1");
     if (allowPiiUploads) piiUploadDir = await askOptionalAbsolutePath(readline, "Каталог разрешённых PII-файлов", current.VK_ADS_PII_UPLOAD_DIR || "");

@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-on
 irm https://raw.githubusercontent.com/sergeylopukhov/vk-ads-mcp-all-in-one/main/install.ps1 | iex
 ```
 
-Установщик запросит `client_id`, скрытый `client_secret`, режим `readonly/write` и остальные поддерживаемые настройки. Опасные разрешения записи по умолчанию выключены. После настройки установщик зарегистрирует MCP-сервер под именем `vk-ads`. Токен он получит и сохранит самостоятельно.
+Установщик запросит только `client_id`, скрытый `client_secret` и режим `readonly/write`. Расширенные разрешения записи доступны отдельным необязательным шагом и по умолчанию выключены. После настройки установщик зарегистрирует MCP-сервер под именем `vk-ads`. Токен он получит и сохранит самостоятельно.
 
 Перезапустите Codex и отправьте запрос:
 
