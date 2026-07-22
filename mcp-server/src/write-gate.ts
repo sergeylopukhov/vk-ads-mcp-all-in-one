@@ -32,12 +32,6 @@ interface StoredPreview extends WritePreview {
   consumed: boolean;
 }
 
-const rejectionStatements = new Set(["нет", "против", "отмена", "отменяю", "стоп", "не надо", "не делай"]);
-
-function isExplicitRejection(statement: string): boolean {
-  return rejectionStatements.has(statement.trim().replace(/[.!?…]+$/u, "").toLocaleLowerCase("ru-RU"));
-}
-
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
@@ -75,7 +69,7 @@ export class WriteGate {
       payload,
       payload_hash: payloadHash,
       expires_at: new Date(expiresAtMs).toISOString(),
-      confirmation_statement: "Любое непустое сообщение пользователя",
+      confirmation_statement: "Подтверждение пользователя",
       expiresAtMs,
       consumed: false,
     };
@@ -102,7 +96,6 @@ export class WriteGate {
       throw new Error("Срок подтверждения истёк; подготовьте новый preview.");
     }
     if (this.requireConfirmation && !statement?.trim()) throw new Error("Нужно непустое подтверждение пользователя.");
-    if (this.requireConfirmation && statement && isExplicitRejection(statement)) throw new Error("Отказ не подтверждает операцию.");
     if (preview.connection_id !== connectionId) throw new Error("Подтверждение подготовлено для другого подключения VK Ads.");
     preview.consumed = true;
     return this.publicPreview(preview);

@@ -18,9 +18,8 @@ describe("WriteGate", () => {
     });
 
     expect(preview.payload_hash).toHaveLength(64);
-    expect(preview.confirmation_statement).toBe("Любое непустое сообщение пользователя");
+    expect(preview.confirmation_statement).toBe("Подтверждение пользователя");
     expect(() => gate.consume(preview.id, "   ")).toThrow("Нужно непустое");
-    expect(() => gate.consume(preview.id, "против")).toThrow("Отказ не подтверждает");
     expect(gate.consume(preview.id, "выполняй")).toMatchObject({ id: preview.id });
     expect(() => gate.consume(preview.id, "да")).toThrow("уже использован");
     time += 1;

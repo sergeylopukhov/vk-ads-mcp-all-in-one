@@ -3469,7 +3469,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       "write_execute",
       {
         title: "Выполнить подготовленную тестовую запись",
-        description: options.requireWriteConfirmation === false ? "Выполняет ровно один свежий preview без фразы: локальный владелец профиля явно отключил подтверждение при старте. Не принимает произвольный endpoint, ID существующих кампаний или свободный payload." : "Выполняет ровно один свежий preview после одноразового подтверждения. Не принимает произвольный endpoint, ID существующих кампаний или свободный payload.",
+        description: options.requireWriteConfirmation === false ? "Выполняет ровно один свежий preview без фразы: локальный владелец профиля явно отключил подтверждение при старте. Не принимает произвольный endpoint, ID существующих кампаний или свободный payload." : "Выполняет ровно один свежий preview только после явного согласия пользователя именно на это изменение. Оценивайте смысл сообщения на языке пользователя: при отказе, сомнении, вопросе или нейтральной реплике не вызывайте этот инструмент. Не принимает произвольный endpoint, ID существующих кампаний или свободный payload.",
         inputSchema: { preview_id: z.string().uuid(), confirmation_statement: z.string().min(1).max(100).optional() },
         outputSchema: {
           operation: writeOperationSchema,
