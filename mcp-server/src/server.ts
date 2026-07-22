@@ -1771,7 +1771,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     options.allowPiiUploads,
     options.allowAgencyWrites,
   );
-  const server = new McpServer({ name: "vk-ads-mcp", version: "0.1.0" });
+  const server = new McpServer({ name: "vk-ads-mcp", version: "1.2.0" });
   const writeGate = new WriteGate(mode === "write", Date.now, randomUUID, options.auditFile, options.previewTtlMs, options.requireWriteConfirmation ?? true);
   const connectionId = options.connectionId ?? "default";
   const profileName = options.profileName ?? "default";
@@ -1784,7 +1784,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
   const communityTypes = z.enum(["group", "page", "event"]);
   const communityCandidateSchema = z.object({ id: z.number().int().positive(), url: z.string().url(), name: z.string(), description: z.string(), type: z.string().nullable(), members_count: z.number().int().nonnegative().nullable(), verified: z.boolean(), retrieved_at: z.string(), risk_flags: z.array(z.string()), activity: z.object({ last_post_at: z.string().nullable(), posts_per_week: z.number().nullable(), term_matches: z.array(z.string()), risk_flags: z.array(z.string()) }).optional() });
   server.registerTool("vk_discover_communities", {
-    title: "Найти публичные сообщества VK", description: "Read-only: groups.search + groups.getById с дедупликацией, кешем metadata и без списков участников.",
+    title: "Найти публичные сообщества VK", description: "Только чтение: ищет через groups.search, дополняет metadata, удаляет дубли по ID и не запрашивает списки участников.",
     inputSchema: { keywords: z.array(z.string().trim().min(1).max(120)).min(1).max(20), include_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), country_id: z.number().int().positive().optional(), city_id: z.number().int().positive().optional(), community_types: z.array(communityTypes).max(3).optional(), min_members: z.number().int().nonnegative().optional(), max_members: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(500).default(100) },
     outputSchema: { items: z.array(communityCandidateSchema) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   }, async (input) => {
@@ -1797,7 +1797,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     return textAndData({ items }, "Публичные сообщества найдены; данные участников не запрашивались.");
   });
   server.registerTool("vk_analyze_communities", {
-    title: "Проанализировать сообщества VK", description: "Read-only: metadata и последние публичные записи wall.get; полные тексты публикаций не возвращаются и не сохраняются.",
+    title: "Проанализировать сообщества VK", description: "Только чтение: анализирует metadata и последние публичные записи; полные тексты публикаций не возвращаются и не сохраняются.",
     inputSchema: { community_ids: z.array(z.number().int().positive()).min(1).max(500), posts_limit: z.number().int().min(1).max(100).default(30), analysis_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]) }, outputSchema: { items: z.array(communityCandidateSchema) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   }, async (input) => {
     const metadata = await communityClient.getByIds([...new Set(input.community_ids)]); const items: Candidate[] = [];
@@ -1805,7 +1805,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     return textAndData({ items }, "Сообщества проанализированы без сохранения текстов публикаций.");
   });
   server.registerTool("vk_score_communities", {
-    title: "Оценить сообщества VK", description: "Read-only: прозрачный локальный скоринг 0–100 по пользовательским весам.",
+    title: "Оценить сообщества VK", description: "Только чтение: прозрачный локальный скоринг от 0 до 100 по пользовательским весам и кластерам.",
     inputSchema: { community_ids: z.array(z.number().int().positive()).min(1).max(500), scoring_rules: z.record(z.string(), z.unknown()), clusters: z.array(z.record(z.string(), z.unknown())).max(50).default([]) }, outputSchema: { items: z.array(z.record(z.string(), z.unknown())) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   }, async ({ community_ids, scoring_rules, clusters }) => {
     const terms = Array.isArray(scoring_rules.terms) ? scoring_rules.terms.filter((term): term is string => typeof term === "string") : [];
@@ -1819,7 +1819,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     return textAndData({ items: score(communities, scoring_rules, clusters) }, "Скоринг выполнен; причины начислений и штрафов включены.");
   });
   server.registerTool("vk_export_community_candidates", {
-    title: "Экспортировать кандидатов сообществ VK", description: "Read-only: формирует CSV или JSON только в памяти; статус каждого кандидата pending_approval.",
+    title: "Экспортировать кандидатов сообществ VK", description: "Только чтение: формирует CSV или JSON в памяти и помечает каждого кандидата статусом pending_approval.",
     inputSchema: { communities: z.array(communityCandidateSchema).min(1).max(500), scores: z.array(z.object({ id: z.number().int().positive(), score: z.number(), clusters: z.array(z.string()), reasons: z.array(z.string()), risk_flags: z.array(z.string()) })).max(500).default([]), format: z.enum(["csv", "json"]) }, outputSchema: { format: z.enum(["csv", "json"]), content: z.string(), row_count: z.number().int() }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   }, async ({ communities, scores, format }) => { const byId = new Map(scores.map((item) => [item.id, item])); const rows = communities.map((item) => { const scoreItem = byId.get(item.id); return { id: item.id, url: item.url, name: item.name, description: item.description, members_count: item.members_count, activity: item.activity?.last_post_at ?? null, score: scoreItem?.score ?? null, cluster: scoreItem?.clusters.join("|") ?? "", reasons: scoreItem?.reasons.join("|") ?? "", risk_flags: [...item.risk_flags, ...(scoreItem?.risk_flags ?? [])].join("|"), status: "pending_approval" }; }); const content = format === "json" ? JSON.stringify(rows) : toCsv(rows).content; return textAndData({ format, content, row_count: rows.length }, "Экспорт сформирован в памяти; запись в сегмент не запускается."); });
 
