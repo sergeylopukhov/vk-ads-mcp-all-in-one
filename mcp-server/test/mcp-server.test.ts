@@ -199,10 +199,11 @@ describe("MCP-контракт", () => {
 
   it("по умолчанию анализирует больше прежних 200 кандидатов", async () => {
     const ids = Array.from({ length: 250 }, (_, index) => index + 1);
+    let wallCalls = 0;
     const communityClient = {
       searchPage: async (_query: string, offset: number) => ({ count: ids.length, offset, items: ids.slice(offset, offset + 100).map((id) => ({ id })) }),
       getByIds: async (pageIds: number[]) => pageIds.map((id) => ({ id, name: `Курс ${id}`, description: "курс", screen_name: `course${id}`, members_count: id, type: "group" })),
-      wall: async () => [],
+      wall: async () => { wallCalls += 1; return []; },
     };
     const server = createServer(createClientStub(), "readonly", { communityClient: communityClient as never });
     const client = new Client({ name: "test-client", version: "0.0.0" });
@@ -212,6 +213,7 @@ describe("MCP-контракт", () => {
     const result = await client.callTool({ name: "vk_find_community_candidates", arguments: { keywords: ["курс"], posts_limit: 1 } });
     expect(result.isError).not.toBe(true);
     expect((result.structuredContent as { items: unknown[] }).items).toHaveLength(250);
+    expect(wallCalls).toBe(250);
     await Promise.all([client.close(), server.close()]);
   });
 
@@ -254,7 +256,7 @@ describe("MCP-контракт", () => {
       const result = await client.callTool({ name: "vk_research_communities", arguments: { keywords: ["регент"], limit: 10, posts_limit: 10 } });
       expect(result.isError).not.toBe(true);
       const run = result.structuredContent as { run_id: string; summary: Record<string, unknown>; passed: unknown[] };
-      expect(run).toMatchObject({ run_id: expect.any(String), summary: expect.objectContaining({ selected: 1, analyzed: 1, search_pages: 1, incomplete: false }) });
+      expect(run).toMatchObject({ run_id: expect.any(String), summary: expect.objectContaining({ selected: 1, analyzed: 1, analysis_batch_size: 100, analysis_batches: 1, search_pages: 1, incomplete: false }) });
       expect([...(run as { passed: Array<{ id: number }>; rejected: Array<{ id: number }> }).passed, ...(run as { passed: Array<{ id: number }>; rejected: Array<{ id: number }> }).rejected]).toContainEqual(expect.objectContaining({ id: 7 }));
 
       const restored = await client.callTool({ name: "vk_get_community_research_run", arguments: { run_id: run.run_id } });
