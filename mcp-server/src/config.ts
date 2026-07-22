@@ -45,11 +45,14 @@ export interface AppConfig {
   allowRemarketingCounterWrites: boolean;
   /** Локальный audit write-операций содержит только IDs, статусы и хеши. */
   auditFile: string;
+  /** Срок хранения локальных снимков исследования публичных сообществ. */
+  communityResearchTtlMs: number;
 }
 
 export interface ProfileStoragePaths {
   envFile: string;
   auditFile: string;
+  communityResearchFile: string;
 }
 
 function parseTimeout(value: string | undefined): number {
@@ -74,6 +77,13 @@ function parseWriteConfirmation(value: string | undefined): boolean {
   if (value === undefined || value === "1") return true;
   if (value === "0") return false;
   throw new Error("VK_ADS_REQUIRE_WRITE_CONFIRMATION должен быть 0 или 1.");
+}
+
+function parseCommunityResearchTtl(value: string | undefined): number {
+  if (value === undefined) return 30 * 24 * 60 * 60 * 1_000;
+  const days = Number(value);
+  if (!Number.isInteger(days) || days < 1 || days > 90) throw new Error("VK_COMMUNITY_RESEARCH_TTL_DAYS должен быть целым числом от 1 до 90.");
+  return days * 24 * 60 * 60 * 1_000;
 }
 
 function parseConnectionId(value: string | undefined): string {
@@ -103,11 +113,13 @@ export function resolveProfileStorage(packageDirectory: string, profileName: str
     return {
       envFile: resolve(root, ".env"),
       auditFile: resolve(root, ".vk-ads-audit.json"),
+      communityResearchFile: resolve(root, ".vk-community-research.json"),
     };
   }
   return {
     envFile: resolve(root, "profiles", `${profile}.env`),
     auditFile: resolve(root, "profiles", `${profile}.vk-ads-audit.json`),
+    communityResearchFile: resolve(root, "profiles", `${profile}.vk-community-research.json`),
   };
 }
 
@@ -141,6 +153,7 @@ export function loadConfig(environment = process.env): AppConfig {
     connectionId: parseConnectionId(environment.VK_ADS_CONNECTION_ID ?? profileName),
     timeoutMs: parseTimeout(environment.VK_ADS_TIMEOUT_MS),
     previewTtlMs: parsePreviewTtl(environment.VK_ADS_PREVIEW_TTL_MINUTES),
+    communityResearchTtlMs: parseCommunityResearchTtl(environment.VK_COMMUNITY_RESEARCH_TTL_DAYS),
     requireWriteConfirmation: parseWriteConfirmation(environment.VK_ADS_REQUIRE_WRITE_CONFIRMATION),
     tokenProvider: () => accessToken,
     setAccessToken: (token) => { accessToken = token; },

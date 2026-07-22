@@ -1,9 +1,12 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { resolve } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createServer } from "../src/server.js";
+import { CommunityResearchStore } from "../src/community-research-store.js";
 import { VkAdsApiError, type VkAdsClient } from "../src/vk-client.js";
 
 describe("MCP-контракт", () => {
@@ -103,7 +106,7 @@ describe("MCP-контракт", () => {
 
   it("выполняет поиск, анализ и скоринг сообществ одним read-only вызовом", async () => {
     const communityClient = {
-      search: async () => [{ id: 7 }],
+      searchPage: async () => ({ count: 1, offset: 0, items: [{ id: 7 }] }),
       getByIds: async () => [{ id: 7, name: "Регентское дело", description: "Курсы для регентов", screen_name: "regent", members_count: 1_000, type: "group" }],
       wall: async () => [{ date: Math.floor(Date.now() / 1_000), text: "Регентские занятия" }],
     };
@@ -117,6 +120,35 @@ describe("MCP-контракт", () => {
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({ items: [expect.objectContaining({ id: 7, score: expect.any(Number), activity: expect.objectContaining({ last_post_at: expect.any(String), posts_analyzed: 1 }), reasons: expect.any(Array) })] });
     await Promise.all([client.close(), server.close()]);
+  });
+
+  it("сохраняет полный запуск исследования и возвращает тот же снимок по run_id", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "vk-community-research-mcp-"));
+    try {
+      const communityClient = {
+        searchPage: async () => ({ count: 1, offset: 0, items: [{ id: 7 }] }),
+        getByIds: async () => [{ id: 7, name: "Регентское дело", description: "Курсы для регентов", screen_name: "regent", members_count: 1_000, type: "group" }],
+        wall: async () => [{ date: Math.floor(Date.now() / 1_000), text: "Регентские занятия" }],
+      };
+      const store = new CommunityResearchStore(join(directory, "runs.json"), 24 * 60 * 60 * 1_000);
+      const server = createServer(createClientStub(), "readonly", { communityClient: communityClient as never, communityResearchStore: store });
+      const client = new Client({ name: "test-client", version: "0.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+      const result = await client.callTool({ name: "vk_research_communities", arguments: { keywords: ["регент"], limit: 10, posts_limit: 10 } });
+      expect(result.isError).not.toBe(true);
+      const run = result.structuredContent as { run_id: string; summary: Record<string, unknown>; passed: unknown[] };
+      expect(run).toMatchObject({ run_id: expect.any(String), summary: expect.objectContaining({ selected: 1, analyzed: 1, search_pages: 1, incomplete: false }) });
+      expect([...(run as { passed: Array<{ id: number }>; rejected: Array<{ id: number }> }).passed, ...(run as { passed: Array<{ id: number }>; rejected: Array<{ id: number }> }).rejected]).toContainEqual(expect.objectContaining({ id: 7 }));
+
+      const restored = await client.callTool({ name: "vk_get_community_research_run", arguments: { run_id: run.run_id } });
+      expect(restored.isError).not.toBe(true);
+      expect(restored.structuredContent).toMatchObject({ run_id: run.run_id, summary: run.summary });
+      await Promise.all([client.close(), server.close()]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("не готовит preview для legacy write-пути вне текущего официального индекса", async () => {

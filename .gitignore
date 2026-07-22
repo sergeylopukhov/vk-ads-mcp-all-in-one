@@ -24,8 +24,10 @@ secret.md
 !.env.example
 .envrc
 .vk-ads-audit.json
+.vk-community-research.json
 profiles/*.env
 profiles/*.vk-ads-audit.json
+profiles/*.vk-community-research.json
 .secrets/
 *.pem
 *.p12

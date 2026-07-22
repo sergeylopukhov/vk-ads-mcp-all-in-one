@@ -13,6 +13,7 @@ import { VkAdsClient } from "./vk-client.js";
 import { VkAdsTokenManager } from "./vk-ads-token.js";
 import { VkCommunityClient } from "./vk-community-client.js";
 import { VkCommunityTokenManager } from "./vk-community-token.js";
+import { CommunityResearchStore } from "./community-research-store.js";
 
 /** Профиль выбирается только при запуске; MCP не может подменить credential. */
 const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -78,6 +79,7 @@ await tokenManager?.renewOnStartup();
 await communityTokenManager?.renewOnStartup();
 const server = createServer(client, config.mode, {
   communityClient,
+  communityResearchStore: new CommunityResearchStore(profileStorage.communityResearchFile, config.communityResearchTtlMs),
   connectionId: config.connectionId,
   profileName: config.profileName,
   previewTtlMs: config.previewTtlMs,

@@ -13,6 +13,7 @@ export interface VkCommunity {
 }
 
 export interface VkWallPost { date?: number; text?: string; is_pinned?: number; marked_as_ads?: number }
+export interface VkCommunityPage { count: number; offset: number; items: VkCommunity[] }
 
 interface Options {
   tokenProvider: () => string;
@@ -41,8 +42,15 @@ export class VkCommunityClient {
   }
 
   async search(query: string, offset = 0, count = 100, countryId?: number, cityId?: number, type?: CommunityType): Promise<VkCommunity[]> {
+    return (await this.searchPage(query, offset, count, countryId, cityId, type)).items;
+  }
+
+  async searchPage(query: string, offset = 0, count = 100, countryId?: number, cityId?: number, type?: CommunityType): Promise<VkCommunityPage> {
     const result = await this.call("groups.search", { q: query, offset, count, ...(countryId ? { country_id: countryId } : {}), ...(cityId ? { city_id: cityId } : {}), ...(type ? { type } : {}) });
-    return asItems(result).map(asCommunity).filter((item): item is VkCommunity => item !== null);
+    const items = asItems(result).map(asCommunity).filter((item): item is VkCommunity => item !== null);
+    const source = result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : {};
+    const total = Number(source.count);
+    return { count: Number.isInteger(total) && total >= 0 ? total : items.length, offset, items };
   }
 
   async getByIds(ids: number[]): Promise<VkCommunity[]> {

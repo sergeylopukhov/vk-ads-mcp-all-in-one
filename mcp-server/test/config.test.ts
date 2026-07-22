@@ -21,16 +21,21 @@ describe("локальная конфигурация", () => {
     expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_PREVIEW_TTL_MINUTES: "61" })).toThrow("VK_ADS_PREVIEW_TTL_MINUTES");
     expect(loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_REQUIRE_WRITE_CONFIRMATION: "0" }).requireWriteConfirmation).toBe(false);
     expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_REQUIRE_WRITE_CONFIRMATION: "no" })).toThrow("VK_ADS_REQUIRE_WRITE_CONFIRMATION");
+    expect(loadConfig({ VK_ADS_TOKEN: "test-token" }).communityResearchTtlMs).toBe(30 * 24 * 60 * 60 * 1_000);
+    expect(loadConfig({ VK_ADS_TOKEN: "test-token", VK_COMMUNITY_RESEARCH_TTL_DAYS: "90" }).communityResearchTtlMs).toBe(90 * 24 * 60 * 60 * 1_000);
+    expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_COMMUNITY_RESEARCH_TTL_DAYS: "91" })).toThrow("VK_COMMUNITY_RESEARCH_TTL_DAYS");
   });
 
   it("изолирует token и audit для named profile", () => {
     expect(resolveProfileStorage("/tmp/vk-ads-mcp", "agency_a")).toEqual({
       envFile: "/tmp/vk-ads-mcp/profiles/agency_a.env",
       auditFile: "/tmp/vk-ads-mcp/profiles/agency_a.vk-ads-audit.json",
+      communityResearchFile: "/tmp/vk-ads-mcp/profiles/agency_a.vk-community-research.json",
     });
     expect(resolveProfileStorage("/tmp/vk-ads-mcp", "default")).toEqual({
       envFile: "/tmp/vk-ads-mcp/.env",
       auditFile: "/tmp/vk-ads-mcp/.vk-ads-audit.json",
+      communityResearchFile: "/tmp/vk-ads-mcp/.vk-community-research.json",
     });
     expect(() => resolveProfileStorage("/tmp/vk-ads-mcp", "../other")).toThrow("VK_ADS_PROFILE");
   });
