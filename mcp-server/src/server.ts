@@ -1771,7 +1771,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     options.allowPiiUploads,
     options.allowAgencyWrites,
   );
-  const server = new McpServer({ name: "vk-ads-mcp", version: "1.2.1" });
+  const server = new McpServer({ name: "vk-ads-mcp", version: "1.2.2" });
   const writeGate = new WriteGate(mode === "write", Date.now, randomUUID, options.auditFile, options.previewTtlMs, options.requireWriteConfirmation ?? true);
   const connectionId = options.connectionId ?? "default";
   const profileName = options.profileName ?? "default";
@@ -1824,7 +1824,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     }
     return { items: [...found.values()], search_pages: searchPages, provider_matches: providerMatches, provider_limited: providerLimited };
   };
-  const analysisBatchSize = 100;
+  const analysisBatchSize = 25;
   const analyzeCommunityCandidates = async (items: Candidate[], postsLimit: number, terms: string[], excludes: string[]): Promise<Candidate[]> => {
     for (let offset = 0; offset < items.length; offset += analysisBatchSize) for (const item of items.slice(offset, offset + analysisBatchSize)) if (!item.risk_flags.length) {
       try { item.activity = analyze(await communityClient.wall(item.id, postsLimit), terms, excludes); item.risk_flags.push(...item.activity.risk_flags); } catch { item.risk_flags.push("posts_unavailable"); }
@@ -1837,7 +1837,8 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     per_match_weights: { name_term: 8, description_term: 4, post_term: 3 }, activity_fresh_days: 30, min_posts_per_week: 1, min_thematic_post_share: 0.5, min_score: 50,
   });
   const communityResearchItemSchema = communityCandidateSchema.extend(communityScoreSchema.shape);
-  const communityResearchRunSchema = z.object({ run_id: z.string().uuid(), created_at: z.string().datetime(), expires_at: z.string().datetime(), scoring_version: z.literal("community-research-v1"), request: z.record(z.string(), z.unknown()), summary: z.object({ source_matches: z.number().int().nonnegative(), matched_filters: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), analyzed: z.number().int().nonnegative(), analysis_batch_size: z.number().int().positive(), analysis_batches: z.number().int().nonnegative(), posts_unavailable: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), rejected: z.number().int().nonnegative(), search_pages: z.number().int().positive(), incomplete: z.boolean(), incomplete_reasons: z.array(z.string()) }), passed: z.array(communityResearchItemSchema), rejected: z.array(communityResearchItemSchema) });
+  const communityResearchProgressSchema = z.object({ discovered: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), processed: z.number().int().nonnegative(), remaining: z.number().int().nonnegative(), batch_size: z.number().int().positive(), batches_total: z.number().int().nonnegative(), batches_completed: z.number().int().nonnegative() });
+  const communityResearchRunSchema = z.object({ run_id: z.string().uuid(), created_at: z.string().datetime(), expires_at: z.string().datetime(), scoring_version: z.literal("community-research-v1"), status: z.enum(["queued", "running", "completed", "failed"]), error: z.string().optional(), request: z.record(z.string(), z.unknown()), progress: communityResearchProgressSchema, summary: z.object({ source_matches: z.number().int().nonnegative(), matched_filters: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), analyzed: z.number().int().nonnegative(), analysis_batch_size: z.number().int().positive(), analysis_batches: z.number().int().nonnegative(), posts_unavailable: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), rejected: z.number().int().nonnegative(), search_pages: z.number().int().positive(), incomplete: z.boolean(), incomplete_reasons: z.array(z.string()) }), passed: z.array(communityResearchItemSchema), rejected: z.array(communityResearchItemSchema) });
   const sortedCommunityResearch = (items: Array<Candidate & { score: number; clusters: string[]; reasons: string[] }>) => items.sort((left, right) => {
     const activityOrder = (Date.parse(right.activity?.last_post_at ?? "") || 0) - (Date.parse(left.activity?.last_post_at ?? "") || 0);
     return right.score - left.score || activityOrder || (right.members_count ?? 0) - (left.members_count ?? 0) || left.id - right.id;
@@ -1864,29 +1865,95 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     const threshold = typeof rules.min_score === "number" ? rules.min_score : 0;
     const incompleteReasons = [...(discovery.provider_limited ? ["provider_search_limit"] : []), ...(discovery.items.length > selectedForAnalysis.length ? ["requested_result_limit"] : [])];
     const createdAt = new Date().toISOString();
-    const run = { run_id: randomUUID(), created_at: createdAt, expires_at: communityResearchStore?.expiresAt() ?? createdAt, scoring_version: "community-research-v1" as const, request: { keywords: input.keywords, include_terms: input.include_terms, exclude_terms: input.exclude_terms, ...(input.country_id ? { country_id: input.country_id } : {}), ...(input.city_id ? { city_id: input.city_id } : {}), ...(input.community_types ? { community_types: input.community_types } : {}), ...(input.min_members !== undefined ? { min_members: input.min_members } : {}), ...(input.max_members !== undefined ? { max_members: input.max_members } : {}), ...(input.limit !== undefined ? { limit: input.limit } : {}), posts_limit: input.posts_limit, scoring_rules: rules, clusters: input.clusters }, summary: { source_matches: discovery.provider_matches, matched_filters: discovery.items.length, selected: selectedForAnalysis.length, analyzed: communities.filter((item) => item.activity !== undefined).length, analysis_batch_size: analysisBatchSize, analysis_batches: Math.ceil(selectedForAnalysis.length / analysisBatchSize), posts_unavailable: communities.filter((item) => item.risk_flags.includes("posts_unavailable")).length, passed: items.filter((item) => item.score >= threshold).length, rejected: items.filter((item) => item.score < threshold).length, search_pages: discovery.search_pages, incomplete: incompleteReasons.length > 0, incomplete_reasons: incompleteReasons }, passed: items.filter((item) => item.score >= threshold), rejected: items.filter((item) => item.score < threshold) };
+    const run = { run_id: randomUUID(), created_at: createdAt, expires_at: communityResearchStore?.expiresAt() ?? createdAt, scoring_version: "community-research-v1" as const, status: "completed" as const, request: { keywords: input.keywords, include_terms: input.include_terms, exclude_terms: input.exclude_terms, ...(input.country_id ? { country_id: input.country_id } : {}), ...(input.city_id ? { city_id: input.city_id } : {}), ...(input.community_types ? { community_types: input.community_types } : {}), ...(input.min_members !== undefined ? { min_members: input.min_members } : {}), ...(input.max_members !== undefined ? { max_members: input.max_members } : {}), ...(input.limit !== undefined ? { limit: input.limit } : {}), posts_limit: input.posts_limit, scoring_rules: rules, clusters: input.clusters }, progress: { discovered: discovery.items.length, selected: selectedForAnalysis.length, processed: selectedForAnalysis.length, remaining: 0, batch_size: analysisBatchSize, batches_total: Math.ceil(selectedForAnalysis.length / analysisBatchSize), batches_completed: Math.ceil(selectedForAnalysis.length / analysisBatchSize) }, summary: { source_matches: discovery.provider_matches, matched_filters: discovery.items.length, selected: selectedForAnalysis.length, analyzed: communities.filter((item) => item.activity !== undefined).length, analysis_batch_size: analysisBatchSize, analysis_batches: Math.ceil(selectedForAnalysis.length / analysisBatchSize), posts_unavailable: communities.filter((item) => item.risk_flags.includes("posts_unavailable")).length, passed: items.filter((item) => item.score >= threshold).length, rejected: items.filter((item) => item.score < threshold).length, search_pages: discovery.search_pages, incomplete: incompleteReasons.length > 0, incomplete_reasons: incompleteReasons }, passed: items.filter((item) => item.score >= threshold), rejected: items.filter((item) => item.score < threshold) };
     if (persist) await communityResearchStore!.save(run);
     return run;
   };
+  const runningCommunityResearch = new Map<string, Promise<void>>();
+  const projectCommunityResearchRun = (value: Record<string, unknown>) => {
+    const { pending: _pending, ...run } = value;
+    return run;
+  };
+  const startCommunityResearch = async (input: { keywords: string[]; include_terms: string[]; exclude_terms: string[]; country_id?: number | undefined; city_id?: number | undefined; community_types?: Array<"group" | "page" | "event"> | undefined; min_members?: number | undefined; max_members?: number | undefined; limit?: number | undefined; posts_limit: number; scoring_rules?: Record<string, unknown> | undefined; clusters: Array<Record<string, unknown>> }) => {
+    if (!communityResearchStore) throw new Error("Локальное хранилище снимков исследований не настроено.");
+    const derivedTerms = [...new Set([...input.keywords, ...input.include_terms])];
+    const rules = input.scoring_rules ?? defaultCommunityScoring(derivedTerms, input.exclude_terms);
+    const terms = Array.isArray(rules.terms) ? rules.terms.filter((term): term is string => typeof term === "string") : [];
+    const excludes = Array.isArray(rules.exclude_terms) ? rules.exclude_terms.filter((term): term is string => typeof term === "string") : [];
+    const discovery = await discoverCommunityCandidates(input);
+    const selected = discovery.items.sort((left, right) => {
+      const leftMatches = matches(`${left.name}\n${left.description}`, terms).length;
+      const rightMatches = matches(`${right.name}\n${right.description}`, terms).length;
+      return rightMatches - leftMatches || (right.members_count ?? 0) - (left.members_count ?? 0) || left.id - right.id;
+    });
+    const pending = input.limit === undefined ? selected : selected.slice(0, input.limit);
+    const incompleteReasons = [...(discovery.provider_limited ? ["provider_search_limit"] : []), ...(selected.length > pending.length ? ["requested_result_limit"] : [])];
+    const createdAt = new Date().toISOString();
+    const run: Record<string, unknown> = { run_id: randomUUID(), created_at: createdAt, expires_at: communityResearchStore.expiresAt(), scoring_version: "community-research-v1", status: "queued", request: { keywords: input.keywords, include_terms: input.include_terms, exclude_terms: input.exclude_terms, ...(input.country_id ? { country_id: input.country_id } : {}), ...(input.city_id ? { city_id: input.city_id } : {}), ...(input.community_types ? { community_types: input.community_types } : {}), ...(input.min_members !== undefined ? { min_members: input.min_members } : {}), ...(input.max_members !== undefined ? { max_members: input.max_members } : {}), ...(input.limit !== undefined ? { limit: input.limit } : {}), posts_limit: input.posts_limit, scoring_rules: rules, clusters: input.clusters }, progress: { discovered: discovery.items.length, selected: pending.length, processed: 0, remaining: pending.length, batch_size: analysisBatchSize, batches_total: Math.ceil(pending.length / analysisBatchSize), batches_completed: 0 }, summary: { source_matches: discovery.provider_matches, matched_filters: discovery.items.length, selected: pending.length, analyzed: 0, analysis_batch_size: analysisBatchSize, analysis_batches: 0, posts_unavailable: 0, passed: 0, rejected: 0, search_pages: discovery.search_pages, incomplete: incompleteReasons.length > 0, incomplete_reasons: incompleteReasons }, pending, passed: [], rejected: [] };
+    await communityResearchStore.save(run as never);
+    const runId = run.run_id as string;
+    const execute = async () => {
+      try {
+        let current = await communityResearchStore.get(runId) as Record<string, unknown>;
+        current.status = "running"; await communityResearchStore.save(current as never);
+        while (Array.isArray(current.pending) && current.pending.length) {
+          const batch = (current.pending as Candidate[]).splice(0, analysisBatchSize);
+          const analyzed = await analyzeCommunityCandidates(batch, input.posts_limit, terms, excludes);
+          const scores = new Map(score(analyzed, rules, input.clusters).map((item) => [item.id, item]));
+          const threshold = typeof rules.min_score === "number" ? rules.min_score : 0;
+          const passed = current.passed as Array<Record<string, unknown>>; const rejected = current.rejected as Array<Record<string, unknown>>;
+          for (const community of analyzed) {
+            const scoreItem = scores.get(community.id)!;
+            const item = { ...community, score: scoreItem.score, clusters: scoreItem.clusters, reasons: scoreItem.reasons, risk_flags: scoreItem.risk_flags };
+            (item.score >= threshold ? passed : rejected).push(item);
+          }
+          const progress = current.progress as Record<string, number>;
+          progress.processed = (progress.processed ?? 0) + batch.length; progress.remaining = (progress.remaining ?? 0) - batch.length; progress.batches_completed = (progress.batches_completed ?? 0) + 1;
+          const summary = current.summary as Record<string, number>;
+          summary.analyzed = progress.processed ?? 0; summary.analysis_batches = progress.batches_completed ?? 0; summary.posts_unavailable = [...passed, ...rejected].filter((item) => Array.isArray(item.risk_flags) && item.risk_flags.includes("posts_unavailable")).length; summary.passed = passed.length; summary.rejected = rejected.length;
+          current.passed = sortedCommunityResearch(passed as never); current.rejected = sortedCommunityResearch(rejected as never);
+          if (!current.pending.length) current.status = "completed";
+          await communityResearchStore.save(current as never);
+        }
+      } catch {
+        const current = await communityResearchStore.get(runId) as Record<string, unknown>;
+        current.status = "failed"; current.error = "Фоновый анализ остановился из-за ошибки VK API. Запуск сохранён с обработанными пакетами.";
+        await communityResearchStore.save(current as never);
+      } finally { runningCommunityResearch.delete(runId); }
+    };
+    const task = execute(); runningCommunityResearch.set(runId, task); void task;
+    return projectCommunityResearchRun(run);
+  };
+  const communityResearchStartSchema = z.object({ run_id: z.string().uuid(), status: z.enum(["queued", "running", "completed", "failed"]), progress: communityResearchProgressSchema, summary: z.object({ source_matches: z.number().int().nonnegative(), matched_filters: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), analyzed: z.number().int().nonnegative(), analysis_batch_size: z.number().int().positive(), analysis_batches: z.number().int().nonnegative(), posts_unavailable: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), rejected: z.number().int().nonnegative(), search_pages: z.number().int().positive(), incomplete: z.boolean(), incomplete_reasons: z.array(z.string()) }) });
+  server.registerTool("vk_start_community_research", {
+    title: "Запустить фоновое исследование сообществ VK", description: "Основной read-only запуск: быстро сохраняет очередь отфильтрованных кандидатов и анализирует их в фоне пакетами по 25. Возвращает run_id для проверки прогресса.",
+    inputSchema: communityResearchInputSchema, outputSchema: communityResearchStartSchema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false },
+  }, async (input) => textAndData(await startCommunityResearch(input), "Фоновое исследование запущено; рекламный кабинет не изменялся."));
   server.registerTool("vk_research_communities", {
-    title: "Исследовать сообщества VK", description: "Основной read-only инструмент: обходит выдачу поиска, анализирует все отобранные сообщества пакетами по 100 (либо явно заданное число limit), прозрачно оценивает их и сохраняет снимок по run_id.",
-    inputSchema: communityResearchInputSchema, outputSchema: communityResearchRunSchema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false },
+    title: "Запустить исследование сообществ VK", description: "Совместимый alias фонового запуска: возвращает run_id сразу, а анализ идёт пакетами по 25 в фоне.",
+    inputSchema: communityResearchInputSchema, outputSchema: communityResearchStartSchema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false },
   }, async (input) => {
-    const run = await runCommunityResearch(input, true);
-    return textAndData(run, "Исследование сообществ завершено и сохранено локально; рекламный кабинет не изменялся.");
+    return textAndData(await startCommunityResearch(input), "Фоновое исследование запущено; рекламный кабинет не изменялся.");
+  });
+  server.registerTool("vk_get_community_research_progress", {
+    title: "Получить прогресс исследования сообществ", description: "Только чтение: показывает состояние, число обработанных и оставшихся кандидатов фонового запуска по run_id.",
+    inputSchema: { run_id: z.string().uuid() }, outputSchema: communityResearchStartSchema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  }, async ({ run_id }) => {
+    if (!communityResearchStore) throw new Error("Локальное хранилище снимков исследований не настроено.");
+    return textAndData(projectCommunityResearchRun(await communityResearchStore.get(run_id) as Record<string, unknown>), "Прогресс исследования получен из локального хранилища.");
   });
   server.registerTool("vk_get_community_research_run", {
     title: "Получить снимок исследования сообществ", description: "Только чтение: возвращает сохранённый снимок конкретного запуска по run_id без повторных запросов к VK.",
     inputSchema: { run_id: z.string().uuid() }, outputSchema: communityResearchRunSchema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   }, async ({ run_id }) => {
     if (!communityResearchStore) throw new Error("Локальное хранилище снимков исследований не настроено.");
-    return textAndData(await communityResearchStore.get(run_id), "Снимок исследования получен из локального хранилища.");
+    return textAndData(projectCommunityResearchRun(await communityResearchStore.get(run_id) as Record<string, unknown>), "Снимок исследования получен из локального хранилища.");
   });
   server.registerTool("vk_find_community_candidates", {
     title: "Найти и оценить сообщества VK", description: "Только чтение: за один вызов ищет сообщества, анализирует последние публичные записи и возвращает прозрачный рейтинг. Подходит для обычного запроса без ручной цепочки инструментов.",
     inputSchema: communityResearchInputSchema, outputSchema: { items: z.array(communityCandidateSchema.extend(communityScoreSchema.shape)) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   }, async (input) => {
-    const run = await runCommunityResearch(input, false);
+    const run = await runCommunityResearch({ ...input, limit: input.limit ?? 100 }, false);
     const items = [...run.passed, ...run.rejected];
     return textAndData({ items }, "Сообщества найдены, проанализированы и оценены без изменений в рекламном кабинете.");
   });
