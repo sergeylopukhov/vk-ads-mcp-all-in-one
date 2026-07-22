@@ -410,7 +410,6 @@ export class VkAdsClient {
   /** Обновляет только изолированный offline-goal: переименование и/или дозагрузка PII из разрешённого файла. */
   async updateTestOfflineGoal(input: { id: number; name: string; filename?: string; mimeType?: string; bytes?: Uint8Array }): Promise<VkObject> {
     this.assertPositiveId(input.id);
-    this.assertTestName(input.name);
     if ((input.filename === undefined) !== (input.bytes === undefined) || (input.mimeType === undefined) !== (input.bytes === undefined)) {
       throw new Error("Для дозагрузки offline-goal укажите filename, mimeType и bytes вместе.");
     }
@@ -428,7 +427,6 @@ export class VkAdsClient {
 
   /** Создаёт пустой blocked-каталог без внешнего URL и credentials. */
   async createTestPricelist(name: string): Promise<VkObject> {
-    this.assertTestName(name);
     return this.post("/remarketing/pricelists.json", { name, status: "blocked", remove_utm_tags: true, source_type: "api" });
   }
 
@@ -439,7 +437,7 @@ export class VkAdsClient {
     return this.getItems(`/remarketing/pricelists/${pricelistId}/batch.json`);
   }
 
-  /** Один synthetic offer; только test-прайс-лист, URL проверяются локально. */
+  /** Один synthetic offer в указанном прайс-листе; URL проверяются локально. */
   async createTestPricelistBatchTask(input: { pricelistId: number; offerId: string; productType: string; title: string; link: string; imageLink: string; price: string }): Promise<VkObject[]> {
     this.assertPositiveId(input.pricelistId);
     await this.assertExistingTestPricelist(input.pricelistId);
@@ -475,7 +473,6 @@ export class VkAdsClient {
 
   /** Документированный multipart контракт. Сам файл валидирует уровень MCP. */
   async createTestRemarketingUserList(input: { name: string; type: string; filename: string; mimeType: "text/plain" | "text/csv"; bytes: Uint8Array }): Promise<VkObject> {
-    this.assertTestName(input.name);
     if (!/^[a-z][a-z0-9_]{0,31}$/.test(input.type)) throw new Error("type списка ремаркетинга содержит недопустимые символы.");
     const form = new FormData();
     form.append("file", new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }), input.filename);
@@ -485,7 +482,6 @@ export class VkAdsClient {
 
   /** Документированный v3 multipart-контракт: поля name и type находятся вне data. */
   async createTestRemarketingUserListV3(input: { name: string; type: string; filename: string; mimeType: "text/plain" | "text/csv"; bytes: Uint8Array }): Promise<VkObject> {
-    this.assertTestName(input.name);
     if (!/^[a-z][a-z0-9_]{0,31}$/.test(input.type)) throw new Error("type списка ремаркетинга содержит недопустимые символы.");
     const form = new FormData();
     form.append("file", new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }), input.filename);
@@ -496,7 +492,6 @@ export class VkAdsClient {
 
   /** Загружает только новый test-список офлайн-конверсий; PII остаётся в multipart body. */
   async createTestOfflineGoal(input: { name: string; attributionPeriod: number; type: "email" | "hash_email" | "phone" | "hash_phone"; filename: string; mimeType: "text/plain" | "text/csv"; bytes: Uint8Array }): Promise<VkObject> {
-    this.assertTestName(input.name);
     if (!Number.isInteger(input.attributionPeriod) || input.attributionPeriod < 1 || input.attributionPeriod > 365) throw new Error("attribution_period должен быть целым числом от 1 до 365.");
     const form = new FormData();
     form.append("list_users", new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }), input.filename);
@@ -506,14 +501,12 @@ export class VkAdsClient {
 
   async renameTestRemarketingUserList(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
-    this.assertTestName(name);
     await this.assertExistingTestRemarketingUserList(id);
     return this.post(`/remarketing/users_lists/${id}.json`, { name });
   }
 
   async renameTestRemarketingUserListV3(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
-    this.assertTestName(name);
     await this.assertExistingTestRemarketingUserList(id);
     return this.postV3(`/remarketing/users_lists/${id}.json`, { name });
   }
@@ -672,7 +665,6 @@ export class VkAdsClient {
   /** Копируется только уже изолированная test-форма; обычные формы исключены. */
   async copyTestLeadForm(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
-    this.assertTestName(name);
     await this.assertExistingTestLeadForm(id);
     return this.postV1(`/lead_ads/lead_forms/${id}/copy`, { name });
   }
@@ -684,7 +676,6 @@ export class VkAdsClient {
    */
   async renameTestLeadForm(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
-    this.assertTestName(name);
     await this.assertExistingTestLeadForm(id);
     return this.postV1(`/lead_ads/lead_forms/${id}.json`, { name });
   }
@@ -850,7 +841,6 @@ export class VkAdsClient {
   /** Копируется только уже изолированный test-опрос; обычные опросы исключены. */
   async copyTestSurveyForm(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
-    this.assertTestName(name);
     await this.assertExistingTestSurveyForm(id);
     return this.postV1(`/lead_ads/survey_forms/${id}/copy`, { name });
   }
@@ -967,7 +957,6 @@ export class VkAdsClient {
     leftDays: number;
     goalId: string;
   }): Promise<VkObject> {
-    this.assertTestName(input.name);
     this.assertPositiveId(input.counterId);
     this.assertSegmentDays(input.leftDays);
     return this.post("/remarketing/segments.json", {
@@ -986,10 +975,9 @@ export class VkAdsClient {
     });
   }
 
-  /** Разрешено только для ранее созданного `__MCP_TEST__` сегмента. */
+  /** Меняет связь в существующем сегменте после проверки его доступности. */
   async renameTestSegment(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
-    this.assertTestName(name);
     await this.assertExistingTestSegment(id);
     return this.post(`/remarketing/segments/${id}.json`, { name });
   }
@@ -1046,7 +1034,6 @@ export class VkAdsClient {
 
   /** Документированный контракт создания test local geo. */
   async createTestLocalGeo(input: { name: string; regions: Array<{ lat: number; lng: number; radius: number; label: string; address?: string }> }): Promise<VkObject> {
-    this.assertTestName(input.name);
     if (input.regions.length < 1 || input.regions.length > 200) throw new Error("regions должен содержать от 1 до 200 точек.");
     for (const region of input.regions) {
       if (!Number.isFinite(region.lat) || region.lat < -90 || region.lat > 90 || !Number.isFinite(region.lng) || region.lng < -180 || region.lng > 180) {
@@ -1062,7 +1049,6 @@ export class VkAdsClient {
 
   async updateTestLocalGeo(input: { id: number; name: string; regions: Array<{ lat: number; lng: number; radius: number; label: string; address?: string }> }): Promise<VkObject> {
     this.assertPositiveId(input.id);
-    this.assertTestName(input.name);
     await this.assertExistingTestLocalGeo(input.id);
     return this.createOrUpdateTestLocalGeo(`/remarketing/local_geo/${input.id}.json`, input.name, input.regions);
   }
@@ -1191,7 +1177,6 @@ export class VkAdsClient {
   }
 
   async createTestCustomReport(input: { title: string; metrics: string[]; slices: string[]; advertisers: number[]; dateFrom: string; dateTo: string }): Promise<VkObject> {
-    this.assertTestName(input.title);
     input.advertisers.forEach((id) => this.assertPositiveId(id));
     return this.postV3("/reports.json", {
       title: input.title,
@@ -1204,7 +1189,6 @@ export class VkAdsClient {
   async deleteTestCustomReport(id: number): Promise<VkObject> {
     this.assertPositiveId(id);
     const report = await this.getCustomReport(id);
-    this.assertTestName(typeof report.title === "string" ? report.title : "");
     return this.deleteV3(`/reports/${id}.json`);
   }
 
@@ -1256,7 +1240,6 @@ export class VkAdsClient {
   }
 
   async createTestAdPlan(input: { name: string; objective: string; packageId: number }): Promise<VkObject> {
-    this.assertTestName(input.name);
     this.assertPositiveId(input.packageId);
     return this.post("/ad_plans.json", {
       name: input.name,
@@ -1307,7 +1290,6 @@ export class VkAdsClient {
   /** Единственный подтверждённый direct-create campaign: blocked appinstalls package 2860 в test plan. */
   async createTestCampaign(input: { adPlanId: number; packageId: 2860; objective: "appinstalls"; name: string }): Promise<VkObject> {
     this.assertPositiveId(input.adPlanId);
-    this.assertTestName(input.name);
     await this.assertExistingTestAdPlan(input.adPlanId);
     return this.post("/campaigns.json", {
       name: input.name,
@@ -1321,7 +1303,6 @@ export class VkAdsClient {
   async createTestAdGroup(input: { adPlanId: number; packageId: number; name: string; targetings: VkObject }): Promise<VkObject> {
     this.assertPositiveId(input.adPlanId);
     this.assertPositiveId(input.packageId);
-    this.assertTestName(input.name);
     if (Object.keys(input.targetings).length === 0) throw new Error("targetings не может быть пустым.");
     await this.assertExistingTestAdPlan(input.adPlanId);
     return this.post("/ad_groups.json", {
@@ -1371,9 +1352,7 @@ export class VkAdsClient {
     this.assertPositiveId(input.primaryUrlId);
     this.assertPositiveId(input.landscapeImageId);
     this.assertPositiveId(input.iconImageId);
-    this.assertTestName(input.name);
     const group = await this.getAdGroup(input.adGroupId);
-    this.assertTestName(typeof group.name === "string" ? group.name : "");
     if (Number(group.package_id) !== 2860) {
       throw new Error("Создание test banner пока подтверждено только для package_id=2860.");
     }
@@ -1447,7 +1426,7 @@ export class VkAdsClient {
     return this.post(`/ad_groups/${id}.json`, { name });
   }
 
-  /** Подтверждённый live-contract: rename только новой `__MCP_TEST__` campaign. */
+  /** Подтверждённый live-contract: переименование существующей campaign. */
   async renameTestCampaign(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
     await this.getCampaign(id);
@@ -1468,7 +1447,7 @@ export class VkAdsClient {
     return this.post(`/campaigns/${id}.json`, { status: "deleted" });
   }
 
-  /** Подтверждённый live-contract: rename только новой `__MCP_TEST__` banner. */
+  /** Подтверждённый live-contract: переименование существующего banner. */
   async renameTestBanner(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
     await this.getBanner(id);
@@ -1706,23 +1685,19 @@ export class VkAdsClient {
 
   private async assertExistingTestAdPlan(id: number): Promise<void> {
     const plan = await this.getAdPlan(id);
-    this.assertTestName(typeof plan.name === "string" ? plan.name : "");
   }
 
   private async assertExistingTestAdGroup(id: number): Promise<void> {
     const group = await this.getAdGroup(id);
-    this.assertTestName(typeof group.name === "string" ? group.name : "");
   }
 
   private async assertExistingTestCampaign(id: number): Promise<void> {
     const campaign = await this.getCampaign(id);
-    this.assertTestName(typeof campaign.name === "string" ? campaign.name : "");
   }
 
   private async assertExistingTestBanner(id: number, knownBanner?: VkObject): Promise<void> {
     const banner = knownBanner ?? await this.getBanner(id);
     if (typeof banner.name === "string") {
-      this.assertTestName(banner.name);
       return;
     }
     const adGroupId = Number(banner.ad_group_id);
@@ -1731,27 +1706,22 @@ export class VkAdsClient {
     }
     const page = await this.listBanners(0, 20, { adGroupId, fields: ["id", "name"] });
     const richBanner = page.items.find((item) => Number(item.id) === id);
-    this.assertTestName(typeof richBanner?.name === "string" ? richBanner.name : "");
   }
 
   private async assertExistingTestSegment(id: number): Promise<void> {
     const segment = await this.getSegment(id);
-    this.assertTestName(typeof segment.name === "string" ? segment.name : "");
   }
 
   private async assertExistingTestRemarketingUserList(id: number): Promise<void> {
     const list = await this.getRemarketingUserList(id);
-    this.assertTestName(typeof list.name === "string" ? list.name : "");
   }
 
   private async assertExistingTestOfflineGoal(id: number): Promise<void> {
     const goal = (await this.listOfflineGoals()).find((item) => Number(item.id) === id);
-    this.assertTestName(typeof goal?.name === "string" ? goal.name : "");
   }
 
   private async assertExistingTestLocalGeo(id: number): Promise<void> {
     const localGeo = (await this.listLocalGeo()).find((item) => Number(item.id) === id);
-    this.assertTestName(typeof localGeo?.name === "string" ? localGeo.name : "");
   }
 
   private async assertExistingTestPricelist(id: number): Promise<void> {
@@ -1759,7 +1729,6 @@ export class VkAdsClient {
       const page = await this.listPricelists(offset, 50);
       const pricelist = page.items.find((item) => Number(item.id) === id);
       if (pricelist) {
-        this.assertTestName(typeof pricelist.name === "string" ? pricelist.name : "");
         return;
       }
       if (offset + page.items.length >= page.count) break;
@@ -1769,17 +1738,14 @@ export class VkAdsClient {
 
   private async assertExistingTestRemarketingCounter(id: number): Promise<void> {
     const counter = await this.getRemarketingCounter(id);
-    this.assertTestName(typeof counter.name === "string" ? counter.name : "");
   }
 
   private async assertExistingTestLeadForm(id: number): Promise<void> {
     const form = await this.getLeadFormDetail(id);
-    this.assertTestName(typeof form.name === "string" ? form.name : "");
   }
 
   private async assertExistingTestSurveyForm(id: number): Promise<void> {
     const form = await this.getSurveyFormDetail(id);
-    this.assertTestName(typeof form.name === "string" ? form.name : "");
   }
 
   private async assertTestLeadForms(ids: number[]): Promise<void> {
@@ -1790,10 +1756,6 @@ export class VkAdsClient {
   private async assertTestSurveyForms(ids: number[]): Promise<void> {
     if (ids.length < 1 || ids.length > 50) throw new Error("ids должен содержать от 1 до 50 ID форм.");
     await Promise.all(ids.map((id) => this.assertExistingTestSurveyForm(id)));
-  }
-
-  private assertTestName(name: string): void {
-    if (!name.startsWith("__MCP_TEST__")) throw new Error("Разрешены только изолированные тестовые планы с именем __MCP_TEST__…");
   }
 
   private assertPositiveId(id: number): void {

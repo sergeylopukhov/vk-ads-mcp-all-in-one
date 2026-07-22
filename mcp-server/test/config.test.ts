@@ -42,23 +42,14 @@ describe("локальная конфигурация", () => {
   it("в write-режиме включает все реализованные категории записи без отдельных opt-in", () => {
     const config = loadConfig({
       VK_ADS_TOKEN: "test-token",
-      VK_ADS_TEST_IOS_APP_IDS: "10,20,10",
-      VK_ADS_TEST_MOBILE_APP_IDS: "30,40,30",
-      VK_ADS_TEST_COUNTER_IDS: "50,60,50",
       VK_ADS_MODE: "write",
     });
 
     expect(config.allowSharingKeyRevoke).toBe(true);
     expect(config.allowSkAdNetworkWrites).toBe(true);
-    expect(config.skAdNetworkTestAppIds).toEqual([10, 20]);
     expect(config.allowInAppEventCategoryWrites).toBe(true);
-    expect(config.inAppEventTestAppIds).toEqual([30, 40]);
     expect(config.allowRemarketingCounterWrites).toBe(true);
-    expect(config.remarketingCounterTestIds).toEqual([50, 60]);
     expect(loadConfig({ VK_ADS_TOKEN: "test-token" }).allowRemarketingCounterWrites).toBe(false);
-    expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_TEST_IOS_APP_IDS: "1,not-an-id" })).toThrow("VK_ADS_TEST_IOS_APP_IDS");
-    expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_TEST_MOBILE_APP_IDS: "1,not-an-id" })).toThrow("VK_ADS_TEST_MOBILE_APP_IDS");
-    expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_TEST_COUNTER_IDS: "1,not-an-id" })).toThrow("VK_ADS_TEST_COUNTER_IDS");
   });
 
   it("держит внешний ключ шаринга только в локальной конфигурации", () => {

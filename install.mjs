@@ -318,14 +318,6 @@ async function askOptionalAbsolutePath(readline, question, defaultValue = "") {
   }
 }
 
-async function askPositiveIds(readline, question, defaultValue = "") {
-  while (true) {
-    const value = await ask(readline, question, defaultValue);
-    if (!value || value.split(",").every((item) => Number.isInteger(Number(item.trim())) && Number(item.trim()) > 0)) return value;
-    console.log("Укажите положительные ID через запятую или оставьте поле пустым.");
-  }
-}
-
 const COMMUNITY_REDIRECT_URI = "https://vk.ru/blank.html";
 const COMMUNITY_LEGACY_REDIRECT_URI = "https://oauth.vk.ru/blank.html";
 const DEFAULT_COMMUNITY_LEGACY_CLIENT_ID = "6270012";
@@ -451,11 +443,8 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
   let allowAgencyWrites = current.VK_ADS_ALLOW_AGENCY_WRITES === "1";
   let allowSharingKeyRevoke = current.VK_ADS_ALLOW_SHARING_KEY_REVOKE === "1";
   let allowSkAdNetworkWrites = current.VK_ADS_ALLOW_SKADNETWORK_WRITES === "1";
-  let skAdNetworkTestAppIds = current.VK_ADS_TEST_IOS_APP_IDS || "";
   let allowInAppEventCategoryWrites = current.VK_ADS_ALLOW_INAPP_EVENT_CATEGORY_WRITES === "1";
-  let inAppEventTestAppIds = current.VK_ADS_TEST_MOBILE_APP_IDS || "";
   let allowRemarketingCounterWrites = current.VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES === "1";
-  let remarketingCounterTestIds = current.VK_ADS_TEST_COUNTER_IDS || "";
   const enableCommunityTools = await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", Boolean(current.VK_API_TOKEN));
   const authorizeCommunities = enableCommunityTools && (!current.VK_API_TOKEN || await askBoolean(readline, "Авторизовать токен сообществ заново?", false));
   let communityTokenType = current.VK_API_TOKEN_TYPE || (current.VK_API_REFRESH_TOKEN ? "vk_id" : "legacy");
@@ -480,11 +469,8 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
     allowAgencyWrites = await askBoolean(readline, "Разрешить изменения агентских клиентов?", current.VK_ADS_ALLOW_AGENCY_WRITES === "1");
     allowSharingKeyRevoke = await askBoolean(readline, "Разрешить отзыв ключей шаринга?", current.VK_ADS_ALLOW_SHARING_KEY_REVOKE === "1");
     allowSkAdNetworkWrites = await askBoolean(readline, "Разрешить изменения SKAdNetwork?", current.VK_ADS_ALLOW_SKADNETWORK_WRITES === "1");
-    if (allowSkAdNetworkWrites) skAdNetworkTestAppIds = await askPositiveIds(readline, "Разрешённые тестовые iOS app ID через запятую", current.VK_ADS_TEST_IOS_APP_IDS || "");
     allowInAppEventCategoryWrites = await askBoolean(readline, "Разрешить изменение категорий in-app событий?", current.VK_ADS_ALLOW_INAPP_EVENT_CATEGORY_WRITES === "1");
-    if (allowInAppEventCategoryWrites) inAppEventTestAppIds = await askPositiveIds(readline, "Разрешённые тестовые mobile app ID через запятую", current.VK_ADS_TEST_MOBILE_APP_IDS || "");
     allowRemarketingCounterWrites = await askBoolean(readline, "Разрешить изменение счётчиков ремаркетинга?", current.VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES === "1");
-    if (allowRemarketingCounterWrites) remarketingCounterTestIds = await askPositiveIds(readline, "Разрешённые тестовые ID счётчиков через запятую", current.VK_ADS_TEST_COUNTER_IDS || "");
   }
   readline.close();
   const clientSecret = replaceSecret ? await promptHidden("VK Ads client_secret (ввод скрыт): ") : current.VK_ADS_CLIENT_SECRET;
@@ -507,11 +493,8 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
     VK_ADS_ALLOW_AGENCY_WRITES: allowAgencyWrites ? "1" : "0",
     VK_ADS_ALLOW_SHARING_KEY_REVOKE: allowSharingKeyRevoke ? "1" : "0",
     VK_ADS_ALLOW_SKADNETWORK_WRITES: allowSkAdNetworkWrites ? "1" : "0",
-    VK_ADS_TEST_IOS_APP_IDS: skAdNetworkTestAppIds,
     VK_ADS_ALLOW_INAPP_EVENT_CATEGORY_WRITES: allowInAppEventCategoryWrites ? "1" : "0",
-    VK_ADS_TEST_MOBILE_APP_IDS: inAppEventTestAppIds,
     VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES: allowRemarketingCounterWrites ? "1" : "0",
-    VK_ADS_TEST_COUNTER_IDS: remarketingCounterTestIds,
     VK_API_TOKEN: enableCommunityTools ? (communityAuth?.accessToken || current.VK_API_TOKEN || "") : "",
     VK_API_TOKEN_TYPE: enableCommunityTools ? (communityAuth?.tokenType || communityTokenType) : "",
     VK_API_REFRESH_TOKEN: enableCommunityTools ? (communityAuth?.refreshToken || (communityTokenType === "vk_id" ? current.VK_API_REFRESH_TOKEN || "" : "")) : "",

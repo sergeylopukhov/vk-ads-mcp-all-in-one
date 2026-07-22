@@ -534,15 +534,15 @@ describe("MCP-контракт", () => {
   it("изменяет доступный счётчик через preview", async () => {
     const server = createServer({
       ...createClientStub(),
-      getRemarketingCounter: async () => ({ id: 77, name: "__MCP_TEST__ counter" }),
-      listRemarketingCounters: async () => [{ id: 77, name: "__MCP_TEST__ counter" }],
-      renameTestRemarketingCounter: async () => ({ id: 77, name: "__MCP_TEST__ renamed" }),
+      getRemarketingCounter: async () => ({ id: 77, name: "Рабочий counter" }),
+      listRemarketingCounters: async () => [{ id: 77, name: "Рабочий counter" }],
+      renameTestRemarketingCounter: async () => ({ id: 77, name: "Рабочий renamed" }),
     } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
-    const preview = await client.callTool({ name: "vk_update_remarketing_counter", arguments: { counter_id: 77, name: "__MCP_TEST__ renamed" } });
+    const preview = await client.callTool({ name: "vk_update_remarketing_counter", arguments: { counter_id: 77, name: "Рабочий renamed" } });
     const previewData = preview.structuredContent as { id: string; confirmation_statement: string };
     const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: previewData.id, confirmation_statement: previewData.confirmation_statement } });
     expect(executed.structuredContent).toMatchObject({ result: { id: 77 }, after: { reread: true, item: { id: 77 } } });
@@ -554,8 +554,8 @@ describe("MCP-контракт", () => {
     const server = createServer({
       ...createClientStub(),
       listRemarketingCounters: async () => [{ id: 77, name: "Production counter" }],
-      listRemarketingCounterGoals: async () => [{ id: 12, name: "__MCP_TEST__ goal" }],
-      updateTestCounterGoal: async () => ({ id: 12, name: "__MCP_TEST__ goal renamed", value: 3, goal_type: "purchase" }),
+      listRemarketingCounterGoals: async () => [{ id: 12, name: "Рабочий goal" }],
+      updateTestCounterGoal: async () => ({ id: 12, name: "Рабочий goal renamed", value: 3, goal_type: "purchase" }),
     } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -777,7 +777,7 @@ describe("MCP-контракт", () => {
   });
 
   it("не готовит banner preview без локально подтверждённых content ID", async () => {
-    const server = createServer({ ...createClientStub(), getAdGroup: async () => ({ id: 11, name: "__MCP_TEST__ group", package_id: 2860 }) } as unknown as VkAdsClient, "write");
+    const server = createServer({ ...createClientStub(), getAdGroup: async () => ({ id: 11, name: "Рабочий group", package_id: 2860 }) } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -785,7 +785,7 @@ describe("MCP-контракт", () => {
     const preview = await client.callTool({ name: "write_preview", arguments: {
       operation: "create_test_banner",
       payload: {
-        ad_group_id: 11, name: "__MCP_TEST__ banner", primary_url_id: 12,
+        ad_group_id: 11, name: "Рабочий banner", primary_url_id: 12,
         landscape_image_id: 13, icon_image_id: 14, title: "Тест", text: "Тестовый текст", cta: "install",
       },
     } });
@@ -799,7 +799,7 @@ describe("MCP-контракт", () => {
     const server = createServer({
       ...createClientStub(),
       createAdPlan: async () => ({ id: 10 }),
-      getAdPlan: async () => ({ id: 10, name: "__MCP_TEST__ created", status: "blocked" }),
+      getAdPlan: async () => ({ id: 10, name: "Рабочий created", status: "blocked" }),
       listPackages: async () => [{ id: 1, objective: ["traffic"] }],
     } as unknown as VkAdsClient, "write", { connectionId: "agency-client-a", profileName: "agency_a" });
     const client = new Client({ name: "test-client", version: "0.0.0" });
@@ -833,18 +833,18 @@ describe("MCP-контракт", () => {
   it("копирует лид-форму только через preview и скрывает реквизиты формы", async () => {
     const server = createServer({
       ...createClientStub(),
-      getLeadFormDetail: async (id: number) => ({ id, name: "__MCP_TEST__ source", notification_email: "private@example.test" }),
-      copyTestLeadForm: async () => ({ id: 71, name: "__MCP_TEST__ copy", notification_email: "private@example.test" }),
+      getLeadFormDetail: async (id: number) => ({ id, name: "Рабочий source", notification_email: "private@example.test" }),
+      copyTestLeadForm: async () => ({ id: 71, name: "Рабочий copy", notification_email: "private@example.test" }),
     } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
-    const preview = await client.callTool({ name: "lead_form_copy", arguments: { form_id: 70, name: "__MCP_TEST__ copy" } });
+    const preview = await client.callTool({ name: "lead_form_copy", arguments: { form_id: 70, name: "Рабочий copy" } });
     const data = preview.structuredContent as { id: string; confirmation_statement: string; preflight: { before: Record<string, unknown> } };
-    expect(data.preflight.before).toEqual({ id: 70, name: "__MCP_TEST__ source" });
+    expect(data.preflight.before).toEqual({ id: 70, name: "Рабочий source" });
     const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
-    expect(executed.structuredContent).toMatchObject({ result: { id: 71, name: "__MCP_TEST__ copy" }, after: { reread: true, item: { id: 71 } } });
+    expect(executed.structuredContent).toMatchObject({ result: { id: 71, name: "Рабочий copy" }, after: { reread: true, item: { id: 71 } } });
     expect(JSON.stringify(executed.structuredContent)).not.toContain("private@example.test");
 
     await Promise.all([client.close(), server.close()]);
@@ -873,7 +873,7 @@ describe("MCP-контракт", () => {
   });
 
   it("переименовывает только test-лид-форму через preview и не передаёт PII-секции", async () => {
-    let name = "__MCP_TEST__ source";
+    let name = "Рабочий source";
     const server = createServer({
       ...createClientStub(),
       getLeadFormDetail: async (id: number) => ({ id, name, notification_email: "private@example.test", contact_fields: ["phone"] }),
@@ -886,19 +886,19 @@ describe("MCP-контракт", () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
-    const preview = await client.callTool({ name: "vk_update_lead_form", arguments: { form_id: 70, name: "__MCP_TEST__ renamed" } });
+    const preview = await client.callTool({ name: "vk_update_lead_form", arguments: { form_id: 70, name: "Рабочий renamed" } });
     const data = preview.structuredContent as { id: string; confirmation_statement: string; preflight: { before: Record<string, unknown>; expected_change: string } };
-    expect(data.preflight.before).toEqual({ id: 70, name: "__MCP_TEST__ source" });
+    expect(data.preflight.before).toEqual({ id: 70, name: "Рабочий source" });
     expect(data.preflight.expected_change).toContain("не изменяются");
     const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
-    expect(executed.structuredContent).toMatchObject({ result: { id: 70, name: "__MCP_TEST__ renamed" }, after: { reread: true, item: { id: 70, name: "__MCP_TEST__ renamed" } } });
+    expect(executed.structuredContent).toMatchObject({ result: { id: 70, name: "Рабочий renamed" }, after: { reread: true, item: { id: 70, name: "Рабочий renamed" } } });
     expect(JSON.stringify(executed.structuredContent)).not.toContain("private@example.test");
     expect(JSON.stringify(executed.structuredContent)).not.toContain("phone");
 
     await Promise.all([client.close(), server.close()]);
   });
 
-  it("проводит сегмент только через preview и test-префикс", async () => {
+  it("проводит сегмент только через preview", async () => {
     const calls: Array<{ source: number; days: number }> = [];
     const server = createServer({
       ...createClientStub(),
@@ -908,15 +908,15 @@ describe("MCP-контракт", () => {
         calls.push({ source: counterId, days: leftDays });
         return { id: 81 };
       },
-      getSegment: async () => ({ id: 81, name: "__MCP_TEST__ segment", pass_condition: 1 }),
+      getSegment: async () => ({ id: 81, name: "Рабочий segment", pass_condition: 1 }),
     } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
-    const preview = await client.callTool({ name: "vk_create_segment", arguments: { name: "__MCP_TEST__ segment", counter_id: 99, left_days: 30, goal_id: "uss" } });
+    const preview = await client.callTool({ name: "vk_create_segment", arguments: { name: "Рабочий segment", counter_id: 99, left_days: 30, goal_id: "uss" } });
     const data = preview.structuredContent as { id: string; confirmation_statement: string; preflight: { expected_change: string } };
-    expect(data.preflight.expected_change).toContain("__MCP_TEST__");
+    expect(data.preflight.expected_change).toContain("Создать сегмент");
     const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
     expect(executed.structuredContent).toMatchObject({ operation: "create_test_segment", after: { reread: true, item: { id: 81 } } });
     expect(calls).toEqual([{ source: 99, days: 30 }]);
@@ -924,11 +924,11 @@ describe("MCP-контракт", () => {
     await Promise.all([client.close(), server.close()]);
   });
 
-  it("не позволяет mass-action вывести __MCP_TEST__ plan из blocked", async () => {
+  it("не позволяет mass-action вывести Рабочий plan из blocked", async () => {
     const calls: number[][] = [];
     const server = createServer({
       ...createClientStub(),
-      getAdPlan: async (id: number) => ({ id, name: `__MCP_TEST__ ${id}`, status: "blocked" }),
+      getAdPlan: async (id: number) => ({ id, name: `Рабочий ${id}`, status: "blocked" }),
       blockTestAdPlans: async (ids: number[]) => { calls.push(ids); return { ids, status: "blocked" }; },
     } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
@@ -945,11 +945,11 @@ describe("MCP-контракт", () => {
     await Promise.all([client.close(), server.close()]);
   });
 
-  it("ограничивает group mass-action только __MCP_TEST__ ID и статусом blocked", async () => {
+  it("ограничивает group mass-action только Рабочий ID и статусом blocked", async () => {
     const calls: number[][] = [];
     const server = createServer({
       ...createClientStub(),
-      getAdGroup: async (id: number) => ({ id, name: `__MCP_TEST__ ${id}`, status: "blocked" }),
+      getAdGroup: async (id: number) => ({ id, name: `Рабочий ${id}`, status: "blocked" }),
       blockTestAdGroups: async (ids: number[]) => { calls.push(ids); return { ids, status: "blocked" }; },
     } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
@@ -968,7 +968,7 @@ describe("MCP-контракт", () => {
     const calls: number[][] = [];
     const server = createServer({
       ...createClientStub(),
-      getBanner: async (id: number) => ({ id, name: `__MCP_TEST__ ${id}`, status: "blocked" }),
+      getBanner: async (id: number) => ({ id, name: `Рабочий ${id}`, status: "blocked" }),
       manageBanners: async (items: Array<{ id: number }>) => { calls.push(items.map((item) => item.id)); return { items }; },
     } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
@@ -1086,7 +1086,7 @@ describe("MCP-контракт", () => {
     const sent: number[] = [];
     const server = createServer({
       ...createClientStub(),
-      getLeadFormDetail: async (id: number) => ({ id, name: "__MCP_TEST__ form", notification_email: "private@example.test" }),
+      getLeadFormDetail: async (id: number) => ({ id, name: "Рабочий form", notification_email: "private@example.test" }),
       sendTestLead: async (id: number) => { sent.push(id); },
     } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
@@ -1107,7 +1107,7 @@ describe("MCP-контракт", () => {
     const revoked: string[] = [];
     const server = createServer({
       ...createClientStub(),
-      getSegment: async () => ({ id: 8, name: "__MCP_TEST__ segment" }),
+      getSegment: async () => ({ id: 8, name: "Рабочий segment" }),
       createTestSharingKey: async () => ({ sharing_key: "secret-key", sharing_url: "https://private.example.test" }),
       revokeSharingKey: async (key: string) => { revoked.push(key); return {}; },
     } as unknown as VkAdsClient, "write", { allowSharingKeyRevoke: true });
@@ -1333,7 +1333,7 @@ describe("MCP-контракт", () => {
     let deletes = 0;
     const server = createServer({
       ...createClientStub(),
-      listOfflineGoals: async () => [{ id: 42, name: "__MCP_TEST__ offline", entries_count: 1 }],
+      listOfflineGoals: async () => [{ id: 42, name: "Рабочий offline", entries_count: 1 }],
       deleteTestOfflineGoal: async () => { deletes += 1; return {}; },
     } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
@@ -1355,18 +1355,18 @@ describe("MCP-контракт", () => {
     const updates: Array<{ id: number; name: string }> = [];
     const server = createServer({
       ...createClientStub(),
-      listOfflineGoals: async () => [{ id: 42, name: "__MCP_TEST__ offline", entries_count: 1 }],
+      listOfflineGoals: async () => [{ id: 42, name: "Рабочий offline", entries_count: 1 }],
       updateTestOfflineGoal: async (input: { id: number; name: string }) => { updates.push(input); return {}; },
     } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
-    const preview = await client.callTool({ name: "offline_goal_update", arguments: { offline_goal_id: 42, name: "__MCP_TEST__ renamed" } });
+    const preview = await client.callTool({ name: "offline_goal_update", arguments: { offline_goal_id: 42, name: "Рабочий renamed" } });
     const data = preview.structuredContent as { id: string; confirmation_statement: string; operation: string; preflight: { before: unknown } };
     expect(data).toMatchObject({ operation: "update_test_offline_goal", preflight: { before: { id: 42 } } });
     const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
-    expect(updates).toEqual([{ id: 42, name: "__MCP_TEST__ renamed" }]);
+    expect(updates).toEqual([{ id: 42, name: "Рабочий renamed" }]);
     expect(executed.structuredContent).toMatchObject({ operation: "update_test_offline_goal", after: { reread: true } });
 
     await Promise.all([client.close(), server.close()]);

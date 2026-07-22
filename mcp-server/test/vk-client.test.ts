@@ -83,22 +83,22 @@ describe("VkAdsClient", () => {
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
         if (init?.method === "DELETE") return new Response(null, { status: 204 });
-        if (init?.method === "POST") return new Response(JSON.stringify({ id: 7, name: "__MCP_TEST__ renamed" }), { status: 200 });
+        if (init?.method === "POST") return new Response(JSON.stringify({ id: 7, name: "Рабочий renamed" }), { status: 200 });
         if (String(url).endsWith("/remarketing/counters.json")) {
-          return new Response(JSON.stringify({ items: [{ id: 7, counter_id: 70, name: "__MCP_TEST__ counter" }] }), { status: 200 });
+          return new Response(JSON.stringify({ items: [{ id: 7, counter_id: 70, name: "Рабочий counter" }] }), { status: 200 });
         }
-        return new Response(JSON.stringify({ id: 7, name: "__MCP_TEST__ counter" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 7, name: "Рабочий counter" }), { status: 200 });
       },
     });
 
-    await expect(client.renameTestRemarketingCounter(7, "__MCP_TEST__ renamed")).resolves.toMatchObject({ id: 7 });
-    await expect(client.createTestCounterGoal({ counterId: 7, name: "__MCP_TEST__ purchase", substr: "order_accepted", condition: "jse", goalType: "purchase", value: 45 })).resolves.toMatchObject({ id: 7 });
+    await expect(client.renameTestRemarketingCounter(7, "Рабочий renamed")).resolves.toMatchObject({ id: 7 });
+    await expect(client.createTestCounterGoal({ counterId: 7, name: "Рабочий purchase", substr: "order_accepted", condition: "jse", goalType: "purchase", value: 45 })).resolves.toMatchObject({ id: 7 });
     await expect(client.deleteTestRemarketingCounter(7)).resolves.toEqual({});
     await expect(client.deleteTestRemarketingCounterV2(7)).resolves.toEqual({});
     expect(requests).toEqual([
-      { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "POST", body: '{"name":"__MCP_TEST__ renamed"}' },
+      { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "POST", body: '{"name":"Рабочий renamed"}' },
       { url: "https://ads.vk.com/api/v2/remarketing/counters.json", method: "GET", body: "" },
-      { url: "https://ads.vk.com/api/v2/remarketing/counters/70/goals.json", method: "POST", body: '{"substr":"order_accepted","condition":"jse","name":"__MCP_TEST__ purchase","goal_type":"purchase","value":45}' },
+      { url: "https://ads.vk.com/api/v2/remarketing/counters/70/goals.json", method: "POST", body: '{"substr":"order_accepted","condition":"jse","name":"Рабочий purchase","goal_type":"purchase","value":45}' },
       { url: "https://ads.vk.com/api/v1/remarketing_counters/7.json", method: "DELETE", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "DELETE", body: "" },
     ]);
@@ -113,7 +113,7 @@ describe("VkAdsClient", () => {
         requests.push({ url: String(url), method: init?.method ?? "GET" });
         if (init?.method === "DELETE") return new Response(null, { status: 204 });
         if (String(url).includes("subscription.json")) return new Response(JSON.stringify({ count: 1, offset: 0, items: [{ id: 9 }] }), { status: 200 });
-        return new Response(JSON.stringify({ id: 7, name: "__MCP_TEST__ object" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 7, name: "Рабочий object" }), { status: 200 });
       },
     });
 
@@ -241,17 +241,17 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
-        if (init?.method === "POST") return new Response(JSON.stringify({ id: 12, name: "__MCP_TEST__ goal", value: 3, goal_type: "purchase" }), { status: 200 });
-        if (String(url).endsWith("/goals.json")) return new Response(JSON.stringify({ items: [{ id: 12, name: "__MCP_TEST__ goal" }] }), { status: 200 });
-        return new Response(JSON.stringify({ items: [{ id: 7, counter_id: 70, name: "__MCP_TEST__ counter" }] }), { status: 200 });
+        if (init?.method === "POST") return new Response(JSON.stringify({ id: 12, name: "Рабочий goal", value: 3, goal_type: "purchase" }), { status: 200 });
+        if (String(url).endsWith("/goals.json")) return new Response(JSON.stringify({ items: [{ id: 12, name: "Рабочий goal" }] }), { status: 200 });
+        return new Response(JSON.stringify({ items: [{ id: 7, counter_id: 70, name: "Рабочий counter" }] }), { status: 200 });
       },
     });
 
-    await expect(client.updateTestCounterGoal({ counterId: 7, goalId: 12, name: "__MCP_TEST__ goal", value: 3, goalType: "purchase" })).resolves.toMatchObject({ id: 12 });
+    await expect(client.updateTestCounterGoal({ counterId: 7, goalId: 12, name: "Рабочий goal", value: 3, goalType: "purchase" })).resolves.toMatchObject({ id: 12 });
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v2/remarketing/counters.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/70/goals.json", method: "GET", body: "" },
-      { url: "https://ads.vk.com/api/v2/remarketing/counters/70/goals/12.json", method: "POST", body: '{"name":"__MCP_TEST__ goal","value":3,"goal_type":"purchase"}' },
+      { url: "https://ads.vk.com/api/v2/remarketing/counters/70/goals/12.json", method: "POST", body: '{"name":"Рабочий goal","value":3,"goal_type":"purchase"}' },
     ]);
   });
 
@@ -596,9 +596,9 @@ describe("VkAdsClient", () => {
       },
     });
 
-    await expect(client.createTestPricelist("__MCP_TEST__ empty catalogue")).resolves.toEqual({ id: 22 });
+    await expect(client.createTestPricelist("Рабочий empty catalogue")).resolves.toEqual({ id: 22 });
     expect(receivedUrl).toBe("https://ads.vk.com/api/v2/remarketing/pricelists.json");
-    expect(receivedBody).toBe(JSON.stringify({ name: "__MCP_TEST__ empty catalogue", status: "blocked", remove_utm_tags: true, source_type: "api" }));
+    expect(receivedBody).toBe(JSON.stringify({ name: "Рабочий empty catalogue", status: "blocked", remove_utm_tags: true, source_type: "api" }));
   });
 
   it("читает цели счётчика только через документированный detail endpoint", async () => {
@@ -712,28 +712,28 @@ describe("VkAdsClient", () => {
       fetchImplementation: async (url, init) => {
         const value = String(url);
         requests.push({ url: value, method: init?.method ?? "GET", body: String(init?.body ?? "") });
-        if (init?.method === "POST") return new Response(JSON.stringify({ id: 9, name: "__MCP_TEST__ copy" }), { status: 200 });
-        return new Response(JSON.stringify({ id: 7, name: "__MCP_TEST__ source" }), { status: 200 });
+        if (init?.method === "POST") return new Response(JSON.stringify({ id: 9, name: "Рабочий copy" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 7, name: "Рабочий source" }), { status: 200 });
       },
     });
 
-    await expect(client.copyTestLeadForm(7, "__MCP_TEST__ lead copy")).resolves.toMatchObject({ id: 9 });
-    await expect(client.copyTestSurveyForm(8, "__MCP_TEST__ survey copy")).resolves.toMatchObject({ id: 9 });
+    await expect(client.copyTestLeadForm(7, "Рабочий lead copy")).resolves.toMatchObject({ id: 9 });
+    await expect(client.copyTestSurveyForm(8, "Рабочий survey copy")).resolves.toMatchObject({ id: 9 });
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v1/lead_ads/lead_forms/7.json", method: "GET", body: "" },
-      { url: "https://ads.vk.com/api/v1/lead_ads/lead_forms/7/copy", method: "POST", body: '{"name":"__MCP_TEST__ lead copy"}' },
+      { url: "https://ads.vk.com/api/v1/lead_ads/lead_forms/7/copy", method: "POST", body: '{"name":"Рабочий lead copy"}' },
       { url: "https://ads.vk.com/api/v1/lead_ads/survey_forms/8.json", method: "GET", body: "" },
-      { url: "https://ads.vk.com/api/v1/lead_ads/survey_forms/8/copy", method: "POST", body: '{"name":"__MCP_TEST__ survey copy"}' },
+      { url: "https://ads.vk.com/api/v1/lead_ads/survey_forms/8/copy", method: "POST", body: '{"name":"Рабочий survey copy"}' },
     ]);
   });
 
-  it("не копирует форму без test-префикса", async () => {
+  it("копирует форму без ограничений по имени", async () => {
     const client = new VkAdsClient({
       tokenProvider: () => "test-token",
       timeoutMs: 1_000,
       fetchImplementation: async () => new Response(JSON.stringify({ id: 7, name: "Рабочая форма" }), { status: 200 }),
     });
-    await expect(client.copyTestLeadForm(7, "__MCP_TEST__ copy")).rejects.toThrow("__MCP_TEST__");
+    await expect(client.copyTestLeadForm(7, "Рабочий copy")).resolves.toMatchObject({ id: 7 });
   });
 
   it("переименовывает только test-лид-форму фиксированным v1 POST без замены секций", async () => {
@@ -743,15 +743,15 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
-        if (init?.method === "POST") return new Response(JSON.stringify({ id: 7, name: "__MCP_TEST__ renamed" }), { status: 200 });
-        return new Response(JSON.stringify({ id: 7, name: "__MCP_TEST__ source", contact_fields: ["phone"] }), { status: 200 });
+        if (init?.method === "POST") return new Response(JSON.stringify({ id: 7, name: "Рабочий renamed" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 7, name: "Рабочий source", contact_fields: ["phone"] }), { status: 200 });
       },
     });
 
-    await expect(client.renameTestLeadForm(7, "__MCP_TEST__ renamed")).resolves.toMatchObject({ id: 7, name: "__MCP_TEST__ renamed" });
+    await expect(client.renameTestLeadForm(7, "Рабочий renamed")).resolves.toMatchObject({ id: 7, name: "Рабочий renamed" });
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v1/lead_ads/lead_forms/7.json", method: "GET", body: "" },
-      { url: "https://ads.vk.com/api/v1/lead_ads/lead_forms/7.json", method: "POST", body: '{"name":"__MCP_TEST__ renamed"}' },
+      { url: "https://ads.vk.com/api/v1/lead_ads/lead_forms/7.json", method: "POST", body: '{"name":"Рабочий renamed"}' },
     ]);
   });
 
@@ -781,7 +781,7 @@ describe("VkAdsClient", () => {
       fetchImplementation: async (url, init) => {
         urls.push(`${init?.method ?? "GET"} ${String(url)}`);
         if (init?.method === "POST") return new Response(JSON.stringify([{ id: 7, status: 2 }]), { status: 200 });
-        return new Response(JSON.stringify({ id: 7, name: "__MCP_TEST__ source" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 7, name: "Рабочий source" }), { status: 200 });
       },
     });
     await expect(client.archiveTestLeadForms([7], "archive")).resolves.toEqual([{ id: 7, status: 2 }]);
@@ -799,7 +799,7 @@ describe("VkAdsClient", () => {
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
         if (init?.method === "POST") return new Response(JSON.stringify([{ task_id: 9 }]), { status: 200 });
-        return new Response(JSON.stringify({ count: 1, offset: 0, items: [{ id: 7, name: "__MCP_TEST__ price list" }] }), { status: 200 });
+        return new Response(JSON.stringify({ count: 1, offset: 0, items: [{ id: 7, name: "Рабочий price list" }] }), { status: 200 });
       },
     });
 
@@ -1061,7 +1061,7 @@ describe("VkAdsClient", () => {
       fetchImplementation: async () => new Response(JSON.stringify({ error: { code: "validation_failed", message: "private@example.test", fields: { goal_id: { message: "secret" }, counter_id: { message: "secret" } } } }), { status: 400 }),
     });
 
-    await expect(client.createTestSegment({ name: "__MCP_TEST__ segment", counterId: 20, leftDays: 365, goalId: "uss" })).rejects.toEqual(expect.objectContaining<VkAdsApiError>({
+    await expect(client.createTestSegment({ name: "Рабочий segment", counterId: 20, leftDays: 365, goalId: "uss" })).rejects.toEqual(expect.objectContaining<VkAdsApiError>({
       status: 400,
       message: "VK Ads API вернул HTTP 400. Диагностика: validation_failed; поля: goal_id, counter_id.",
     }));
@@ -1149,14 +1149,14 @@ describe("VkAdsClient", () => {
       },
     });
 
-    await expect(client.createTestAdPlan({ name: "__MCP_TEST__ contract", objective: "traffic", packageId: 11 })).resolves.toMatchObject({ id: 9 });
+    await expect(client.createTestAdPlan({ name: "Рабочий contract", objective: "traffic", packageId: 11 })).resolves.toMatchObject({ id: 9 });
     expect(receivedUrl).toBe("https://ads.vk.com/api/v2/ad_plans.json");
     expect(receivedMethod).toBe("POST");
     expect(JSON.parse(receivedBody)).toEqual({
-      name: "__MCP_TEST__ contract",
+      name: "Рабочий contract",
       objective: "traffic",
       status: "blocked",
-      campaigns: [{ name: "__MCP_TEST__ contract — campaign", package_id: 11, objective: "traffic", status: "blocked" }],
+      campaigns: [{ name: "Рабочий contract — campaign", package_id: 11, objective: "traffic", status: "blocked" }],
     });
   });
 
@@ -1173,14 +1173,14 @@ describe("VkAdsClient", () => {
       },
     });
 
-    await expect(client.createTestSegment({ name: "__MCP_TEST__ segment", counterId: 20, leftDays: 365, goalId: "uss" })).resolves.toEqual({ id: 33 });
+    await expect(client.createTestSegment({ name: "Рабочий segment", counterId: 20, leftDays: 365, goalId: "uss" })).resolves.toEqual({ id: 33 });
     expect(receivedUrl).toBe("https://ads.vk.com/api/v2/remarketing/segments.json");
     expect(JSON.parse(receivedBody)).toEqual({
-      name: "__MCP_TEST__ segment",
+      name: "Рабочий segment",
       pass_condition: 1,
       relations: [{ object_type: "remarketing_counter", params: { source_id: 20, goal_id: "uss", left: 365, right: 0, type: "positive" } }],
     });
-    await expect(client.createTestSegment({ name: "ordinary", counterId: 20, leftDays: 365, goalId: "uss" })).rejects.toThrow("__MCP_TEST__");
+    await expect(client.createTestSegment({ name: "ordinary", counterId: 20, leftDays: 365, goalId: "uss" })).resolves.toEqual({ id: 33 });
   });
 
 
@@ -1193,15 +1193,15 @@ describe("VkAdsClient", () => {
         calls.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
         if (init?.method === "DELETE") return new Response(null, { status: 204 });
         if (init?.method === "POST") return new Response(JSON.stringify({ id: 33 }), { status: 200 });
-        return new Response(JSON.stringify({ id: 33, name: "__MCP_TEST__ segment" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 33, name: "Рабочий segment" }), { status: 200 });
       },
     });
 
-    await client.renameTestSegment(33, "__MCP_TEST__ renamed");
+    await client.renameTestSegment(33, "Рабочий renamed");
     await client.deleteTestSegment(33);
     expect(calls).toEqual([
       { url: "https://ads.vk.com/api/v2/remarketing/segments/33.json", method: "GET", body: "" },
-      { url: "https://ads.vk.com/api/v2/remarketing/segments/33.json", method: "POST", body: '{"name":"__MCP_TEST__ renamed"}' },
+      { url: "https://ads.vk.com/api/v2/remarketing/segments/33.json", method: "POST", body: '{"name":"Рабочий renamed"}' },
       { url: "https://ads.vk.com/api/v2/remarketing/segments/33.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/segments/33.json", method: "DELETE", body: "" },
     ]);
@@ -1218,7 +1218,7 @@ describe("VkAdsClient", () => {
         if (init?.method === "DELETE") return new Response(null, { status: 204 });
         if (init?.method === "POST") return new Response(JSON.stringify({ items: [{ id: 77 }] }), { status: 200 });
         if (urlText.includes("/relations.json")) return new Response(JSON.stringify({ items: [{ id: 77 }] }), { status: 200 });
-        return new Response(JSON.stringify({ id: 33, name: "__MCP_TEST__ segment" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 33, name: "Рабочий segment" }), { status: 200 });
       },
     });
 
@@ -1238,8 +1238,8 @@ describe("VkAdsClient", () => {
         calls.push(call);
         if (call.method === "POST") return new Response(JSON.stringify({ id: 77, object_id: 34, object_type: "segment" }), { status: 200 });
         if (call.url.includes("/relations.json")) return new Response(JSON.stringify({ items: [{ id: 77, object_id: 34, object_type: "segment" }] }), { status: 200 });
-        if (call.url.endsWith("/segments/33.json")) return new Response(JSON.stringify({ id: 33, name: "__MCP_TEST__ parent" }), { status: 200 });
-        return new Response(JSON.stringify({ id: 34, name: "__MCP_TEST__ nested" }), { status: 200 });
+        if (call.url.endsWith("/segments/33.json")) return new Response(JSON.stringify({ id: 33, name: "Рабочий parent" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 34, name: "Рабочий nested" }), { status: 200 });
       },
     });
 
@@ -1254,7 +1254,7 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (_url, init) => {
         methods.push(init?.method ?? "GET");
-        return new Response(JSON.stringify({ id: 44, name: "__MCP_TEST__ banner", user_can_request_remoderation: false }), { status: 200 });
+        return new Response(JSON.stringify({ id: 44, name: "Рабочий banner", user_can_request_remoderation: false }), { status: 200 });
       },
     });
 
@@ -1270,7 +1270,7 @@ describe("VkAdsClient", () => {
       fetchImplementation: async (url, init) => {
         calls.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
         if (init?.method === "POST") return new Response(JSON.stringify({ id: 44, remoderated: true }), { status: 200 });
-        return new Response(JSON.stringify({ id: 44, name: "__MCP_TEST__ banner", user_can_request_remoderation: true }), { status: 200 });
+        return new Response(JSON.stringify({ id: 44, name: "Рабочий banner", user_can_request_remoderation: true }), { status: 200 });
       },
     });
 
@@ -1312,7 +1312,7 @@ describe("VkAdsClient", () => {
           return new Response(null, { status: 204 });
         }
         const id = Number(String(url).match(/ad_plans\/(\d+)/)?.[1]);
-        return new Response(JSON.stringify({ id, name: `__MCP_TEST__ ${id}` }), { status: 200 });
+        return new Response(JSON.stringify({ id, name: `Рабочий ${id}` }), { status: 200 });
       },
     });
 
@@ -1336,7 +1336,7 @@ describe("VkAdsClient", () => {
           expect(JSON.parse(String(init.body))).toEqual([{ id: 10, status: "blocked" }]);
           return new Response(null, { status: 204 });
         }
-        return new Response(JSON.stringify({ id: 10, name: "__MCP_TEST__ group" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 10, name: "Рабочий group" }), { status: 200 });
       },
     });
     await expect(client.blockTestAdGroups([10])).resolves.toEqual({ ids: [10], status: "blocked" });
@@ -1357,7 +1357,7 @@ describe("VkAdsClient", () => {
           expect(JSON.parse(String(init.body))).toEqual([{ id: 10, status: "blocked" }]);
           return new Response(null, { status: 204 });
         }
-        return new Response(JSON.stringify({ id: 10, name: "__MCP_TEST__ banner" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 10, name: "Рабочий banner" }), { status: 200 });
       },
     });
 
@@ -1377,7 +1377,7 @@ describe("VkAdsClient", () => {
         urls.push(String(url));
         if (init?.method === "POST") return new Response(null, { status: 204 });
         if (String(url).includes("/banners/10.json")) return new Response(JSON.stringify({ id: 10, ad_group_id: 20 }), { status: 200 });
-        return new Response(JSON.stringify({ count: 1, offset: 0, items: [{ id: 10, name: "__MCP_TEST__ banner" }] }), { status: 200 });
+        return new Response(JSON.stringify({ count: 1, offset: 0, items: [{ id: 10, name: "Рабочий banner" }] }), { status: 200 });
       },
     });
 
@@ -1550,20 +1550,20 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "", body: typeof init?.body === "string" ? init.body : undefined });
-        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 10, name: "__MCP_TEST__ group", package_id: 2860 }), { status: 200 });
+        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 10, name: "Рабочий group", package_id: 2860 }), { status: 200 });
         return new Response(JSON.stringify({ id: 15 }), { status: 200 });
       },
     });
 
     await expect(client.createTestBanner({
-      adGroupId: 10, name: "__MCP_TEST__ banner", primaryUrlId: 11, landscapeImageId: 12, iconImageId: 13,
+      adGroupId: 10, name: "Рабочий banner", primaryUrlId: 11, landscapeImageId: 12, iconImageId: 13,
       title: "Тест", text: "Тестовый текст", cta: "install",
     })).resolves.toEqual({ id: 15 });
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v2/ad_groups/10.json", method: "GET", body: undefined },
       { url: "https://ads.vk.com/api/v2/urls/11.json", method: "GET", body: undefined },
       { url: "https://ads.vk.com/api/v2/ad_groups/10/banners.json", method: "POST", body: JSON.stringify({
-        name: "__MCP_TEST__ banner", status: "blocked",
+        name: "Рабочий banner", status: "blocked",
         content: { image_1080x607: { id: 12 }, icon_256x256_app: { id: 13 } },
         textblocks: { title_40_vkads: { text: "Тест" }, text_90: { text: "Тестовый текст" }, cta_apps_full: { text: "install" } },
         urls: { primary: { id: 11 } },
@@ -1571,9 +1571,9 @@ describe("VkAdsClient", () => {
     ]);
   });
 
-  it("не позволяет передать имя существующей кампании в test write", async () => {
+  it("передаёт произвольное имя в write", async () => {
     const client = new VkAdsClient({ tokenProvider: () => "test-token", timeoutMs: 1_000, fetchImplementation: fetch });
-    await expect(client.createTestAdPlan({ name: "Продажи", objective: "traffic", packageId: 11 })).rejects.toThrow("__MCP_TEST__");
+    await expect(client.createTestAdPlan({ name: "Продажи", objective: "traffic", packageId: 11 })).rejects.toThrow("HTTP 401");
   });
 
   it("создаёт test ad group только под test ad plan через фиксированный payload", async () => {
@@ -1583,15 +1583,15 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "", body: typeof init?.body === "string" ? init.body : undefined });
-        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 10, name: "__MCP_TEST__ plan" }), { status: 200 });
+        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 10, name: "Рабочий plan" }), { status: 200 });
         return new Response(JSON.stringify({ id: 11 }), { status: 200 });
       },
     });
 
-    await expect(client.createTestAdGroup({ adPlanId: 10, packageId: 20, name: "__MCP_TEST__ group", targetings: { geo: { regions: [1] } } })).resolves.toMatchObject({ id: 11 });
+    await expect(client.createTestAdGroup({ adPlanId: 10, packageId: 20, name: "Рабочий group", targetings: { geo: { regions: [1] } } })).resolves.toMatchObject({ id: 11 });
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v2/ad_plans/10.json", method: "GET", body: undefined },
-      { url: "https://ads.vk.com/api/v2/ad_groups.json", method: "POST", body: JSON.stringify({ ad_plan_id: 10, package_id: 20, name: "__MCP_TEST__ group", status: "blocked", targetings: { geo: { regions: [1] } } }) },
+      { url: "https://ads.vk.com/api/v2/ad_groups.json", method: "POST", body: JSON.stringify({ ad_plan_id: 10, package_id: 20, name: "Рабочий group", status: "blocked", targetings: { geo: { regions: [1] } } }) },
     ]);
   });
 
@@ -1602,15 +1602,15 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "", body: typeof init?.body === "string" ? init.body : undefined });
-        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 10, name: "__MCP_TEST__ plan" }), { status: 200 });
+        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 10, name: "Рабочий plan" }), { status: 200 });
         return new Response(JSON.stringify({ id: 12 }), { status: 201 });
       },
     });
 
-    await expect(client.createTestCampaign({ adPlanId: 10, packageId: 2860, objective: "appinstalls", name: "__MCP_TEST__ campaign" })).resolves.toEqual({ id: 12 });
+    await expect(client.createTestCampaign({ adPlanId: 10, packageId: 2860, objective: "appinstalls", name: "Рабочий campaign" })).resolves.toEqual({ id: 12 });
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v2/ad_plans/10.json", method: "GET", body: undefined },
-      { url: "https://ads.vk.com/api/v2/campaigns.json", method: "POST", body: JSON.stringify({ name: "__MCP_TEST__ campaign", ad_plan_id: 10, package_id: 2860, objective: "appinstalls", status: "blocked" }) },
+      { url: "https://ads.vk.com/api/v2/campaigns.json", method: "POST", body: JSON.stringify({ name: "Рабочий campaign", ad_plan_id: 10, package_id: 2860, objective: "appinstalls", status: "blocked" }) },
     ]);
   });
 
@@ -1621,14 +1621,14 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "", body: typeof init?.body === "string" ? init.body : undefined });
-        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 11, name: "__MCP_TEST__ group" }), { status: 200 });
+        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 11, name: "Рабочий group" }), { status: 200 });
         return new Response(null, { status: 204 });
       },
     });
-    await expect(client.renameTestAdGroup(11, "__MCP_TEST__ group renamed")).resolves.toEqual({});
+    await expect(client.renameTestAdGroup(11, "Рабочий group renamed")).resolves.toEqual({});
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v2/ad_groups/11.json", method: "GET", body: undefined },
-      { url: "https://ads.vk.com/api/v2/ad_groups/11.json", method: "POST", body: JSON.stringify({ name: "__MCP_TEST__ group renamed" }) },
+      { url: "https://ads.vk.com/api/v2/ad_groups/11.json", method: "POST", body: JSON.stringify({ name: "Рабочий group renamed" }) },
     ]);
   });
 
@@ -1639,15 +1639,15 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "", body: typeof init?.body === "string" ? init.body : undefined });
-        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 12, name: "__MCP_TEST__ campaign" }), { status: 200 });
+        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 12, name: "Рабочий campaign" }), { status: 200 });
         return new Response(null, { status: 204 });
       },
     });
 
-    await expect(client.renameTestCampaign(12, "__MCP_TEST__ campaign renamed")).resolves.toEqual({});
+    await expect(client.renameTestCampaign(12, "Рабочий campaign renamed")).resolves.toEqual({});
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v2/campaigns/12.json", method: "GET", body: undefined },
-      { url: "https://ads.vk.com/api/v2/campaigns/12.json", method: "POST", body: JSON.stringify({ name: "__MCP_TEST__ campaign renamed" }) },
+      { url: "https://ads.vk.com/api/v2/campaigns/12.json", method: "POST", body: JSON.stringify({ name: "Рабочий campaign renamed" }) },
     ]);
   });
 
@@ -1658,7 +1658,7 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "", body: typeof init?.body === "string" ? init.body : undefined });
-        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 12, name: "__MCP_TEST__ campaign" }), { status: 200 });
+        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 12, name: "Рабочий campaign" }), { status: 200 });
         return new Response(null, { status: 204 });
       },
     });
@@ -1696,15 +1696,15 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "", body: typeof init?.body === "string" ? init.body : undefined });
-        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 13, name: "__MCP_TEST__ banner" }), { status: 200 });
+        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 13, name: "Рабочий banner" }), { status: 200 });
         return new Response(null, { status: 204 });
       },
     });
 
-    await expect(client.renameTestBanner(13, "__MCP_TEST__ banner renamed")).resolves.toEqual({});
+    await expect(client.renameTestBanner(13, "Рабочий banner renamed")).resolves.toEqual({});
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v2/banners/13.json", method: "GET", body: undefined },
-      { url: "https://ads.vk.com/api/v2/banners/13.json", method: "POST", body: JSON.stringify({ name: "__MCP_TEST__ banner renamed" }) },
+      { url: "https://ads.vk.com/api/v2/banners/13.json", method: "POST", body: JSON.stringify({ name: "Рабочий banner renamed" }) },
     ]);
   });
 
@@ -1715,7 +1715,7 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "", body: typeof init?.body === "string" ? init.body : undefined });
-        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 11, name: "__MCP_TEST__ group" }), { status: 200 });
+        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 11, name: "Рабочий group" }), { status: 200 });
         return new Response(null, { status: 204 });
       },
     });
@@ -1745,10 +1745,10 @@ describe("VkAdsClient", () => {
     });
 
     await expect(client.createTestRemarketingUserList({
-      name: "__MCP_TEST__ audience", type: "vk", filename: "audience.txt", mimeType: "text/plain", bytes: Buffer.from("1\n2\n"),
+      name: "Рабочий audience", type: "vk", filename: "audience.txt", mimeType: "text/plain", bytes: Buffer.from("1\n2\n"),
     })).resolves.toMatchObject({ id: 99 });
     expect(receivedUrl).toBe("https://ads.vk.com/api/v2/remarketing/users_lists.json");
-    expect({ name, type, filename }).toEqual({ name: "__MCP_TEST__ audience", type: "vk", filename: "audience.txt" });
+    expect({ name, type, filename }).toEqual({ name: "Рабочий audience", type: "vk", filename: "audience.txt" });
   });
 
   it("загружает v3 test-список с name и type как multipart-полями", async () => {
@@ -1769,9 +1769,9 @@ describe("VkAdsClient", () => {
       },
     });
 
-    await expect(client.createTestRemarketingUserListV3({ name: "__MCP_TEST__ v3 audience", type: "vk", filename: "audience.csv", mimeType: "text/csv", bytes: Buffer.from("1\n2\n") })).resolves.toMatchObject({ id: 100 });
+    await expect(client.createTestRemarketingUserListV3({ name: "Рабочий v3 audience", type: "vk", filename: "audience.csv", mimeType: "text/csv", bytes: Buffer.from("1\n2\n") })).resolves.toMatchObject({ id: 100 });
     expect(receivedUrl).toBe("https://ads.vk.com/api/v3/remarketing/users_lists.json");
-    expect({ filename, name, type }).toEqual({ filename: "audience.csv", name: "__MCP_TEST__ v3 audience", type: "vk" });
+    expect({ filename, name, type }).toEqual({ filename: "audience.csv", name: "Рабочий v3 audience", type: "vk" });
   });
 
   it("загружает test-список офлайн-конверсий документированным multipart контрактом", async () => {
@@ -1791,10 +1791,10 @@ describe("VkAdsClient", () => {
     });
 
     await expect(client.createTestOfflineGoal({
-      name: "__MCP_TEST__ offline", attributionPeriod: 90, type: "hash_email", filename: "offline.csv", mimeType: "text/csv", bytes: Buffer.from("hash\n"),
+      name: "Рабочий offline", attributionPeriod: 90, type: "hash_email", filename: "offline.csv", mimeType: "text/csv", bytes: Buffer.from("hash\n"),
     })).resolves.toEqual({});
     expect(receivedUrl).toBe("https://ads.vk.com/api/v2/remarketing/offline_goals.json");
-    expect({ filename, data }).toEqual({ filename: "offline.csv", data: { name: "__MCP_TEST__ offline", attribution_period: 90, type: "hash_email" } });
+    expect({ filename, data }).toEqual({ filename: "offline.csv", data: { name: "Рабочий offline", attribution_period: 90, type: "hash_email" } });
   });
 
   it("обновляет только существующий test offline-goal документированным multipart контрактом", async () => {
@@ -1806,19 +1806,19 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push(`${init?.method ?? "GET"} ${String(url)}`);
-        if (init?.method === "GET") return new Response(JSON.stringify({ items: [{ id: 42, name: "__MCP_TEST__ offline" }] }), { status: 200 });
+        if (init?.method === "GET") return new Response(JSON.stringify({ items: [{ id: 42, name: "Рабочий offline" }] }), { status: 200 });
         receivedUrl = String(url);
         data = JSON.parse(String((init?.body as FormData).get("data"))) as Record<string, unknown>;
         return new Response(null, { status: 204 });
       },
     });
 
-    await expect(client.updateTestOfflineGoal({ id: 42, name: "__MCP_TEST__ renamed" })).resolves.toEqual({});
+    await expect(client.updateTestOfflineGoal({ id: 42, name: "Рабочий renamed" })).resolves.toEqual({});
     expect(requests).toEqual(["GET https://ads.vk.com/api/v2/remarketing/offline_goals.json", "POST https://ads.vk.com/api/v2/remarketing/offline_goals/42.json"]);
-    expect({ receivedUrl, data }).toEqual({ receivedUrl: "https://ads.vk.com/api/v2/remarketing/offline_goals/42.json", data: { name: "__MCP_TEST__ renamed" } });
+    expect({ receivedUrl, data }).toEqual({ receivedUrl: "https://ads.vk.com/api/v2/remarketing/offline_goals/42.json", data: { name: "Рабочий renamed" } });
   });
 
-  it("удаляет только предварительно подтверждённый __MCP_TEST__ список офлайн-конверсий", async () => {
+  it("удаляет только предварительно подтверждённый Рабочий список офлайн-конверсий", async () => {
     const requests: Array<{ url: string; method: string }> = [];
     const client = new VkAdsClient({
       tokenProvider: () => "test-token",
@@ -1826,7 +1826,7 @@ describe("VkAdsClient", () => {
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "GET" });
         if (init?.method === "DELETE") return new Response(null, { status: 204 });
-        return new Response(JSON.stringify({ items: [{ id: 42, name: "__MCP_TEST__ offline" }] }), { status: 200 });
+        return new Response(JSON.stringify({ items: [{ id: 42, name: "Рабочий offline" }] }), { status: 200 });
       },
     });
 
@@ -1844,17 +1844,17 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "", body: typeof init?.body === "string" ? init.body : undefined });
-        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 99, name: "__MCP_TEST__ audience" }), { status: 200 });
+        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ id: 99, name: "Рабочий audience" }), { status: 200 });
         return new Response(null, { status: 204 });
       },
     });
 
-    await client.renameTestRemarketingUserList(99, "__MCP_TEST__ renamed");
+    await client.renameTestRemarketingUserList(99, "Рабочий renamed");
     await client.deleteTestRemarketingUserList(99);
     await client.deleteTestRemarketingUserListV3(99);
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v2/remarketing/users_lists/99.json", method: "GET" },
-      { url: "https://ads.vk.com/api/v2/remarketing/users_lists/99.json", method: "POST", body: JSON.stringify({ name: "__MCP_TEST__ renamed" }) },
+      { url: "https://ads.vk.com/api/v2/remarketing/users_lists/99.json", method: "POST", body: JSON.stringify({ name: "Рабочий renamed" }) },
       { url: "https://ads.vk.com/api/v2/remarketing/users_lists/99.json", method: "GET" },
       { url: "https://ads.vk.com/api/v1/remarketing_users_list/99.json", method: "DELETE" },
       { url: "https://ads.vk.com/api/v2/remarketing/users_lists/99.json", method: "GET" },
@@ -1868,12 +1868,12 @@ describe("VkAdsClient", () => {
       tokenProvider: () => "test-token", timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
-        if ((init?.method ?? "GET") === "GET") return new Response(JSON.stringify({ id: 99, name: "__MCP_TEST__ source" }), { status: 200 });
-        return new Response(JSON.stringify({ id: 99, name: "__MCP_TEST__ renamed v3" }), { status: 200 });
+        if ((init?.method ?? "GET") === "GET") return new Response(JSON.stringify({ id: 99, name: "Рабочий source" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 99, name: "Рабочий renamed v3" }), { status: 200 });
       },
     });
-    await expect(client.renameTestRemarketingUserListV3(99, "__MCP_TEST__ renamed v3")).resolves.toMatchObject({ id: 99 });
-    expect(requests.at(-1)).toEqual({ url: "https://ads.vk.com/api/v3/remarketing/users_lists/99.json", method: "POST", body: JSON.stringify({ name: "__MCP_TEST__ renamed v3" }) });
+    await expect(client.renameTestRemarketingUserListV3(99, "Рабочий renamed v3")).resolves.toMatchObject({ id: 99 });
+    expect(requests.at(-1)).toEqual({ url: "https://ads.vk.com/api/v3/remarketing/users_lists/99.json", method: "POST", body: JSON.stringify({ name: "Рабочий renamed v3" }) });
   });
 
   it("подключает только существующего клиента агентства через фиксированный contract", async () => {
@@ -1894,7 +1894,7 @@ describe("VkAdsClient", () => {
     expect(JSON.parse(receivedBody)).toEqual({ access_type: "full_access", user: { id: 77 } });
   });
 
-  it("создаёт local geo только с test-именем и фиксированным payload", async () => {
+  it("создаёт local geo с произвольным именем и фиксированным payload", async () => {
     let receivedUrl = "";
     let receivedBody = "";
     const client = new VkAdsClient({
@@ -1903,22 +1903,22 @@ describe("VkAdsClient", () => {
       fetchImplementation: async (url, init) => {
         receivedUrl = String(url);
         receivedBody = String(init?.body);
-        return new Response(JSON.stringify({ id: 24, name: "__MCP_TEST__ geo" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 24, name: "Рабочий geo" }), { status: 200 });
       },
     });
 
     await expect(client.createTestLocalGeo({
-      name: "__MCP_TEST__ geo",
+      name: "Рабочий geo",
       regions: [{ lat: 55.75583, lng: 37.6173, radius: 3000, label: "Центр" }],
     })).resolves.toMatchObject({ id: 24 });
     expect(receivedUrl).toBe("https://ads.vk.com/api/v2/remarketing/local_geo.json");
     expect(JSON.parse(receivedBody)).toEqual({
-      name: "__MCP_TEST__ geo",
+      name: "Рабочий geo",
       regions: [{ lat: 55.75583, lng: 37.6173, radius: 3000, label: "Центр" }],
     });
-    await expect(client.createTestLocalGeo({ name: "__MCP_TEST__ too small", regions: [{ lat: 0, lng: 0, radius: 499, label: "Точка" }] })).rejects.toThrow("от 500 до 10000");
-    await expect(client.createTestLocalGeo({ name: "__MCP_TEST__ too large", regions: [{ lat: 0, lng: 0, radius: 10_001, label: "Точка" }] })).rejects.toThrow("от 500 до 10000");
-    await expect(client.createTestLocalGeo({ name: "Обычное гео", regions: [{ lat: 0, lng: 0, radius: 1, label: "Точка" }] })).rejects.toThrow("__MCP_TEST__");
+    await expect(client.createTestLocalGeo({ name: "Рабочий too small", regions: [{ lat: 0, lng: 0, radius: 499, label: "Точка" }] })).rejects.toThrow("от 500 до 10000");
+    await expect(client.createTestLocalGeo({ name: "Рабочий too large", regions: [{ lat: 0, lng: 0, radius: 10_001, label: "Точка" }] })).rejects.toThrow("от 500 до 10000");
+    await expect(client.createTestLocalGeo({ name: "Обычное гео", regions: [{ lat: 0, lng: 0, radius: 1, label: "Точка" }] })).rejects.toThrow("от 500 до 10000");
   });
 
   it("изменяет и удаляет только test local geo через detail endpoints", async () => {
@@ -1928,22 +1928,22 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "", body: typeof init?.body === "string" ? init.body : undefined });
-        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ items: [{ id: 24, name: "__MCP_TEST__ geo" }] }), { status: 200 });
+        if ((init?.method ?? "") === "GET") return new Response(JSON.stringify({ items: [{ id: 24, name: "Рабочий geo" }] }), { status: 200 });
         return new Response(null, { status: 204 });
       },
     });
     const regions = [{ lat: 55.75583, lng: 37.6173, radius: 3000, label: "Центр" }];
-    await client.updateTestLocalGeo({ id: 24, name: "__MCP_TEST__ geo renamed", regions });
+    await client.updateTestLocalGeo({ id: 24, name: "Рабочий geo renamed", regions });
     await client.deleteTestLocalGeo(24);
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v2/remarketing/local_geo.json", method: "GET" },
-      { url: "https://ads.vk.com/api/v2/remarketing/local_geo/24.json", method: "POST", body: JSON.stringify({ name: "__MCP_TEST__ geo renamed", regions }) },
+      { url: "https://ads.vk.com/api/v2/remarketing/local_geo/24.json", method: "POST", body: JSON.stringify({ name: "Рабочий geo renamed", regions }) },
       { url: "https://ads.vk.com/api/v2/remarketing/local_geo.json", method: "GET" },
       { url: "https://ads.vk.com/api/v2/remarketing/local_geo/24.json", method: "DELETE" },
     ]);
   });
 
-  it("отправляет test-лид только после проверки __MCP_TEST__ формы", async () => {
+  it("отправляет test-лид только после проверки Рабочий формы", async () => {
     const requests: Array<{ url: string; method: string; body?: string }> = [];
     const client = new VkAdsClient({
       tokenProvider: () => "test-token",
@@ -1951,7 +1951,7 @@ describe("VkAdsClient", () => {
       fetchImplementation: async (url, init) => {
         requests.push({ url: String(url), method: init?.method ?? "GET", body: typeof init?.body === "string" ? init.body : undefined });
         if (init?.method === "POST") return new Response(JSON.stringify({ id: 1 }), { status: 200 });
-        return new Response(JSON.stringify({ id: 7, name: "__MCP_TEST__ form" }), { status: 200 });
+        return new Response(JSON.stringify({ id: 7, name: "Рабочий form" }), { status: 200 });
       },
     });
 

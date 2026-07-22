@@ -481,7 +481,7 @@ function normalizeTestWritePayloadCore(
     }
     case "create_test_segment": {
       const parsed = z.object({
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
         counter_id: z.number().int().positive(),
         left_days: z.number().int().min(1).max(365).default(365),
         goal_id: z.string().min(1).max(120),
@@ -489,14 +489,14 @@ function normalizeTestWritePayloadCore(
       return parsed;
     }
     case "create_test_pricelist":
-      return z.object({ name: z.string().min(14).max(120).startsWith("__MCP_TEST__") }).parse(payload);
+      return z.object({ name: z.string().min(1).max(120) }).parse(payload);
     case "copy_test_lead_form":
     case "copy_test_survey_form":
-      return z.object({ form_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") }).parse(payload);
+      return z.object({ form_id: z.number().int().positive(), name: z.string().min(1).max(120) }).parse(payload);
     case "rename_test_lead_form":
-      return z.object({ form_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") }).parse(payload);
+      return z.object({ form_id: z.number().int().positive(), name: z.string().min(1).max(120) }).parse(payload);
     case "rename_test_remarketing_counter":
-      return z.object({ counter_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") }).parse(payload);
+      return z.object({ counter_id: z.number().int().positive(), name: z.string().min(1).max(120) }).parse(payload);
     case "delete_test_remarketing_counter":
     case "delete_test_remarketing_counter_v2":
       return z.object({ counter_id: z.number().int().positive() }).parse(payload);
@@ -505,7 +505,7 @@ function normalizeTestWritePayloadCore(
     case "update_test_offline_goal": {
       const parsed = z.object({
         offline_goal_id: z.number().int().positive(),
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
         file_path: z.string().min(1).max(1_024).optional(),
       }).strict().parse(payload);
       if (!parsed.file_path) return parsed;
@@ -566,10 +566,10 @@ function normalizeTestWritePayloadCore(
       return parsed;
     }
     case "rename_test_segment":
-      return z.object({ segment_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") }).parse(payload);
+      return z.object({ segment_id: z.number().int().positive(), name: z.string().min(1).max(120) }).parse(payload);
     case "create_test_async_report":
       return z.object({
-        title: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        title: z.string().min(1).max(120),
         advertisers: z.array(z.number().int().positive()).min(1).max(50),
         date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -652,7 +652,7 @@ function normalizeTestWritePayloadCore(
       }
       const { file_path, name, type, api_version } = z.object({
         file_path: z.string().min(1).max(1_024),
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
         type: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/),
         api_version: z.enum(["v2", "v3"]).default("v2"),
       }).parse(payload);
@@ -665,7 +665,7 @@ function normalizeTestWritePayloadCore(
       }
       const { file_path, name, attribution_period, type } = z.object({
         file_path: z.string().min(1).max(1_024),
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
         attribution_period: z.number().int().min(1).max(365),
         type: z.enum(["email", "hash_email", "phone", "hash_phone"]),
       }).parse(payload);
@@ -673,7 +673,7 @@ function normalizeTestWritePayloadCore(
       return { file_path: list.filePath, filename: list.filename, mime_type: list.mimeType, size: list.size, sha256: list.sha256, line_count: list.lineCount, name, attribution_period, type };
     }
     case "rename_test_remarketing_user_list":
-      return z.object({ list_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), api_version: z.enum(["v2", "v3"]).default("v2") }).parse(payload);
+      return z.object({ list_id: z.number().int().positive(), name: z.string().min(1).max(120), api_version: z.enum(["v2", "v3"]).default("v2") }).parse(payload);
     case "delete_test_remarketing_user_list":
       return z.object({ list_id: z.number().int().positive() }).parse(payload);
     case "connect_agency_client": {
@@ -712,7 +712,7 @@ function normalizeTestWritePayloadCore(
       return z.object({ counter_id: z.number().int().positive(), name: z.string().trim().min(1).max(120), flags: z.array(z.literal("cookie_sync")).max(1).default(["cookie_sync"]) }).strict().parse(payload);
     case "create_test_local_geo": {
       const parsed = z.object({
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
         regions: z.array(z.object({
           lat: z.number().finite().min(-90).max(90),
           lng: z.number().finite().min(-180).max(180),
@@ -726,7 +726,7 @@ function normalizeTestWritePayloadCore(
     case "update_test_local_geo": {
       const parsed = z.object({
         local_geo_id: z.number().int().positive(),
-        name: z.string().min(14).max(120).startsWith("__MCP_TEST__"),
+        name: z.string().min(1).max(120),
         regions: z.array(z.object({
           lat: z.number().finite().min(-90).max(90),
           lng: z.number().finite().min(-180).max(180),
@@ -1023,44 +1023,44 @@ function writeImpact(operation: WriteOperation): { risk: "low" | "medium" | "hig
     case "create_test_ad_plan": return { risk: "low", expected_change: "Создать остановленный изолированный test ad plan; показы и расход не запускаются." };
     case "create_test_campaign": return { risk: "low", expected_change: "Создать остановленную test campaign package 2860 внутри test ad plan; показы и расход не запускаются." };
     case "create_test_ad_group": return { risk: "low", expected_change: "Создать остановленную test ad group внутри test ad plan; показы и расход не запускаются." };
-    case "create_test_banner": return { risk: "low", expected_change: "Создать остановленный banner только в __MCP_TEST__ группе package_id=2860; расход не запускается." };
-    case "create_test_segment": return { risk: "low", expected_change: "Создать изолированный __MCP_TEST__ сегмент с read-only источником; существующие объекты не изменяются." };
-    case "create_test_pricelist": return { risk: "low", expected_change: "Создать пустой blocked __MCP_TEST__ каталог без внешнего URL, credentials, кампаний или товаров." };
-    case "copy_test_lead_form": return { risk: "low", expected_change: "Создать копию только существующей __MCP_TEST__ лид-формы; новая форма также получает test-префикс." };
-    case "rename_test_lead_form": return { risk: "low", expected_change: "Переименовать только существующую __MCP_TEST__ лид-форму; контактные поля, страницы и уведомления не изменяются." };
-    case "update_test_inapp_event_category": return { risk: "medium", expected_change: "Изменить категорию только одного события разрешённого тестового мобильного приложения; настройки кампаний и объявления не изменяются." };
-    case "copy_test_survey_form": return { risk: "low", expected_change: "Создать копию только существующего __MCP_TEST__ опроса; новая форма также получает test-префикс." };
-    case "manage_test_lead_forms_archive": return { risk: "medium", expected_change: "Архивировать или вернуть из архива только __MCP_TEST__ лид-формы." };
-    case "manage_test_survey_forms_archive": return { risk: "medium", expected_change: "Архивировать или вернуть из архива только __MCP_TEST__ опросы." };
-    case "send_test_lead": return { risk: "medium", expected_change: "Отправить один служебный тестовый лид только для __MCP_TEST__ формы; контактные данные и ответы не передаются." };
-    case "create_test_sharing_key": return { risk: "medium", expected_change: "Создать ключ только для __MCP_TEST__ сегмента и передать его указанному получателю через VK Ads; сам ключ не будет показан или записан в audit." };
+    case "create_test_banner": return { risk: "low", expected_change: "Создать остановленный banner в выбранной группе package_id=2860; расход не запускается." };
+    case "create_test_segment": return { risk: "low", expected_change: "Создать сегмент с указанным источником; существующие объекты не изменяются." };
+    case "create_test_pricelist": return { risk: "low", expected_change: "Создать пустой blocked-каталог без внешнего URL, credentials, кампаний или товаров." };
+    case "copy_test_lead_form": return { risk: "low", expected_change: "Создать копию существующей лид-формы; контактные поля и ответы не читаются." };
+    case "rename_test_lead_form": return { risk: "low", expected_change: "Переименовать существующую лид-форму; контактные поля, страницы и уведомления не изменяются." };
+    case "update_test_inapp_event_category": return { risk: "medium", expected_change: "Изменить категорию одного события указанного мобильного приложения; настройки кампаний и объявления не изменяются." };
+    case "copy_test_survey_form": return { risk: "low", expected_change: "Создать копию существующего опроса; ответы респондентов не читаются." };
+    case "manage_test_lead_forms_archive": return { risk: "medium", expected_change: "Архивировать или вернуть из архива указанные лид-формы." };
+    case "manage_test_survey_forms_archive": return { risk: "medium", expected_change: "Архивировать или вернуть из архива указанные опросы." };
+    case "send_test_lead": return { risk: "medium", expected_change: "Отправить один служебный тестовый лид в указанную форму; контактные данные и ответы не передаются." };
+    case "create_test_sharing_key": return { risk: "medium", expected_change: "Создать ключ для указанного сегмента и передать его получателю через VK Ads; сам ключ не будет показан или записан в audit." };
     case "revoke_created_sharing_key": return { risk: "high", expected_change: "Отозвать только ключ, созданный текущим MCP-сеансом. Отзыв может остановить кампании получателя, поэтому требует отдельного opt-in при запуске." };
     case "share_test_skadnetwork_ids": return { risk: "high", expected_change: "Передать свободные SKAdNetwork IDs только из allowlist тестового iOS-приложения. Кампании не должны быть затронуты." };
     case "withdraw_test_skadnetwork_ids": return { risk: "high", expected_change: "Вернуть только свободные SKAdNetwork IDs из allowlist тестового iOS-приложения. Если есть связанные кампании или недостаточно свободных IDs, операция блокируется." };
-    case "rename_test_ad_plan": return { risk: "low", expected_change: "Переименовать только test ad plan." };
+    case "rename_test_ad_plan": return { risk: "low", expected_change: "Переименовать выбранный ad plan." };
     case "rename_test_remarketing_counter": return { risk: "low", expected_change: "Переименовать только allowlist test-счётчик ремаркетинга." };
     case "delete_test_remarketing_counter": return { risk: "high", expected_change: "Удалить только allowlist test-счётчик ремаркетинга; операция необратима." };
     case "delete_test_remarketing_counter_v2": return { risk: "high", expected_change: "Удалить только allowlist test-счётчик ремаркетинга через документированный v2 DELETE; операция необратима." };
-    case "delete_test_offline_goal": return { risk: "high", expected_change: "Удалить только существующий __MCP_TEST__ список офлайн-конверсий; исходные записи и PII не читаются." };
-    case "update_test_offline_goal": return { risk: "medium", expected_change: "Переименовать и/или дозагрузить только существующий __MCP_TEST__ список офлайн-конверсий; PII остаётся в multipart body и не попадает в audit." };
+    case "delete_test_offline_goal": return { risk: "high", expected_change: "Удалить указанный список офлайн-конверсий; исходные записи и PII не читаются." };
+    case "update_test_offline_goal": return { risk: "medium", expected_change: "Переименовать и/или дозагрузить указанный список офлайн-конверсий; PII остаётся в multipart body и не попадает в audit." };
     case "create_test_counter_goal": return { risk: "medium", expected_change: "Создать новую цель в указанном доступном счётчике ремаркетинга." };
-    case "delete_test_remarketing_user_list_v3": return { risk: "high", expected_change: "Удалить только изолированный __MCP_TEST__ список ремаркетинга через документированный v3 DELETE; операция необратима." };
+    case "delete_test_remarketing_user_list_v3": return { risk: "high", expected_change: "Удалить указанный список ремаркетинга через документированный v3 DELETE; операция необратима." };
     case "update_test_counter_goal": return { risk: "medium", expected_change: "Изменить указанную существующую цель в доступном счётчике ремаркетинга." };
-    case "rename_test_campaign": return { risk: "low", expected_change: "Переименовать только test campaign." };
+    case "rename_test_campaign": return { risk: "low", expected_change: "Переименовать выбранную campaign." };
     case "update_campaign_budget_limit_day": return { risk: "medium", expected_change: "Изменить дневной лимит выбранной кампании; показы и статус не меняются." };
-    case "rename_test_ad_group": return { risk: "low", expected_change: "Переименовать только test ad group." };
-    case "rename_test_banner": return { risk: "low", expected_change: "Переименовать только test banner." };
-    case "rename_test_segment": return { risk: "low", expected_change: "Переименовать только test-сегмент." };
-    case "create_test_async_report": return { risk: "low", expected_change: "Создать только временный __MCP_TEST__ серверный отчёт; кампании и расход не меняются." };
-    case "delete_test_async_report": return { risk: "medium", expected_change: "Удалить только временный __MCP_TEST__ серверный отчёт." };
-    case "block_test_ad_plans": return { risk: "low", expected_change: "Массово оставить только __MCP_TEST__ ad plan в статусе blocked; показы и расход не запускаются." };
-    case "block_test_ad_groups": return { risk: "low", expected_change: "Массово оставить только __MCP_TEST__ ad group в статусе blocked; показы и расход не запускаются." };
-    case "block_test_banners": return { risk: "low", expected_change: "Массово оставить только __MCP_TEST__ banner в статусе blocked; показы и расход не запускаются." };
-    case "remoderate_test_banners": return { risk: "low", expected_change: "Запросить повторную модерацию только для __MCP_TEST__ banner, если VK Ads явно разрешает её; бюджет и статус не меняются." };
+    case "rename_test_ad_group": return { risk: "low", expected_change: "Переименовать выбранную ad group." };
+    case "rename_test_banner": return { risk: "low", expected_change: "Переименовать выбранный banner." };
+    case "rename_test_segment": return { risk: "low", expected_change: "Переименовать выбранный сегмент." };
+    case "create_test_async_report": return { risk: "low", expected_change: "Создать серверный отчёт; кампании и расход не меняются." };
+    case "delete_test_async_report": return { risk: "medium", expected_change: "Удалить указанный серверный отчёт." };
+    case "block_test_ad_plans": return { risk: "low", expected_change: "Массово перевести указанные ad plan в статус blocked; показы и расход не запускаются." };
+    case "block_test_ad_groups": return { risk: "low", expected_change: "Массово перевести указанные ad group в статус blocked; показы и расход не запускаются." };
+    case "block_test_banners": return { risk: "low", expected_change: "Массово перевести указанные banner в статус blocked; показы и расход не запускаются." };
+    case "remoderate_test_banners": return { risk: "low", expected_change: "Запросить повторную модерацию указанных banner, если VK Ads явно разрешает её; бюджет и статус не меняются." };
     case "delete_test_ad_plan": return { risk: "medium", expected_change: "Пометить test ad plan как deleted; операция необратима в интерфейсе сервера." };
-    case "delete_test_campaign": return { risk: "medium", expected_change: "Пометить только test campaign как deleted; операция необратима в интерфейсе сервера." };
+    case "delete_test_campaign": return { risk: "medium", expected_change: "Пометить выбранную campaign как deleted; операция необратима в интерфейсе сервера." };
     case "delete_test_ad_group": return { risk: "medium", expected_change: "Пометить test ad group как deleted; операция необратима в интерфейсе сервера." };
-    case "delete_test_segment": return { risk: "medium", expected_change: "Удалить только test-сегмент; операция необратима." };
+    case "delete_test_segment": return { risk: "medium", expected_change: "Удалить выбранный сегмент; операция необратима." };
     case "add_test_segment_relation": return { risk: "low", expected_change: "Добавить связь только между двумя test-сегментами." };
     case "update_test_segment_relation": return { risk: "low", expected_change: "Изменить только params существующей связи между двумя test-сегментами." };
     case "delete_test_segment_relation": return { risk: "medium", expected_change: "Удалить связь только из test-сегмента." };
@@ -1068,17 +1068,17 @@ function writeImpact(operation: WriteOperation): { risk: "low" | "medium" | "hig
     case "upload_html5": return { risk: "low", expected_change: "Загрузить проверенный HTML5 ZIP-креатив в контент VK Ads; banner и показы не создаются." };
     case "upload_test_video": return { risk: "low", expected_change: "Загрузить MP4-видео в контент VK Ads; banner, показы и расход не создаются." };
     case "upload_lead_form_logo": return { risk: "low", expected_change: "Загрузить PNG/JPEG logo для лид-формы; сама форма, объявления, показы и расход не меняются." };
-    case "create_test_offer_batch": return { risk: "low", expected_change: "Создать одну batch-задачу с synthetic offer только в __MCP_TEST__ прайс-листе; кампании и расход не меняются." };
+    case "create_test_offer_batch": return { risk: "low", expected_change: "Создать одну batch-задачу с synthetic offer в указанном прайс-листе; кампании и расход не меняются." };
     case "export_leads": return { risk: "medium", expected_change: "Получить экспорт лидов с персональными данными в памяти текущего MCP-сеанса; данные не попадут в audit." };
     case "export_survey_respondents": return { risk: "medium", expected_change: "Получить экспорт ответов опроса с персональными данными в памяти текущего MCP-сеанса; данные не попадут в audit." };
-    case "upload_test_remarketing_user_list": return { risk: "medium", expected_change: "Загрузить новый __MCP_TEST__ список ремаркетинга из отдельно разрешённого PII-файла; содержимое не попадёт в ответ или audit." };
-    case "upload_test_offline_goal": return { risk: "medium", expected_change: "Загрузить новый __MCP_TEST__ список офлайн-конверсий из отдельно разрешённого PII-файла; содержимое не попадёт в ответ или audit." };
-    case "rename_test_remarketing_user_list": return { risk: "low", expected_change: "Переименовать только существующий __MCP_TEST__ список ремаркетинга." };
-    case "delete_test_remarketing_user_list": return { risk: "medium", expected_change: "Удалить только неиспользуемый __MCP_TEST__ список ремаркетинга; операция необратима." };
+    case "upload_test_remarketing_user_list": return { risk: "medium", expected_change: "Загрузить новый список ремаркетинга из отдельно разрешённого PII-файла; содержимое не попадёт в ответ или audit." };
+    case "upload_test_offline_goal": return { risk: "medium", expected_change: "Загрузить новый список офлайн-конверсий из отдельно разрешённого PII-файла; содержимое не попадёт в ответ или audit." };
+    case "rename_test_remarketing_user_list": return { risk: "low", expected_change: "Переименовать существующий список ремаркетинга." };
+    case "delete_test_remarketing_user_list": return { risk: "medium", expected_change: "Удалить неиспользуемый список ремаркетинга; операция необратима." };
     case "connect_agency_client": return { risk: "medium", expected_change: "Привязать существующий рекламный кабинет к агентству с полным доступом; операция меняет отношения кабинетов." };
-    case "create_test_local_geo": return { risk: "low", expected_change: "Создать новый __MCP_TEST__ список локального гео. Его можно изменить или удалить только тем же безопасным lifecycle." };
-    case "update_test_local_geo": return { risk: "low", expected_change: "Изменить только существующий __MCP_TEST__ список локального гео." };
-    case "delete_test_local_geo": return { risk: "medium", expected_change: "Удалить только неиспользуемый __MCP_TEST__ список локального гео; операция необратима." };
+    case "create_test_local_geo": return { risk: "low", expected_change: "Создать список локального гео." };
+    case "update_test_local_geo": return { risk: "low", expected_change: "Изменить существующий список локального гео." };
+    case "delete_test_local_geo": return { risk: "medium", expected_change: "Удалить неиспользуемый список локального гео; операция необратима." };
   }
 }
 
@@ -1119,7 +1119,7 @@ async function captureWriteBefore(client: VkAdsClient, operation: WriteOperation
     case "create_test_ad_group": return client.getAdPlan(payload.ad_plan_id as number);
     case "create_test_campaign": return client.getAdPlan(payload.ad_plan_id as number);
     case "create_test_banner": return client.getAdGroup(payload.ad_group_id as number);
-    case "create_test_pricelist": return { existing_test_pricelists: (await client.listPricelists(0, 50)).items.filter((item) => typeof item.name === "string" && item.name.startsWith("__MCP_TEST__")).map(publicSensitiveMetadata) };
+    case "create_test_pricelist": return { existing_pricelists: (await client.listPricelists(0, 50)).items.map(publicSensitiveMetadata) };
     case "copy_test_lead_form": return publicFormConfiguration(await client.getLeadFormDetail(payload.form_id as number));
     case "rename_test_lead_form": return publicFormConfiguration(await client.getLeadFormDetail(payload.form_id as number));
     case "rename_test_remarketing_counter":
@@ -1130,7 +1130,7 @@ async function captureWriteBefore(client: VkAdsClient, operation: WriteOperation
     case "delete_test_remarketing_user_list_v3": return publicSensitiveMetadata(await remarketingListFromPages(client, payload.list_id as number)) as VkObject;
     case "delete_test_offline_goal": return publicSensitiveMetadata((await client.listOfflineGoals()).find((item) => Number(item.id) === Number(payload.offline_goal_id))) as VkObject;
     case "update_test_offline_goal": return publicSensitiveMetadata((await client.listOfflineGoals()).find((item) => Number(item.id) === Number(payload.offline_goal_id))) as VkObject;
-    case "upload_test_offline_goal": return { existing_test_offline_goals: (await client.listOfflineGoals()).filter((item) => typeof item.name === "string" && item.name.startsWith("__MCP_TEST__")).map(publicSensitiveMetadata) };
+    case "upload_test_offline_goal": return { existing_offline_goals: (await client.listOfflineGoals()).map(publicSensitiveMetadata) };
     case "update_test_inapp_event_category": return publicSensitiveMetadata(await inAppEventFromPages(client, { appId: payload.app_id as number, trackerId: payload.tracker_id as number, eventId: payload.event_id as number })) as VkObject;
     case "send_test_lead": return publicFormConfiguration(await client.getLeadFormDetail(payload.form_id as number));
     case "create_test_sharing_key": return { segment: publicSensitiveMetadata(await client.getSegment(payload.segment_id as number)), recipients_count: 1 } as VkObject;
@@ -1182,11 +1182,10 @@ async function preflightConfirmedTestBanner(
   }, knownImages).checks];
 
   const group = groupFromBefore ?? await client.getAdGroup(payload.ad_group_id as number);
-  const groupName = typeof group.name === "string" ? group.name : "";
-  const groupReady = groupName.startsWith("__MCP_TEST__") && Number(group.package_id) === 2860;
+  const groupReady = Number(group.package_id) === 2860;
   checks.push(groupReady
     ? { code: "ad_group", status: "pass", message: "Test ad group package_id=2860 подтверждена." }
-    : { code: "ad_group", status: "fail", message: "Нужна существующая __MCP_TEST__ group с package_id=2860." });
+    : { code: "ad_group", status: "fail", message: "Нужна существующая group с package_id=2860." });
 
   try {
     const url = await client.getUrl(payload.primary_url_id as number);
@@ -1762,7 +1761,7 @@ async function callReadTool(
   }
 }
 
-export function createServer(client: VkAdsClient, mode: ServerMode, options: { communityClient?: VkCommunityClient; uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowProfileWrites?: boolean; allowSharingKeyRevoke?: boolean; externalSharingKey?: string; allowSkAdNetworkWrites?: boolean; skAdNetworkTestAppIds?: number[]; inAppEventTestAppIds?: number[]; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; remarketingCounterTestIds?: number[]; tokenRecovery?: { recover: () => Promise<{ token_reissued: true; refresh_token_saved: true; expires_at?: string }> }; connectionId?: string; profileName?: string; auditFile?: string; previewTtlMs?: number; requireWriteConfirmation?: boolean } = {}): McpServer {
+export function createServer(client: VkAdsClient, mode: ServerMode, options: { communityClient?: VkCommunityClient; uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowProfileWrites?: boolean; allowSharingKeyRevoke?: boolean; externalSharingKey?: string; allowSkAdNetworkWrites?: boolean; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; tokenRecovery?: { recover: () => Promise<{ token_reissued: true; refresh_token_saved: true; expires_at?: string }> }; connectionId?: string; profileName?: string; auditFile?: string; previewTtlMs?: number; requireWriteConfirmation?: boolean } = {}): McpServer {
   const normalizeTestWritePayload = (operation: WriteOperation, payload: Record<string, unknown>, _legacyUploadDir?: string) => normalizeTestWritePayloadCore(
     operation,
     payload,
@@ -3204,8 +3203,8 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     server.registerTool(
       "write_preview",
       {
-        title: "Подготовить подтверждение тестовой записи",
-        description: "Готовит одноразовый preview с hash payload для HTTPS URL, изолированных test-сущностей, static image или MP4-видео из VK_ADS_UPLOAD_DIR.",
+        title: "Подготовить подтверждение записи",
+        description: "Готовит одноразовый preview с hash payload для HTTPS URL, объектов кабинета, static image или MP4-видео из VK_ADS_UPLOAD_DIR.",
         inputSchema: {
           operation: writeOperationSchema,
           payload: z.record(z.string(), z.unknown()),
@@ -3229,23 +3228,23 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
       { ad_plan_id: z.number().int().positive(), package_id: z.number().int().positive(), objective: z.string().min(1).max(80), name: z.string().min(1).max(120), status: productionStatusSchema.optional(), date_start: productionDateSchema.optional(), date_end: productionDateSchema.optional(), budget_limit_day: productionMoneySchema.optional(), budget_limit: productionMoneySchema.optional(), autobidding_mode: z.string().min(1).max(80).optional() },
     );
     registerWritePreviewAlias(
-      "lead_form_copy", "Подготовить копирование test-лид-формы", "Исходная форма и имя копии обязаны иметь префикс `__MCP_TEST__`. Контакты и ответы не читаются.", "copy_test_lead_form",
-      { form_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+      "lead_form_copy", "Подготовить копирование лид-формы", "Копирует существующую форму с указанным именем. Контакты и ответы не читаются.", "copy_test_lead_form",
+      { form_id: z.number().int().positive(), name: z.string().min(1).max(120) },
     );
     registerWritePreviewAlias(
-      "vk_update_lead_form", "Подготовить переименование test-лид-формы", "Изменяет только имя существующей `__MCP_TEST__` лид-формы. Контактные поля, страницы, согласия и уведомления не передаются в API и не изменяются.", "rename_test_lead_form",
-      { form_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+      "vk_update_lead_form", "Подготовить переименование лид-формы", "Изменяет имя существующей лид-формы. Контактные поля, страницы, согласия и уведомления не передаются в API и не изменяются.", "rename_test_lead_form",
+      { form_id: z.number().int().positive(), name: z.string().min(1).max(120) },
     );
     registerWritePreviewAlias(
-      "vk_update_inapp_event_category", "Подготовить изменение категории test in-app события", "Допускается только для app_id из `VK_ADS_TEST_MOBILE_APP_IDS`, после проверки доступности события и category_id. Нужен отдельный opt-in при запуске.", "update_test_inapp_event_category",
+      "vk_update_inapp_event_category", "Подготовить изменение категории in-app события", "Проверяет доступность события и category_id перед записью.", "update_test_inapp_event_category",
       { app_id: z.number().int().positive(), tracker_id: z.number().int().positive(), event_id: z.number().int().positive(), category_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
-      "lead_form_test_lead_send", "Подготовить отправку test-лида", "Отправляет только служебный тестовый лид в существующую `__MCP_TEST__` форму. Контактные данные и ответы не принимаются.", "send_test_lead",
+      "lead_form_test_lead_send", "Подготовить отправку тестового лида", "Отправляет служебный тестовый лид в существующую форму. Контактные данные и ответы не принимаются.", "send_test_lead",
       { form_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
-      "sharing_key_create", "Подготовить создание ключа шаринга", "Источник — только существующий `__MCP_TEST__` сегмент. Ключ отправляется указанному получателю средствами VK Ads и не попадает в MCP-ответ или audit.", "create_test_sharing_key",
+      "sharing_key_create", "Подготовить создание ключа шаринга", "Источник — существующий сегмент. Ключ отправляется указанному получателю средствами VK Ads и не попадает в MCP-ответ или audit.", "create_test_sharing_key",
       { segment_id: z.number().int().positive(), recipient: z.string().trim().min(3).max(254) },
     );
     registerWritePreviewAlias(
@@ -3265,14 +3264,14 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
       { app_id: z.number().int().positive(), recipient: z.string().trim().min(3).max(254), count: z.number().int().min(1).max(10_000) },
     );
     registerWritePreviewAlias(
-      "survey_form_copy", "Подготовить копирование test-опроса", "Исходный опрос и имя копии обязаны иметь префикс `__MCP_TEST__`. Ответы респондентов не читаются.", "copy_test_survey_form",
-      { form_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+      "survey_form_copy", "Подготовить копирование опроса", "Копирует существующий опрос с указанным именем. Ответы респондентов не читаются.", "copy_test_survey_form",
+      { form_id: z.number().int().positive(), name: z.string().min(1).max(120) },
     );
     server.registerTool(
       "lead_forms_archive_manage",
       {
         title: "Подготовить archive/unarchive test-лид-форм",
-        description: "Разрешает archive или unarchive от 1 до 50 форм только с префиксом `__MCP_TEST__`; выполнение — через одноразовое подтверждение.",
+        description: "Разрешает archive или unarchive от 1 до 50 форм после одноразового подтверждения.",
         inputSchema: { action: z.enum(["archive", "unarchive"]), form_ids: z.array(z.number().int().positive()).min(1).max(50) },
         outputSchema: previewOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
@@ -3283,7 +3282,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
       "survey_forms_archive_manage",
       {
         title: "Подготовить archive/unarchive test-опросов",
-        description: "Разрешает archive или unarchive от 1 до 50 форм только с префиксом `__MCP_TEST__`; выполнение — через одноразовое подтверждение.",
+        description: "Разрешает archive или unarchive от 1 до 50 форм после одноразового подтверждения.",
         inputSchema: { action: z.enum(["archive", "unarchive"]), form_ids: z.array(z.number().int().positive()).min(1).max(50) },
         outputSchema: previewOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
@@ -3351,12 +3350,12 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
       { counter_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
-      "offline_goal_delete", "Подготовить удаление test-списка офлайн-конверсий", "Удаляет только существующий `__MCP_TEST__` список офлайн-конверсий. Исходные записи и PII не читаются.", "delete_test_offline_goal",
+      "offline_goal_delete", "Подготовить удаление списка офлайн-конверсий", "Удаляет указанный список офлайн-конверсий. Исходные записи и PII не читаются.", "delete_test_offline_goal",
       { offline_goal_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
-      "offline_goal_update", "Подготовить обновление test-списка офлайн-конверсий", "Переименовывает и/или дозагружает только существующий `__MCP_TEST__` список. Файл принимается лишь из VK_ADS_PII_UPLOAD_DIR при VK_ADS_ALLOW_PII_UPLOADS=1; контакты не читаются и не логируются.", "update_test_offline_goal",
-      { offline_goal_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), file_path: z.string().min(1).max(1_024).optional() },
+      "offline_goal_update", "Подготовить обновление списка офлайн-конверсий", "Переименовывает и/или дозагружает указанный список. Файл принимается лишь из VK_ADS_PII_UPLOAD_DIR при VK_ADS_ALLOW_PII_UPLOADS=1; контакты не читаются и не логируются.", "update_test_offline_goal",
+      { offline_goal_id: z.number().int().positive(), name: z.string().min(1).max(120), file_path: z.string().min(1).max(1_024).optional() },
     );
     registerWritePreviewAlias(
       "vk_create_counter_goal", "Подготовить создание цели счётчика", "Создаёт цель в счётчике, доступном текущему credential; перед записью счётчик перечитывается.", "create_test_counter_goal",
@@ -3379,7 +3378,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
       { items: z.array(productionBannerMassItemSchema).min(1).max(200) },
     );
     registerWritePreviewAlias(
-      "vk_remoderate_banners", "Подготовить повторную модерацию test banners", "Перед отправкой VK Ads обязан вернуть для каждого `__MCP_TEST__` banner user_can_request_remoderation=true. Иначе write-запрос не уйдёт.", "remoderate_test_banners",
+      "vk_remoderate_banners", "Подготовить повторную модерацию banner", "Перед отправкой VK Ads обязан вернуть для каждого banner user_can_request_remoderation=true. Иначе write-запрос не уйдёт.", "remoderate_test_banners",
       { banner_ids: z.array(z.number().int().positive()).min(1).max(200) },
     );
     registerWritePreviewAlias(
@@ -3387,26 +3386,26 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
       { ad_group_id: z.number().int().positive(), name: z.string().min(1).max(120), status: productionStatusSchema.optional(), content: productionBannerFieldsSchema.shape.content.unwrap(), textblocks: productionBannerFieldsSchema.shape.textblocks.unwrap(), urls: productionBannerFieldsSchema.shape.urls.unwrap() },
     );
     registerWritePreviewAlias(
-      "vk_create_segment", "Подготовить создание test-сегмента", "Создаётся только `__MCP_TEST__` сегмент. Указанный счётчик используется только как источник: сам он не изменяется.", "create_test_segment",
-      { name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), counter_id: z.number().int().positive(), left_days: z.number().int().min(1).max(365).default(365), goal_id: z.string().min(1).max(120) },
+      "vk_create_segment", "Подготовить создание сегмента", "Создаёт сегмент. Указанный счётчик используется только как источник: сам он не изменяется.", "create_test_segment",
+      { name: z.string().min(1).max(120), counter_id: z.number().int().positive(), left_days: z.number().int().min(1).max(365).default(365), goal_id: z.string().min(1).max(120) },
     );
     registerWritePreviewAlias(
-      "vk_create_pricelist", "Подготовить создание test-прайслиста", "Создаёт пустой `__MCP_TEST__` каталог с source_type=api и status=blocked. URL, фид, товары и credentials не передаются.", "create_test_pricelist",
-      { name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+      "vk_create_pricelist", "Подготовить создание прайс-листа", "Создаёт пустой каталог с source_type=api и status=blocked. URL, фид, товары и credentials не передаются.", "create_test_pricelist",
+      { name: z.string().min(1).max(120) },
     );
     registerWritePreviewAlias(
-      "vk_update_segment", "Подготовить переименование test-сегмента", "Разрешено только переименование существующего `__MCP_TEST__` сегмента.", "rename_test_segment",
-      { segment_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+      "vk_update_segment", "Подготовить переименование сегмента", "Переименовывает существующий сегмент.", "rename_test_segment",
+      { segment_id: z.number().int().positive(), name: z.string().min(1).max(120) },
     );
     registerWritePreviewAlias(
-      "vk_delete_segment", "Подготовить удаление test-сегмента", "Разрешено удалить только `__MCP_TEST__` сегмент, не привязанный к кампаниям.", "delete_test_segment",
+      "vk_delete_segment", "Подготовить удаление сегмента", "Удаляет указанный сегмент, не привязанный к кампаниям.", "delete_test_segment",
       { segment_id: z.number().int().positive() },
     );
     server.registerTool(
       "vk_manage_segment_relations",
       {
-        title: "Подготовить изменение связи test-сегментов",
-        description: "Разрешено только добавить или удалить связь в `__MCP_TEST__` сегменте; запись выполняется после одноразового подтверждения.",
+        title: "Подготовить изменение связи сегментов",
+        description: "Добавляет, изменяет или удаляет связь в указанном сегменте после одноразового подтверждения.",
         inputSchema: {
           action: z.enum(["add", "update", "delete"]),
           segment_id: z.number().int().positive(),
@@ -3449,43 +3448,43 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
       { file_path: z.string().min(1).max(1_024) },
     );
     registerWritePreviewAlias(
-      "offer_batch_task_create", "Подготовить batch-задачу synthetic offer", "Только один offer в существующем `__MCP_TEST__` прайс-листе; URL и цена проходят строгую локальную проверку.", "create_test_offer_batch",
+      "offer_batch_task_create", "Подготовить batch-задачу synthetic offer", "Создаёт один offer в указанном прайс-листе; URL и цена проходят строгую локальную проверку.", "create_test_offer_batch",
       { pricelist_id: z.number().int().positive(), offer_id: z.string().regex(/^[A-Za-z0-9._-]{1,100}$/), product_type: z.string().regex(/^[A-Za-z0-9._ -]{1,100}$/), title: z.string().trim().min(1).max(150), link: z.string().url(), image_link: z.string().url(), price: z.string().regex(/^\d+(?:\.\d{1,2})? [A-Z]{3}$/) },
     );
     registerWritePreviewAlias(
-      "vk_create_remarketing_list", "Подготовить загрузку test-списка ремаркетинга", "Принимается только новый `__MCP_TEST__` список из отдельного VK_ADS_PII_UPLOAD_DIR при VK_ADS_ALLOW_PII_UPLOADS=1. Содержимое контактов не читается и не логируется.", "upload_test_remarketing_user_list",
-      { file_path: z.string().min(1).max(1_024), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), type: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/) },
+      "vk_create_remarketing_list", "Подготовить загрузку списка ремаркетинга", "Принимается новый список из отдельного VK_ADS_PII_UPLOAD_DIR при VK_ADS_ALLOW_PII_UPLOADS=1. Содержимое контактов не читается и не логируется.", "upload_test_remarketing_user_list",
+      { file_path: z.string().min(1).max(1_024), name: z.string().min(1).max(120), type: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/) },
     );
     registerWritePreviewAlias(
-      "vk_create_remarketing_list_v3", "Подготовить v3-загрузку test-списка ремаркетинга", "Только новый `__MCP_TEST__` список из VK_ADS_PII_UPLOAD_DIR при VK_ADS_ALLOW_PII_UPLOADS=1; v3 multipart не возвращает содержимое контактов.", "upload_test_remarketing_user_list",
-      { file_path: z.string().min(1).max(1_024), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), type: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/), api_version: z.literal("v3") },
+      "vk_create_remarketing_list_v3", "Подготовить v3-загрузку списка ремаркетинга", "Принимается новый список из VK_ADS_PII_UPLOAD_DIR при VK_ADS_ALLOW_PII_UPLOADS=1; v3 multipart не возвращает содержимое контактов.", "upload_test_remarketing_user_list",
+      { file_path: z.string().min(1).max(1_024), name: z.string().min(1).max(120), type: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/), api_version: z.literal("v3") },
     );
     registerWritePreviewAlias(
-      "vk_create_offline_goal", "Подготовить загрузку test-списка офлайн-конверсий", "Принимается только новый `__MCP_TEST__` список из отдельного VK_ADS_PII_UPLOAD_DIR при VK_ADS_ALLOW_PII_UPLOADS=1. Контакты не читаются и не логируются.", "upload_test_offline_goal",
-      { file_path: z.string().min(1).max(1_024), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), attribution_period: z.number().int().min(1).max(365), type: z.enum(["email", "hash_email", "phone", "hash_phone"]) },
+      "vk_create_offline_goal", "Подготовить загрузку списка офлайн-конверсий", "Принимается новый список из отдельного VK_ADS_PII_UPLOAD_DIR при VK_ADS_ALLOW_PII_UPLOADS=1. Контакты не читаются и не логируются.", "upload_test_offline_goal",
+      { file_path: z.string().min(1).max(1_024), name: z.string().min(1).max(120), attribution_period: z.number().int().min(1).max(365), type: z.enum(["email", "hash_email", "phone", "hash_phone"]) },
     );
     registerWritePreviewAlias(
-      "vk_update_remarketing_list", "Подготовить переименование test-списка ремаркетинга", "Разрешено только переименовать существующий `__MCP_TEST__` список; состав аудитории не меняется.", "rename_test_remarketing_user_list",
-      { list_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+      "vk_update_remarketing_list", "Подготовить переименование списка ремаркетинга", "Переименовывает существующий список; состав аудитории не меняется.", "rename_test_remarketing_user_list",
+      { list_id: z.number().int().positive(), name: z.string().min(1).max(120) },
     );
     registerWritePreviewAlias(
-      "vk_update_remarketing_list_v3", "Подготовить v3-переименование test-списка", "Разрешено только переименовать существующий `__MCP_TEST__` список через документированный v3 POST; состав аудитории не меняется.", "rename_test_remarketing_user_list",
-      { list_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), api_version: z.literal("v3") },
+      "vk_update_remarketing_list_v3", "Подготовить v3-переименование списка", "Переименовывает существующий список через документированный v3 POST; состав аудитории не меняется.", "rename_test_remarketing_user_list",
+      { list_id: z.number().int().positive(), name: z.string().min(1).max(120), api_version: z.literal("v3") },
     );
     registerWritePreviewAlias(
-      "vk_delete_remarketing_list", "Подготовить удаление test-списка ремаркетинга", "Разрешено удалить только неиспользуемый `__MCP_TEST__` список. VK Ads отклонит список, связанный с аудиторией или lookalike.", "delete_test_remarketing_user_list",
+      "vk_delete_remarketing_list", "Подготовить удаление списка ремаркетинга", "Удаляет неиспользуемый список. VK Ads отклонит список, связанный с аудиторией или lookalike.", "delete_test_remarketing_user_list",
       { list_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
-      "vk_delete_remarketing_list_v3", "Подготовить v3-удаление test-списка ремаркетинга", "Разрешено удалить только неиспользуемый `__MCP_TEST__` список. Операция использует документированный v3 DELETE и не заменяет legacy v1-операцию.", "delete_test_remarketing_user_list_v3",
+      "vk_delete_remarketing_list_v3", "Подготовить v3-удаление списка ремаркетинга", "Удаляет неиспользуемый список. Операция использует документированный v3 DELETE и не заменяет legacy v1-операцию.", "delete_test_remarketing_user_list_v3",
       { list_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
-      "vk_create_async_report", "Подготовить создание test-отчёта", "Создаётся только серверный `__MCP_TEST__` отчёт с фиксированным v3 contract. Он не меняет кампании, ставки или бюджет.", "create_test_async_report",
-      { title: z.string().min(14).max(120).startsWith("__MCP_TEST__"), advertisers: z.array(z.number().int().positive()).min(1).max(50), date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), metrics: z.array(z.enum(["acs", "cart_count", "clicks", "conversions", "cpa", "cpc", "cr", "cr_cart", "cr_purchase", "ctr", "inapp_count", "money", "purchase_count", "romi", "shows", "top_goal_count", "value", "video_100cost", "video_100pct", "video_10sec", "video_10sec_cost", "video_10sec_rate", "video_25pct", "video_50pct", "video_75pct", "video_avg_depth", "video_started", "video_view_rate"])).min(1).max(30), slices: z.array(z.enum(["ad_plan_id", "advertiser_id", "age", "banner_id", "campaign_id", "day", "feed_id", "geo", "hour", "inapp_id", "interests", "month", "offer_id", "search_phrase", "sex", "shop_id", "top_goal_id", "week", "year"])).min(1).max(16) },
+      "vk_create_async_report", "Подготовить создание отчёта", "Создаёт серверный отчёт с фиксированным v3 contract. Он не меняет кампании, ставки или бюджет.", "create_test_async_report",
+      { title: z.string().min(1).max(120), advertisers: z.array(z.number().int().positive()).min(1).max(50), date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), metrics: z.array(z.enum(["acs", "cart_count", "clicks", "conversions", "cpa", "cpc", "cr", "cr_cart", "cr_purchase", "ctr", "inapp_count", "money", "purchase_count", "romi", "shows", "top_goal_count", "value", "video_100cost", "video_100pct", "video_10sec", "video_10sec_cost", "video_10sec_rate", "video_25pct", "video_50pct", "video_75pct", "video_avg_depth", "video_started", "video_view_rate"])).min(1).max(30), slices: z.array(z.enum(["ad_plan_id", "advertiser_id", "age", "banner_id", "campaign_id", "day", "feed_id", "geo", "hour", "inapp_id", "interests", "month", "offer_id", "search_phrase", "sex", "shop_id", "top_goal_id", "week", "year"])).min(1).max(16) },
     );
     registerWritePreviewAlias(
-      "vk_delete_async_report", "Подготовить удаление test-отчёта", "Удаляет только ранее созданный серверный отчёт с префиксом `__MCP_TEST__`.", "delete_test_async_report",
+      "vk_delete_async_report", "Подготовить удаление отчёта", "Удаляет указанный серверный отчёт.", "delete_test_async_report",
       { report_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
@@ -3495,12 +3494,12 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     server.registerTool(
       "vk_manage_local_geo",
       {
-        title: "Подготовить изменение test local geo",
-        description: "Создаёт, изменяет или удаляет только `__MCP_TEST__` список локального гео. Запись выполняет write_execute после одноразового подтверждения.",
+        title: "Подготовить изменение local geo",
+        description: "Создаёт, изменяет или удаляет список локального гео после одноразового подтверждения.",
         inputSchema: {
           action: z.enum(["create", "update", "delete"]),
           local_geo_id: z.number().int().positive().optional(),
-          name: z.string().min(14).max(120).startsWith("__MCP_TEST__").optional(),
+          name: z.string().min(1).max(120).optional(),
           regions: z.array(z.object({ lat: z.number().finite().min(-90).max(90), lng: z.number().finite().min(-180).max(180), radius: z.number().int().min(500).max(10_000), label: z.string().trim().min(1).max(200), address: z.string().trim().min(1).max(500).optional() }).strict()).min(1).max(200).optional(),
         },
         outputSchema: previewOutputSchema,
@@ -3529,7 +3528,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     server.registerTool(
       "write_execute",
       {
-        title: "Выполнить подготовленную тестовую запись",
+        title: "Выполнить подготовленную запись",
         description: options.requireWriteConfirmation === false ? "Выполняет ровно один свежий preview без фразы: локальный владелец профиля явно отключил подтверждение при старте. Не принимает произвольный endpoint, ID существующих кампаний или свободный payload." : "Выполняет ровно один свежий preview только после явного согласия пользователя именно на это изменение. Оценивайте смысл сообщения на языке пользователя: при отказе, сомнении, вопросе или нейтральной реплике не вызывайте этот инструмент. Не принимает произвольный endpoint, ID существующих кампаний или свободный payload.",
         inputSchema: { preview_id: z.string().uuid(), confirmation_statement: z.string().min(1).max(100).optional() },
         outputSchema: {
@@ -4171,7 +4170,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
           const audit = writeGate.complete(preview, "succeeded", (preview.operation === "export_leads" || preview.operation === "export_survey_respondents")
             ? { form_id: result.form_id, format: result.format, byte_length: result.byte_length }
             : { result, after });
-          return textAndData({ operation: preview.operation, result, after, audit }, "Подтверждённая тестовая операция VK Ads выполнена и повторно проверена, если API поддерживает чтение объекта.");
+          return textAndData({ operation: preview.operation, result, after, audit }, "Подтверждённая операция VK Ads выполнена и повторно проверена, если API поддерживает чтение объекта.");
         } catch (error) {
           writeGate.complete(preview, "failed");
           throw error;
@@ -4182,7 +4181,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     server.registerTool(
       "write_audit_list",
       {
-        title: "Журнал тестовых записей",
+        title: "Журнал записей",
         description: "Read-only: возвращает метаданные preview и выполнения текущего процесса без токенов, payload и тел API-ответов.",
         inputSchema: { limit: z.number().int().min(1).max(100).default(50) },
         outputSchema: { items: z.array(z.object({
@@ -4191,7 +4190,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
         })) },
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
-      async ({ limit }) => textAndData({ items: writeGate.listAudit(limit) }, "Журнал тестовых записей получен."),
+      async ({ limit }) => textAndData({ items: writeGate.listAudit(limit) }, "Журнал записей получен."),
     );
   }
 

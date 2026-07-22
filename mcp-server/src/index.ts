@@ -90,11 +90,8 @@ const server = createServer(client, config.mode, {
   allowSharingKeyRevoke: config.allowSharingKeyRevoke,
   ...(config.externalSharingKey ? { externalSharingKey: config.externalSharingKey } : {}),
   allowSkAdNetworkWrites: config.allowSkAdNetworkWrites,
-  skAdNetworkTestAppIds: config.skAdNetworkTestAppIds,
   allowInAppEventCategoryWrites: config.allowInAppEventCategoryWrites,
-  inAppEventTestAppIds: config.inAppEventTestAppIds,
   allowRemarketingCounterWrites: config.allowRemarketingCounterWrites,
-  remarketingCounterTestIds: config.remarketingCounterTestIds,
   ...(tokenManager ? { tokenRecovery: { recover: () => tokenManager.recoverTokenLimit() } } : {}),
   auditFile: process.env.VK_ADS_AUDIT_FILE ? config.auditFile : profileStorage.auditFile,
 });

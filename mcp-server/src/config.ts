@@ -39,16 +39,10 @@ export interface AppConfig {
   externalSharingKey?: string;
   /** SKAdNetwork меняет права мобильного приложения и требует отдельного opt-in. */
   allowSkAdNetworkWrites: boolean;
-  /** Единственные iOS-приложения, на которых допустимы тестовые SKAdNetwork-вызовы. */
-  skAdNetworkTestAppIds: number[];
   /** Изменение категории in-app события может повлиять на оптимизацию, поэтому включается отдельно. */
   allowInAppEventCategoryWrites: boolean;
-  /** Единственные мобильные приложения, в которых допустимо менять категорию события при тестах. */
-  inAppEventTestAppIds: number[];
   /** Изменение счётчика может затронуть источник данных; включается только отдельно. */
   allowRemarketingCounterWrites: boolean;
-  /** Только эти заранее подготовленные счётчики допустимы для test-write. */
-  remarketingCounterTestIds: number[];
   /** Локальный audit write-операций содержит только IDs, статусы и хеши. */
   auditFile: string;
 }
@@ -117,15 +111,6 @@ export function resolveProfileStorage(packageDirectory: string, profileName: str
   };
 }
 
-function parsePositiveIds(value: string | undefined, variableName: string): number[] {
-  if (!value?.trim()) return [];
-  const ids = value.split(",").map((item) => Number(item.trim()));
-  if (ids.some((id) => !Number.isInteger(id) || id <= 0)) {
-    throw new Error(`${variableName} должен содержать положительные целые ID через запятую.`);
-  }
-  return [...new Set(ids)];
-}
-
 function parseExternalSharingKey(value: string | undefined): string | undefined {
   const key = value?.trim();
   if (!key) return undefined;
@@ -168,11 +153,8 @@ export function loadConfig(environment = process.env): AppConfig {
     allowSharingKeyRevoke: mode === "write",
     ...(externalSharingKey ? { externalSharingKey } : {}),
     allowSkAdNetworkWrites: mode === "write",
-    skAdNetworkTestAppIds: parsePositiveIds(environment.VK_ADS_TEST_IOS_APP_IDS, "VK_ADS_TEST_IOS_APP_IDS"),
     allowInAppEventCategoryWrites: mode === "write",
-    inAppEventTestAppIds: parsePositiveIds(environment.VK_ADS_TEST_MOBILE_APP_IDS, "VK_ADS_TEST_MOBILE_APP_IDS"),
     allowRemarketingCounterWrites: mode === "write",
-    remarketingCounterTestIds: parsePositiveIds(environment.VK_ADS_TEST_COUNTER_IDS, "VK_ADS_TEST_COUNTER_IDS"),
     auditFile: resolve(environment.VK_ADS_AUDIT_FILE ?? ".vk-ads-audit.json"),
   };
 }

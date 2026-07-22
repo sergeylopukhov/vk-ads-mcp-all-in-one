@@ -13,8 +13,8 @@ describe("локальный preflight test plan и group", () => {
     expect(validateTestAdPlanDraft({ package_id: 999, objective: "appinstalls" }, packages)).toMatchObject({ ready: false });
   });
 
-  it("подтверждает только test-родителя и существующий package для group", () => {
-    expect(validateTestAdGroupParent({ id: 1, name: "__MCP_TEST__ plan" }, 2860, packages).ready).toBe(true);
-    expect(validateTestAdGroupParent({ id: 1, name: "Рабочий план" }, 2860, packages)).toMatchObject({ ready: false });
+  it("подтверждает существующего родителя и package для group", () => {
+    expect(validateTestAdGroupParent({ id: 1, name: "Рабочий plan" }, 2860, packages).ready).toBe(true);
+    expect(validateTestAdGroupParent({ id: 1, name: "Рабочий план" }, 2860, packages)).toMatchObject({ ready: true });
   });
 });

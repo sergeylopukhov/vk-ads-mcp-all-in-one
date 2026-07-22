@@ -12,7 +12,7 @@ describe("WriteGate", () => {
     let time = 1_000;
     const gate = new WriteGate(true, () => time, () => "00000000-0000-4000-8000-000000000001");
     const preview = gate.prepare("create_test_ad_plan", {
-      name: "__MCP_TEST__ test",
+      name: "Рабочий test",
       objective: "traffic",
       package_id: 1,
     });
@@ -43,7 +43,7 @@ describe("WriteGate", () => {
 
   it("разрешает локально отключить фразу, сохраняя одноразовость preview", () => {
     const gate = new WriteGate(true, () => 1_000, () => "00000000-0000-4000-8000-000000000005", undefined, 600_000, false);
-    const preview = gate.prepare("create_test_ad_plan", { name: "__MCP_TEST__ test" });
+    const preview = gate.prepare("create_test_ad_plan", { name: "Рабочий test" });
     expect(gate.consume(preview.id, undefined)).toMatchObject({ id: preview.id });
     expect(() => gate.consume(preview.id, undefined)).toThrow("уже использован");
   });
@@ -55,10 +55,10 @@ describe("WriteGate", () => {
     expect(() => gate.consume(preview.id, preview.confirmation_statement, "agency-client-b")).toThrow("другого подключения");
     const consumed = gate.consume(preview.id, preview.confirmation_statement, "agency-client-a");
     time += 1;
-    const audit = gate.complete(consumed, "succeeded", { id: 1, name: "__MCP_TEST__" });
+    const audit = gate.complete(consumed, "succeeded", { id: 1, name: "Рабочий" });
 
     expect(audit).toMatchObject({ connection_id: "agency-client-a", status: "succeeded" });
     expect(audit.result_hash).toHaveLength(64);
-    expect(JSON.stringify(gate.listAudit())).not.toContain("__MCP_TEST__");
+    expect(JSON.stringify(gate.listAudit())).not.toContain("Рабочий");
   });
 });
