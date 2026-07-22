@@ -4,7 +4,6 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -267,11 +266,11 @@ async function askPositiveIds(readline, question, defaultValue = "") {
   }
 }
 
-const COMMUNITY_REDIRECT_URI = "http://127.0.0.1:38473/vk-id/callback";
+const COMMUNITY_REDIRECT_URI = "https://vk.ru/blank.html";
 
 function printCommunityOAuthSetup() {
   console.log("Создайте приложение VK ID: https://id.vk.com/about/business/go/");
-  console.log(`В его настройках добавьте redirect URL: ${COMMUNITY_REDIRECT_URI}`);
+  console.log(`В его настройках добавьте доверенный redirect URL: ${COMMUNITY_REDIRECT_URI}`);
   console.log("Для Core VK API включите права groups и wall. Затем вставьте только client_id приложения.");
 }
 
@@ -291,49 +290,28 @@ async function authorizeCommunityTools(clientId) {
   const state = randomUrlValue();
   const verifier = randomUrlValue();
   const challenge = createHash("sha256").update(verifier).digest("base64url");
-  const callback = new URL(COMMUNITY_REDIRECT_URI);
-  const result = await new Promise((resolveResult, rejectResult) => {
-    const server = createServer(async (request, response) => {
-      const url = new URL(request.url || "/", COMMUNITY_REDIRECT_URI);
-      if (url.pathname !== callback.pathname) { response.writeHead(404).end(); return; }
-      const code = url.searchParams.get("code");
-      const returnedState = url.searchParams.get("state");
-      const deviceId = url.searchParams.get("device_id");
-      if (!code || !deviceId || returnedState !== state) {
-        response.writeHead(400, { "content-type": "text/plain; charset=utf-8" }).end("Авторизация не подтверждена. Вернитесь в терминал.");
-        rejectResult(new Error("VK ID вернул неполный или неподтверждённый callback."));
-        server.close();
-        return;
-      }
-      try {
-        const tokenResponse = await fetch("https://id.vk.ru/oauth2/auth", {
-          method: "POST",
-          headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-          body: new URLSearchParams({ client_id: clientId, grant_type: "authorization_code", code_verifier: verifier, device_id: deviceId, code, redirect_uri: COMMUNITY_REDIRECT_URI }),
-          signal: AbortSignal.timeout(30_000),
-          redirect: "error",
-        });
-        const payload = await tokenResponse.json().catch(() => undefined);
-        if (!tokenResponse.ok || !payload || typeof payload !== "object" || typeof payload.access_token !== "string" || typeof payload.refresh_token !== "string") throw new Error("VK ID не выдал access_token и refresh_token. Проверьте доступы приложения groups и wall.");
-        response.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end("Готово. Можно закрыть эту вкладку и вернуться в терминал.");
-        resolveResult({ accessToken: payload.access_token, refreshToken: payload.refresh_token, expiresIn: Number(payload.expires_in), deviceId });
-      } catch (error) {
-        response.writeHead(502, { "content-type": "text/plain; charset=utf-8" }).end("VK ID не выдал токен. Вернитесь в терминал.");
-        rejectResult(error instanceof Error ? error : new Error("VK ID не выдал токен."));
-      } finally {
-        server.close();
-      }
-    });
-    server.once("error", (error) => rejectResult(new Error(`Не удалось запустить локальный callback VK ID: ${error.message}`)));
-    server.listen(38473, "127.0.0.1", () => {
-      const authorizationUrl = new URL("https://id.vk.ru/authorize");
-      authorizationUrl.search = new URLSearchParams({ response_type: "code", client_id: clientId, scope: "groups wall", redirect_uri: COMMUNITY_REDIRECT_URI, state, code_challenge: challenge, code_challenge_method: "S256" }).toString();
-      console.log("Открываю VK ID в браузере. После подтверждения вернитесь в терминал.");
-      openBrowser(authorizationUrl.toString());
-    });
-    setTimeout(() => { server.close(); rejectResult(new Error("Время ожидания авторизации VK ID истекло.")); }, 5 * 60_000).unref();
+  const authorizationUrl = new URL("https://id.vk.ru/authorize");
+  authorizationUrl.search = new URLSearchParams({ response_type: "code", client_id: clientId, scope: "groups wall", redirect_uri: COMMUNITY_REDIRECT_URI, state, code_challenge: challenge, code_challenge_method: "S256" }).toString();
+  console.log("Открываю VK ID в браузере. После входа скопируйте полный URL страницы vk.ru/blank.html и вернитесь сюда.");
+  openBrowser(authorizationUrl.toString());
+  const callbackUrl = await promptHidden("URL страницы vk.ru/blank.html (ввод скрыт): ");
+  let callback;
+  try { callback = new URL(callbackUrl); } catch { throw new Error("Нужен полный URL страницы vk.ru/blank.html после авторизации."); }
+  if (callback.origin !== "https://vk.ru" || callback.pathname !== "/blank.html") throw new Error("Нужен URL страницы https://vk.ru/blank.html после авторизации.");
+  const code = callback.searchParams.get("code");
+  const returnedState = callback.searchParams.get("state");
+  const deviceId = callback.searchParams.get("device_id");
+  if (!code || !deviceId || returnedState !== state) throw new Error("VK ID вернул неполный или неподтверждённый callback.");
+  const tokenResponse = await fetch("https://id.vk.ru/oauth2/auth", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: new URLSearchParams({ client_id: clientId, grant_type: "authorization_code", code_verifier: verifier, device_id: deviceId, code, redirect_uri: COMMUNITY_REDIRECT_URI }),
+    signal: AbortSignal.timeout(30_000),
+    redirect: "error",
   });
-  return result;
+  const payload = await tokenResponse.json().catch(() => undefined);
+  if (!tokenResponse.ok || !payload || typeof payload !== "object" || typeof payload.access_token !== "string" || typeof payload.refresh_token !== "string") throw new Error("VK ID не выдал access_token и refresh_token. Проверьте доступы приложения groups и wall.");
+  return { accessToken: payload.access_token, refreshToken: payload.refresh_token, expiresIn: Number(payload.expires_in), deviceId };
 }
 
 async function ensureConfiguration(installDirectory) {
