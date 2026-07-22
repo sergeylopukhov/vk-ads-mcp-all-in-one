@@ -2,7 +2,7 @@ import type { CommunityType, VkCommunity, VkWallPost } from "./vk-community-clie
 
 export interface Candidate { id: number; url: string; name: string; description: string; type: string | null; members_count: number | null; verified: boolean; retrieved_at: string; risk_flags: string[]; activity?: Activity | undefined }
 export interface Activity { last_post_at: string | null; posts_per_week: number | null; posts_analyzed: number; thematic_posts: number; thematic_post_share: number | null; term_matches: string[]; risk_flags: string[] }
-export interface Score { id: number; score: number; clusters: string[]; reasons: string[]; risk_flags: string[] }
+export interface Score { id: number; score: number; recommendation: "recommended" | "review" | "rejected"; clusters: string[]; reasons: string[]; risk_flags: string[] }
 
 const normalized = (value: string) => value.toLocaleLowerCase("ru-RU");
 export const matches = (text: string, terms: string[]) => terms.filter((term) => normalized(text).includes(normalized(term)));
@@ -45,6 +45,7 @@ export function score(items: Candidate[], rules: Record<string, unknown>, cluste
   const minPostsPerWeek = number(rules.min_posts_per_week, 0);
   const minThematicShare = number(rules.min_thematic_post_share, 0);
   const pass = number(rules.min_score, 0);
+  const reviewMin = Math.min(pass, number(rules.review_min_score, Math.min(pass, 45)));
   return items.map((item) => {
     let value = 0; const reasons: string[] = []; const text = `${item.name}\n${item.description}`;
     const add = (key: string, yes: boolean, label: string) => { const weight = number(weights[key], 0); if (yes && weight) { value += weight; reasons.push(`${label}: +${weight}`); } };
@@ -61,16 +62,24 @@ export function score(items: Candidate[], rules: Record<string, unknown>, cluste
     add("members_range", item.members_count !== null && (min === undefined || item.members_count >= min) && (max === undefined || item.members_count <= max), "размер сообщества");
     const thematicShare = item.activity?.thematic_post_share;
     const thematicWeight = number(weights.thematic_post_share, 0); if (thematicWeight && thematicShare !== null && thematicShare !== undefined) { const points = thematicWeight * thematicShare; value += points; reasons.push(`тематические публикации: ${Math.round(thematicShare * 100)}% +${formatPoints(points)}`); }
+    const lowThematic = thematicShare !== null && thematicShare !== undefined && thematicShare < minThematicShare;
+    const lowThematicPenalty = number(weights.thematic_low_penalty, 0); if (lowThematic && lowThematicPenalty) { value -= lowThematicPenalty; reasons.push(`низкая тематичность: -${lowThematicPenalty}`); }
     const penalty = number(weights.exclude_term_penalty, 0); if (matches(text, excludes).length && penalty) { value -= Math.abs(penalty); reasons.push(`исключающий термин: -${Math.abs(penalty)}`); }
     const lowActivity = item.activity?.posts_per_week !== null && item.activity?.posts_per_week !== undefined && item.activity.posts_per_week < minPostsPerWeek;
     const lowActivityPenalty = number(weights.activity_low_penalty, 0); if (lowActivity && lowActivityPenalty) { value -= lowActivityPenalty; reasons.push(`низкая активность: -${lowActivityPenalty}`); }
-    const risk_flags = [...item.risk_flags, ...(item.activity?.risk_flags || [])]; if (!fresh) risk_flags.push("inactive_or_no_posts"); if (lowActivity) risk_flags.push("low_activity"); if (thematicShare !== null && thematicShare !== undefined && thematicShare < minThematicShare) risk_flags.push("low_thematic_post_share");
+    const risk_flags = [...item.risk_flags, ...(item.activity?.risk_flags || [])]; if (!fresh) risk_flags.push("inactive_or_no_posts"); if (lowActivity) risk_flags.push("low_activity"); if (lowThematic) risk_flags.push("low_thematic_post_share");
+    const finalScore = Math.max(0, Math.min(100, Math.round(value)));
     const clustersFound = clusters.filter((cluster) => {
-      const include = strings(cluster.include_terms); const exclude = strings(cluster.exclude_terms); const minimum = number(cluster.min_score, 0);
-      return value >= minimum && (!include.length || matches(text, include).length > 0) && matches(text, exclude).length === 0;
+      const include = strings(cluster.include_terms); const exclude = strings(cluster.exclude_terms); const minimum = number(cluster.min_score, 0); const mode = cluster.match_mode === "all" ? "all" : "any";
+      const clusterText = `${text}\n${item.activity?.term_matches.join("\n") || ""}`;
+      const included = !include.length || (mode === "all" ? include.every((term) => matches(clusterText, [term]).length > 0) : matches(clusterText, include).length > 0);
+      const enoughThematic = thematicShare === null || thematicShare === undefined || thematicShare >= number(cluster.min_thematic_post_share, 0);
+      const enoughActivity = item.activity?.posts_per_week === null || item.activity?.posts_per_week === undefined || item.activity.posts_per_week >= number(cluster.min_posts_per_week, 0);
+      const forbiddenRisks = strings(cluster.exclude_risk_flags);
+      return finalScore >= minimum && included && matches(clusterText, exclude).length === 0 && enoughThematic && enoughActivity && (!cluster.require_no_risk_flags || !risk_flags.length) && !forbiddenRisks.some((flag) => risk_flags.includes(flag));
     }).map((cluster) => String(cluster.name)).filter(Boolean);
-    if (value < pass) risk_flags.push("below_min_score");
-    return { id: item.id, score: Math.max(0, Math.min(100, Math.round(value))), clusters: clustersFound, reasons, risk_flags: [...new Set(risk_flags)] };
+    if (finalScore < pass) risk_flags.push("below_min_score");
+    return { id: item.id, score: finalScore, recommendation: finalScore >= pass ? "recommended" : finalScore >= reviewMin ? "review" : "rejected", clusters: clustersFound, reasons, risk_flags: [...new Set(risk_flags)] };
   });
 }
 function object(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }

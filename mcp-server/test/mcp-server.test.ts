@@ -274,10 +274,11 @@ describe("MCP-контракт", () => {
       expect(restored.structuredContent).toMatchObject({ run_id: run.run_id, status: "completed", summary: expect.objectContaining({ selected: 1, analyzed: 1, analysis_batch_size: 25, analysis_batches: 1, search_pages: 1, incomplete: false }) });
 
       const callsBeforeRescore = wallCalls;
-      const rescored = await client.callTool({ name: "vk_rescore_community_research_run", arguments: { run_id: run.run_id } });
+      const rescored = await client.callTool({ name: "vk_rescore_community_research_run", arguments: { run_id: run.run_id, scoring_rules: { weights: { name_term: 20 }, min_score: 45 } } });
       expect(rescored.isError).not.toBe(true);
       expect(rescored.structuredContent).toMatchObject({ rescore_of: run.run_id, run_id: expect.any(String), status: "completed", scoring_version: "community-research-v2" });
       expect((rescored.structuredContent as { run_id: string }).run_id).not.toBe(run.run_id);
+      expect((rescored.structuredContent as { passed: Array<{ risk_flags: string[] }> }).passed[0]?.risk_flags).not.toContain("below_min_score");
       expect(wallCalls).toBe(callsBeforeRescore);
       await Promise.all([client.close(), server.close()]);
     } finally {
@@ -309,7 +310,7 @@ describe("MCP-контракт", () => {
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
 
-      expect(restored).toMatchObject({ status: "completed", scoring_version: "community-research-v2", passed: [expect.objectContaining({ score: 46, reasons: expect.arrayContaining(["свежая активность: +15", "тематические публикации: 100% +20"]) })] });
+      expect(restored).toMatchObject({ status: "completed", scoring_version: "community-research-v2", review: [expect.objectContaining({ score: 46, reasons: expect.arrayContaining(["свежая активность: +15", "тематические публикации: 100% +20"]) })] });
       await Promise.all([client.close(), server.close()]);
     } finally {
       await rm(directory, { recursive: true, force: true });

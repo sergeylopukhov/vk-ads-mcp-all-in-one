@@ -63,6 +63,22 @@ describe("сообщества VK", () => {
     expect(result.reasons).toContain("термины в описании: 20 совп. +25 из 25");
   });
 
+  it("штрафует слабую тематичность и не относит рискованный результат к строгому кластеру", () => {
+    const item = candidate({ id: 11, name: "Регентские курсы", description: "Обучение", type: "group", members_count: 100 });
+    item.activity = { last_post_at: new Date().toISOString(), posts_per_week: 2, posts_analyzed: 10, thematic_posts: 2, thematic_post_share: 0.2, term_matches: ["регент"], risk_flags: [] };
+    const result = score([item], {
+      terms: ["регент"],
+      weights: { name_term: 20, thematic_post_share: 20, thematic_low_penalty: 15 },
+      per_match_weights: { name_term: 10 },
+      min_thematic_post_share: 0.5,
+      min_score: 60,
+      review_min_score: 45,
+    }, [{ name: "strict", include_terms: ["регент"], min_score: 0, min_thematic_post_share: 0.5, require_no_risk_flags: true }])[0];
+    expect(result).toMatchObject({ recommendation: "rejected", clusters: [] });
+    expect(result.reasons).toContain("низкая тематичность: -15");
+    expect(result.risk_flags).toContain("low_thematic_post_share");
+  });
+
   it("помечает недоступные публикации как риск, не сохраняя их текст", () => {
     expect(analyze([], ["x"], ["y"])).toEqual({ last_post_at: null, posts_per_week: 0, posts_analyzed: 0, thematic_posts: 0, thematic_post_share: null, term_matches: [], risk_flags: [] });
   });
