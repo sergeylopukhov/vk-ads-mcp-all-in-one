@@ -173,6 +173,30 @@ describe("MCP-контракт", () => {
     await Promise.all([client.close(), server.close()]);
   });
 
+  it("повторяет поиск по релевантности, если VK вернул пустую выдачу на сортировке по участникам", async () => {
+    const sorts: unknown[] = [];
+    const communityClient = {
+      searchPage: async (...args: unknown[]) => {
+        const sort = args.at(-1); sorts.push(sort);
+        return sort === "members"
+          ? { count: 0, offset: 0, items: [] }
+          : { count: 1, offset: 0, items: [{ id: 7 }] };
+      },
+      getByIds: async () => [{ id: 7, name: "Регентские курсы", description: "Обучение", screen_name: "course", members_count: 1_000, type: "group" }],
+      wall: async () => [],
+    };
+    const server = createServer(createClientStub(), "readonly", { communityClient: communityClient as never });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const result = await client.callTool({ name: "vk_discover_communities", arguments: { keywords: ["регент"], min_members: 100, limit: 100 } });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toEqual({ items: [expect.objectContaining({ id: 7 })] });
+    expect(sorts).toEqual(["members", "relevance"]);
+    await Promise.all([client.close(), server.close()]);
+  });
+
   it("по умолчанию анализирует больше прежних 200 кандидатов", async () => {
     const ids = Array.from({ length: 250 }, (_, index) => index + 1);
     const communityClient = {

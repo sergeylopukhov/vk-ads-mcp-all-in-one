@@ -1806,15 +1806,18 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
   };
   const discoverCommunityCandidates = async (input: { keywords: string[]; include_terms: string[]; exclude_terms: string[]; country_id?: number | undefined; city_id?: number | undefined; community_types?: Array<"group" | "page" | "event"> | undefined; min_members?: number | undefined; max_members?: number | undefined; limit: number }): Promise<{ items: Candidate[]; search_pages: number; provider_matches: number; provider_limited: boolean }> => {
     if (input.min_members !== undefined && input.max_members !== undefined && input.min_members > input.max_members) throw new Error("min_members не может быть больше max_members.");
-    const found = new Map<number, Candidate>(); const metadataTerms = [...new Set([...input.keywords, ...input.include_terms])]; const searchSort: CommunitySearchSort = input.min_members === undefined ? "relevance" : "members"; let searchPages = 0; let providerMatches = 0; let providerLimited = false;
+    const found = new Map<number, Candidate>(); const metadataTerms = [...new Set([...input.keywords, ...input.include_terms])]; const preferredSearchSort: CommunitySearchSort = input.min_members === undefined ? "relevance" : "members"; let searchPages = 0; let providerMatches = 0; let providerLimited = false;
     for (const keyword of input.keywords) for (const type of input.community_types?.length ? input.community_types : [undefined]) {
+      let searchSort = preferredSearchSort;
       for (let offset = 0; ; ) {
-        const page = await communityClient.searchPage(keyword, offset, 100, input.country_id, input.city_id, type as CommunityType | undefined, searchSort);
+        let page = await communityClient.searchPage(keyword, offset, 100, input.country_id, input.city_id, type as CommunityType | undefined, searchSort);
+        // Некоторые Core VK API-токены возвращают пустую выдачу при sort=1. Не выдаём это за отсутствие сообществ.
+        if (offset === 0 && searchSort === "members" && page.count === 0) { searchSort = "relevance"; page = await communityClient.searchPage(keyword, offset, 100, input.country_id, input.city_id, type as CommunityType | undefined, searchSort); }
         searchPages += 1; providerMatches += page.count;
         const pageCandidates = (await communityClient.getByIds(page.items.map((item) => item.id))).map((item) => candidate(item));
         for (const item of pageCandidates) if (includeCandidate(item, metadataTerms, input.exclude_terms, input.community_types, input.min_members, input.max_members)) found.set(item.id, item);
         const next = offset + page.items.length;
-        const belowMemberThreshold = input.min_members !== undefined && page.items.length > 0 && pageCandidates.length === page.items.length && pageCandidates.every((item) => item.members_count !== null && item.members_count < input.min_members!);
+        const belowMemberThreshold = searchSort === "members" && input.min_members !== undefined && page.items.length > 0 && pageCandidates.length === page.items.length && pageCandidates.every((item) => item.members_count !== null && item.members_count < input.min_members!);
         if (!page.items.length || belowMemberThreshold || next >= page.count || next >= 1_000) { if (page.count >= 1_000) providerLimited = true; break; }
         offset = next;
       }
