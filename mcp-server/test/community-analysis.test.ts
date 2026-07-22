@@ -30,6 +30,16 @@ describe("сообщества VK", () => {
     expect(request?.authorization).toBeNull();
   });
 
+  it("запрашивает поиск по числу участников только когда это явно выбрано", async () => {
+    let requestUrl = "";
+    const client = new VkCommunityClient({ tokenProvider: () => "token", timeoutMs: 1000, fetchImplementation: async (url) => {
+      requestUrl = String(url);
+      return new Response(JSON.stringify({ response: { count: 0, items: [] } }));
+    } });
+    await client.searchPage("курсы", 0, 100, undefined, undefined, undefined, "members");
+    expect(new URL(requestUrl).searchParams.get("sort")).toBe("1");
+  });
+
   it("фильтрует кандидатов и оценивает причины прозрачно", () => {
     const item = candidate({ id: 7, name: "Турнир", description: "Настольные игры", type: "group", members_count: 1000, is_verified: 1 });
     item.activity = analyze([{ date: Math.floor(Date.now() / 1000), text: "Новый турнир" }], ["турнир"], ["ставки"]);

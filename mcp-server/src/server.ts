@@ -14,7 +14,7 @@ import { validateConfirmedTestBannerDraft, type KnownStaticImage } from "./banne
 import { validateTestAdGroupParent, validateTestAdPlanDraft, type WritePreflightResult } from "./write-preflight.js";
 import { validateAdvertisingDestination } from "./destination-policy.js";
 import { analyze, candidate, includeCandidate, matches, score, type Candidate } from "./community-analysis.js";
-import { VkCommunityClient, type CommunityType } from "./vk-community-client.js";
+import { VkCommunityClient, type CommunitySearchSort, type CommunityType } from "./vk-community-client.js";
 import { CommunityResearchStore } from "./community-research-store.js";
 
 const pagingSchema = {
@@ -1802,23 +1802,24 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
   });
   const clusterSchema = z.object({ name: z.string().trim().min(1).max(120), include_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), min_score: z.number().finite().min(0).max(100).default(0) }).strict();
   const communityResearchInputSchema = {
-    keywords: z.array(z.string().trim().min(1).max(120)).min(1).max(20), include_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), country_id: z.number().int().positive().optional(), city_id: z.number().int().positive().optional(), community_types: z.array(communityTypes).max(3).optional(), min_members: z.number().int().nonnegative().optional(), max_members: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(1_000).default(200), posts_limit: z.number().int().min(1).max(100).default(30), scoring_rules: scoringRulesSchema.optional(), clusters: z.array(clusterSchema).max(50).default([]),
+    keywords: z.array(z.string().trim().min(1).max(120)).min(1).max(20), include_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), country_id: z.number().int().positive().optional(), city_id: z.number().int().positive().optional(), community_types: z.array(communityTypes).max(3).optional(), min_members: z.number().int().nonnegative().optional(), max_members: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(1_000).default(1_000), posts_limit: z.number().int().min(1).max(100).default(30), scoring_rules: scoringRulesSchema.optional(), clusters: z.array(clusterSchema).max(50).default([]),
   };
   const discoverCommunityCandidates = async (input: { keywords: string[]; include_terms: string[]; exclude_terms: string[]; country_id?: number | undefined; city_id?: number | undefined; community_types?: Array<"group" | "page" | "event"> | undefined; min_members?: number | undefined; max_members?: number | undefined; limit: number }): Promise<{ items: Candidate[]; search_pages: number; provider_matches: number; provider_limited: boolean }> => {
     if (input.min_members !== undefined && input.max_members !== undefined && input.min_members > input.max_members) throw new Error("min_members не может быть больше max_members.");
-    const ids = new Set<number>(); let searchPages = 0; let providerMatches = 0; let providerLimited = false;
+    const found = new Map<number, Candidate>(); const metadataTerms = [...new Set([...input.keywords, ...input.include_terms])]; const searchSort: CommunitySearchSort = input.min_members === undefined ? "relevance" : "members"; let searchPages = 0; let providerMatches = 0; let providerLimited = false;
     for (const keyword of input.keywords) for (const type of input.community_types?.length ? input.community_types : [undefined]) {
       for (let offset = 0; ; ) {
-        const page = await communityClient.searchPage(keyword, offset, 100, input.country_id, input.city_id, type as CommunityType | undefined);
+        const page = await communityClient.searchPage(keyword, offset, 100, input.country_id, input.city_id, type as CommunityType | undefined, searchSort);
         searchPages += 1; providerMatches += page.count;
-        for (const item of page.items) ids.add(item.id);
+        const pageCandidates = (await communityClient.getByIds(page.items.map((item) => item.id))).map((item) => candidate(item));
+        for (const item of pageCandidates) if (includeCandidate(item, metadataTerms, input.exclude_terms, input.community_types, input.min_members, input.max_members)) found.set(item.id, item);
         const next = offset + page.items.length;
-        if (!page.items.length || next >= page.count || next >= 1_000) { if (page.count >= 1_000) providerLimited = true; break; }
+        const belowMemberThreshold = input.min_members !== undefined && page.items.length > 0 && pageCandidates.length === page.items.length && pageCandidates.every((item) => item.members_count !== null && item.members_count < input.min_members!);
+        if (!page.items.length || belowMemberThreshold || next >= page.count || next >= 1_000) { if (page.count >= 1_000) providerLimited = true; break; }
         offset = next;
       }
     }
-    const items = (await communityClient.getByIds([...ids])).map((item) => candidate(item)).filter((item) => includeCandidate(item, input.include_terms, input.exclude_terms, input.community_types, input.min_members, input.max_members));
-    return { items, search_pages: searchPages, provider_matches: providerMatches, provider_limited: providerLimited };
+    return { items: [...found.values()], search_pages: searchPages, provider_matches: providerMatches, provider_limited: providerLimited };
   };
   const analyzeCommunityCandidates = async (items: Candidate[], postsLimit: number, terms: string[], excludes: string[]): Promise<Candidate[]> => {
     for (const item of items) if (!item.risk_flags.length) {
@@ -1828,8 +1829,8 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
   };
   const defaultCommunityScoring = (terms: string[], excludes: string[]): Record<string, unknown> => ({
     terms, exclude_terms: excludes,
-    weights: { name_term: 25, description_term: 25, post_term: 25, activity_fresh: 15, thematic_post_share: 10, exclude_term_penalty: 15 },
-    per_match_weights: { name_term: 8, description_term: 4, post_term: 3 }, activity_fresh_days: 30, min_posts_per_week: 0, min_thematic_post_share: 0, min_score: 50,
+    weights: { name_term: 20, description_term: 20, post_term: 20, activity_fresh: 15, thematic_post_share: 20, activity_low_penalty: 20, exclude_term_penalty: 15 },
+    per_match_weights: { name_term: 8, description_term: 4, post_term: 3 }, activity_fresh_days: 30, min_posts_per_week: 1, min_thematic_post_share: 0.5, min_score: 50,
   });
   const communityResearchItemSchema = communityCandidateSchema.extend(communityScoreSchema.shape);
   const communityResearchRunSchema = z.object({ run_id: z.string().uuid(), created_at: z.string().datetime(), expires_at: z.string().datetime(), scoring_version: z.literal("community-research-v1"), request: z.record(z.string(), z.unknown()), summary: z.object({ source_matches: z.number().int().nonnegative(), matched_filters: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), analyzed: z.number().int().nonnegative(), posts_unavailable: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), rejected: z.number().int().nonnegative(), search_pages: z.number().int().positive(), incomplete: z.boolean(), incomplete_reasons: z.array(z.string()) }), passed: z.array(communityResearchItemSchema), rejected: z.array(communityResearchItemSchema) });

@@ -122,6 +122,97 @@ describe("MCP-контракт", () => {
     await Promise.all([client.close(), server.close()]);
   });
 
+  it("в универсальном исследовании поднимает тематически активные сообщества выше неактивных", async () => {
+    const now = Math.floor(Date.now() / 1_000);
+    const communityClient = {
+      searchPage: async () => ({ count: 2, offset: 0, items: [{ id: 7 }, { id: 8 }] }),
+      getByIds: async () => [
+        { id: 7, name: "Регентские курсы", description: "Обучение регентов", screen_name: "active", members_count: 500, type: "group" },
+        { id: 8, name: "Регентская школа", description: "Обучение регентов", screen_name: "inactive", members_count: 5_000, type: "group" },
+      ],
+      wall: async (id: number) => id === 7
+        ? [{ date: now - 7 * 86400, text: "Регентская практика" }, { date: now - 86400, text: "Регентское занятие" }]
+        : [],
+    };
+    const server = createServer(createClientStub(), "readonly", { communityClient: communityClient as never });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const result = await client.callTool({ name: "vk_find_community_candidates", arguments: { keywords: ["регент"], limit: 10, posts_limit: 10 } });
+    expect(result.isError).not.toBe(true);
+    const items = (result.structuredContent as { items: Array<{ id: number; score: number; reasons: string[] }> }).items;
+    const active = items.find((item) => item.id === 7)!;
+    const inactive = items.find((item) => item.id === 8)!;
+    expect(active.score).toBeGreaterThan(inactive.score);
+    expect(active.reasons).toContain("тематические публикации: 100% +20");
+    expect(inactive.reasons).toContain("низкая активность: -20");
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("при min_members останавливает отсортированный поиск после страницы ниже порога", async () => {
+    let calls = 0;
+    const communityClient = {
+      searchPage: async (...args: unknown[]) => {
+        calls += 1;
+        expect(args.at(-1)).toBe("members");
+        return { count: 200, offset: 0, items: [{ id: 7 }] };
+      },
+      getByIds: async () => [{ id: 7, name: "Маленькая группа", description: "", screen_name: "small", members_count: 999, type: "group" }],
+      wall: async () => [],
+    };
+    const server = createServer(createClientStub(), "readonly", { communityClient: communityClient as never });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const result = await client.callTool({ name: "vk_discover_communities", arguments: { keywords: ["курсы"], min_members: 1_000, limit: 100 } });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toEqual({ items: [] });
+    expect(calls).toBe(1);
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("по умолчанию анализирует больше прежних 200 кандидатов", async () => {
+    const ids = Array.from({ length: 250 }, (_, index) => index + 1);
+    const communityClient = {
+      searchPage: async (_query: string, offset: number) => ({ count: ids.length, offset, items: ids.slice(offset, offset + 100).map((id) => ({ id })) }),
+      getByIds: async (pageIds: number[]) => pageIds.map((id) => ({ id, name: `Курс ${id}`, description: "курс", screen_name: `course${id}`, members_count: id, type: "group" })),
+      wall: async () => [],
+    };
+    const server = createServer(createClientStub(), "readonly", { communityClient: communityClient as never });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const result = await client.callTool({ name: "vk_find_community_candidates", arguments: { keywords: ["курс"], posts_limit: 1 } });
+    expect(result.isError).not.toBe(true);
+    expect((result.structuredContent as { items: unknown[] }).items).toHaveLength(250);
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("не анализирует ложный результат поиска без подтверждения фразы в metadata", async () => {
+    let wallCalls = 0;
+    const communityClient = {
+      searchPage: async () => ({ count: 2, offset: 0, items: [{ id: 7 }, { id: 8 }] }),
+      getByIds: async () => [
+        { id: 7, name: "Регентские курсы", description: "Обучение", screen_name: "relevant", members_count: 500, type: "group" },
+        { id: 8, name: "Музыкальная школа", description: "Общий курс", screen_name: "false-result", members_count: 5_000, type: "group" },
+      ],
+      wall: async () => { wallCalls += 1; return []; },
+    };
+    const server = createServer(createClientStub(), "readonly", { communityClient: communityClient as never });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const result = await client.callTool({ name: "vk_find_community_candidates", arguments: { keywords: ["регент"], posts_limit: 1 } });
+    expect(result.isError).not.toBe(true);
+    expect((result.structuredContent as { items: Array<{ id: number }> }).items).toEqual([expect.objectContaining({ id: 7 })]);
+    expect(wallCalls).toBe(1);
+    await Promise.all([client.close(), server.close()]);
+  });
+
   it("сохраняет полный запуск исследования и возвращает тот же снимок по run_id", async () => {
     const directory = await mkdtemp(join(tmpdir(), "vk-community-research-mcp-"));
     try {

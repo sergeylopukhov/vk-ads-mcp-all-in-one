@@ -1,4 +1,5 @@
 export type CommunityType = "group" | "page" | "event";
+export type CommunitySearchSort = "relevance" | "members";
 
 export interface VkCommunity {
   id: number;
@@ -41,12 +42,12 @@ export class VkCommunityClient {
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
-  async search(query: string, offset = 0, count = 100, countryId?: number, cityId?: number, type?: CommunityType): Promise<VkCommunity[]> {
-    return (await this.searchPage(query, offset, count, countryId, cityId, type)).items;
+  async search(query: string, offset = 0, count = 100, countryId?: number, cityId?: number, type?: CommunityType, sort: CommunitySearchSort = "relevance"): Promise<VkCommunity[]> {
+    return (await this.searchPage(query, offset, count, countryId, cityId, type, sort)).items;
   }
 
-  async searchPage(query: string, offset = 0, count = 100, countryId?: number, cityId?: number, type?: CommunityType): Promise<VkCommunityPage> {
-    const result = await this.call("groups.search", { q: query, offset, count, ...(countryId ? { country_id: countryId } : {}), ...(cityId ? { city_id: cityId } : {}), ...(type ? { type } : {}) });
+  async searchPage(query: string, offset = 0, count = 100, countryId?: number, cityId?: number, type?: CommunityType, sort: CommunitySearchSort = "relevance"): Promise<VkCommunityPage> {
+    const result = await this.call("groups.search", { q: query, offset, count, sort: sort === "members" ? 1 : 0, ...(countryId ? { country_id: countryId } : {}), ...(cityId ? { city_id: cityId } : {}), ...(type ? { type } : {}) });
     const items = asItems(result).map(asCommunity).filter((item): item is VkCommunity => item !== null);
     const source = result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : {};
     const total = Number(source.count);
