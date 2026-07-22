@@ -1771,7 +1771,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     options.allowPiiUploads,
     options.allowAgencyWrites,
   );
-  const server = new McpServer({ name: "vk-ads-mcp", version: "1.2.3" }, { capabilities: { logging: {} } });
+  const server = new McpServer({ name: "vk-ads-mcp", version: "1.2.4" }, { capabilities: { logging: {} } });
   const writeGate = new WriteGate(mode === "write", Date.now, randomUUID, options.auditFile, options.previewTtlMs, options.requireWriteConfirmation ?? true);
   const connectionId = options.connectionId ?? "default";
   const profileName = options.profileName ?? "default";
@@ -1786,18 +1786,17 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
   const communityCandidateSchema = z.object({ id: z.number().int().positive(), url: z.string().url(), name: z.string(), description: z.string(), type: z.string().nullable(), members_count: z.number().int().nonnegative().nullable(), verified: z.boolean(), retrieved_at: z.string(), risk_flags: z.array(z.string()), activity: z.object({ last_post_at: z.string().nullable(), posts_per_week: z.number().nullable(), posts_analyzed: z.number().int().nonnegative(), thematic_posts: z.number().int().nonnegative(), thematic_post_share: z.number().min(0).max(1).nullable(), term_matches: z.array(z.string()), risk_flags: z.array(z.string()) }).optional() });
   const communityScoreSchema = z.object({ score: z.number().min(0).max(100), clusters: z.array(z.string()), reasons: z.array(z.string()), risk_flags: z.array(z.string()) });
   const scoringRulesSchema = z.object({
-    terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
-    exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
+    terms: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
+    exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
     weights: z.object({ name_term: z.number().finite().nonnegative().optional(), description_term: z.number().finite().nonnegative().optional(), post_term: z.number().finite().nonnegative().optional(), activity_fresh: z.number().finite().nonnegative().optional(), activity_low_penalty: z.number().finite().nonnegative().optional(), thematic_post_share: z.number().finite().nonnegative().optional(), members_range: z.number().finite().nonnegative().optional(), exclude_term_penalty: z.number().finite().nonnegative().optional() }).strict().refine((weights) => Object.values(weights).some((weight) => typeof weight === "number" && weight > 0), "Укажите хотя бы один положительный вес."),
-    term_weights: z.record(z.string().trim().min(1).max(120), z.number().finite().positive()).default({}),
-    per_match_weights: z.object({ name_term: z.number().finite().positive().optional(), description_term: z.number().finite().positive().optional(), post_term: z.number().finite().positive().optional() }).strict().default({}),
-    activity_fresh_days: z.number().int().positive().max(3_650).default(30),
-    min_posts_per_week: z.number().nonnegative().max(10_000).default(0),
-    min_thematic_post_share: z.number().min(0).max(1).default(0),
+    term_weights: z.record(z.string().trim().min(1).max(120), z.number().finite().positive()).optional(),
+    per_match_weights: z.object({ name_term: z.number().finite().positive().optional(), description_term: z.number().finite().positive().optional(), post_term: z.number().finite().positive().optional() }).strict().optional(),
+    activity_fresh_days: z.number().int().positive().max(3_650).optional(),
+    min_posts_per_week: z.number().nonnegative().max(10_000).optional(),
+    min_thematic_post_share: z.number().min(0).max(1).optional(),
     members_range: z.object({ min: z.number().int().nonnegative().optional(), max: z.number().int().nonnegative().optional() }).strict().optional(),
-    min_score: z.number().finite().min(0).max(100).default(0),
+    min_score: z.number().finite().min(0).max(100).optional(),
   }).strict().superRefine((rules, context) => {
-    if ((rules.weights.name_term || rules.weights.description_term || rules.weights.post_term) && !rules.terms.length) context.addIssue({ code: "custom", path: ["terms"], message: "Для весов совпадения укажите хотя бы один terms." });
     if (rules.members_range?.min !== undefined && rules.members_range.max !== undefined && rules.members_range.min > rules.members_range.max) context.addIssue({ code: "custom", path: ["members_range"], message: "min не может быть больше max." });
   });
   const clusterSchema = z.object({ name: z.string().trim().min(1).max(120), include_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), min_score: z.number().finite().min(0).max(100).default(0) }).strict();
@@ -1834,11 +1833,27 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
   const defaultCommunityScoring = (terms: string[], excludes: string[]): Record<string, unknown> => ({
     terms, exclude_terms: excludes,
     weights: { name_term: 20, description_term: 20, post_term: 20, activity_fresh: 15, thematic_post_share: 20, activity_low_penalty: 20, exclude_term_penalty: 15 },
-    per_match_weights: { name_term: 8, description_term: 4, post_term: 3 }, activity_fresh_days: 30, min_posts_per_week: 1, min_thematic_post_share: 0.5, min_score: 50,
+    per_match_weights: { name_term: 8, description_term: 4, post_term: 3 }, activity_fresh_days: 30, min_posts_per_week: 1, min_thematic_post_share: 0.5, min_score: 45,
   });
+  /** Неполные пользовательские правила переопределяют базовый профиль, а не отключают его неявно. Ноль отключает сигнал явно. */
+  const resolveCommunityScoring = (overrides: Record<string, unknown> | undefined, fallbackTerms: string[], fallbackExcludes: string[]): Record<string, unknown> => {
+    const base = defaultCommunityScoring(fallbackTerms, fallbackExcludes);
+    if (!overrides) return base;
+    const has = (key: string) => Object.prototype.hasOwnProperty.call(overrides, key);
+    const objectValue = (value: unknown) => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    return {
+      ...base,
+      ...overrides,
+      terms: has("terms") ? overrides.terms : fallbackTerms,
+      exclude_terms: has("exclude_terms") ? overrides.exclude_terms : fallbackExcludes,
+      weights: { ...objectValue(base.weights), ...objectValue(overrides.weights) },
+      term_weights: { ...objectValue(base.term_weights), ...objectValue(overrides.term_weights) },
+      per_match_weights: { ...objectValue(base.per_match_weights), ...objectValue(overrides.per_match_weights) },
+    };
+  };
   const communityResearchItemSchema = communityCandidateSchema.extend(communityScoreSchema.shape);
   const communityResearchProgressSchema = z.object({ discovered: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), processed: z.number().int().nonnegative(), remaining: z.number().int().nonnegative(), batch_size: z.number().int().positive(), batches_total: z.number().int().nonnegative(), batches_completed: z.number().int().nonnegative() });
-  const communityResearchRunSchema = z.object({ run_id: z.string().uuid(), created_at: z.string().datetime(), expires_at: z.string().datetime(), scoring_version: z.literal("community-research-v1"), status: z.enum(["queued", "running", "completed", "failed"]), error: z.string().optional(), request: z.record(z.string(), z.unknown()), progress: communityResearchProgressSchema, summary: z.object({ source_matches: z.number().int().nonnegative(), matched_filters: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), analyzed: z.number().int().nonnegative(), analysis_batch_size: z.number().int().positive(), analysis_batches: z.number().int().nonnegative(), posts_unavailable: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), rejected: z.number().int().nonnegative(), search_pages: z.number().int().positive(), incomplete: z.boolean(), incomplete_reasons: z.array(z.string()) }), passed: z.array(communityResearchItemSchema), rejected: z.array(communityResearchItemSchema) });
+  const communityResearchRunSchema = z.object({ run_id: z.string().uuid(), created_at: z.string().datetime(), expires_at: z.string().datetime(), scoring_version: z.enum(["community-research-v1", "community-research-v2"]), status: z.enum(["queued", "running", "completed", "failed"]), error: z.string().optional(), request: z.record(z.string(), z.unknown()), progress: communityResearchProgressSchema, summary: z.object({ source_matches: z.number().int().nonnegative(), matched_filters: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), analyzed: z.number().int().nonnegative(), analysis_batch_size: z.number().int().positive(), analysis_batches: z.number().int().nonnegative(), posts_unavailable: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), rejected: z.number().int().nonnegative(), search_pages: z.number().int().positive(), incomplete: z.boolean(), incomplete_reasons: z.array(z.string()) }), passed: z.array(communityResearchItemSchema), rejected: z.array(communityResearchItemSchema) });
   const sortedCommunityResearch = (items: Array<Candidate & { score: number; clusters: string[]; reasons: string[] }>) => items.sort((left, right) => {
     const activityOrder = (Date.parse(right.activity?.last_post_at ?? "") || 0) - (Date.parse(left.activity?.last_post_at ?? "") || 0);
     return right.score - left.score || activityOrder || (right.members_count ?? 0) - (left.members_count ?? 0) || left.id - right.id;
@@ -1846,7 +1861,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
   const runCommunityResearch = async (input: { keywords: string[]; include_terms: string[]; exclude_terms: string[]; country_id?: number | undefined; city_id?: number | undefined; community_types?: Array<"group" | "page" | "event"> | undefined; min_members?: number | undefined; max_members?: number | undefined; limit?: number | undefined; posts_limit: number; scoring_rules?: Record<string, unknown> | undefined; clusters: Array<Record<string, unknown>> }, persist: boolean) => {
     if (persist && !communityResearchStore) throw new Error("Локальное хранилище снимков исследований не настроено.");
     const derivedTerms = [...new Set([...input.keywords, ...input.include_terms])];
-    const rules = input.scoring_rules ?? defaultCommunityScoring(derivedTerms, input.exclude_terms);
+    const rules = resolveCommunityScoring(input.scoring_rules, derivedTerms, input.exclude_terms);
     const terms = Array.isArray(rules.terms) ? rules.terms.filter((term): term is string => typeof term === "string") : [];
     const excludes = Array.isArray(rules.exclude_terms) ? rules.exclude_terms.filter((term): term is string => typeof term === "string") : [];
     const discovery = await discoverCommunityCandidates(input);
@@ -1865,7 +1880,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     const threshold = typeof rules.min_score === "number" ? rules.min_score : 0;
     const incompleteReasons = [...(discovery.provider_limited ? ["provider_search_limit"] : []), ...(discovery.items.length > selectedForAnalysis.length ? ["requested_result_limit"] : [])];
     const createdAt = new Date().toISOString();
-    const run = { run_id: randomUUID(), created_at: createdAt, expires_at: communityResearchStore?.expiresAt() ?? createdAt, scoring_version: "community-research-v1" as const, status: "completed" as const, request: { keywords: input.keywords, include_terms: input.include_terms, exclude_terms: input.exclude_terms, ...(input.country_id ? { country_id: input.country_id } : {}), ...(input.city_id ? { city_id: input.city_id } : {}), ...(input.community_types ? { community_types: input.community_types } : {}), ...(input.min_members !== undefined ? { min_members: input.min_members } : {}), ...(input.max_members !== undefined ? { max_members: input.max_members } : {}), ...(input.limit !== undefined ? { limit: input.limit } : {}), posts_limit: input.posts_limit, scoring_rules: rules, clusters: input.clusters }, progress: { discovered: discovery.items.length, selected: selectedForAnalysis.length, processed: selectedForAnalysis.length, remaining: 0, batch_size: analysisBatchSize, batches_total: Math.ceil(selectedForAnalysis.length / analysisBatchSize), batches_completed: Math.ceil(selectedForAnalysis.length / analysisBatchSize) }, summary: { source_matches: discovery.provider_matches, matched_filters: discovery.items.length, selected: selectedForAnalysis.length, analyzed: communities.filter((item) => item.activity !== undefined).length, analysis_batch_size: analysisBatchSize, analysis_batches: Math.ceil(selectedForAnalysis.length / analysisBatchSize), posts_unavailable: communities.filter((item) => item.risk_flags.includes("posts_unavailable")).length, passed: items.filter((item) => item.score >= threshold).length, rejected: items.filter((item) => item.score < threshold).length, search_pages: discovery.search_pages, incomplete: incompleteReasons.length > 0, incomplete_reasons: incompleteReasons }, passed: items.filter((item) => item.score >= threshold), rejected: items.filter((item) => item.score < threshold) };
+    const run = { run_id: randomUUID(), created_at: createdAt, expires_at: communityResearchStore?.expiresAt() ?? createdAt, scoring_version: "community-research-v2" as const, status: "completed" as const, request: { keywords: input.keywords, include_terms: input.include_terms, exclude_terms: input.exclude_terms, ...(input.country_id ? { country_id: input.country_id } : {}), ...(input.city_id ? { city_id: input.city_id } : {}), ...(input.community_types ? { community_types: input.community_types } : {}), ...(input.min_members !== undefined ? { min_members: input.min_members } : {}), ...(input.max_members !== undefined ? { max_members: input.max_members } : {}), ...(input.limit !== undefined ? { limit: input.limit } : {}), posts_limit: input.posts_limit, scoring_rules: rules, clusters: input.clusters }, progress: { discovered: discovery.items.length, selected: selectedForAnalysis.length, processed: selectedForAnalysis.length, remaining: 0, batch_size: analysisBatchSize, batches_total: Math.ceil(selectedForAnalysis.length / analysisBatchSize), batches_completed: Math.ceil(selectedForAnalysis.length / analysisBatchSize) }, summary: { source_matches: discovery.provider_matches, matched_filters: discovery.items.length, selected: selectedForAnalysis.length, analyzed: communities.filter((item) => item.activity !== undefined).length, analysis_batch_size: analysisBatchSize, analysis_batches: Math.ceil(selectedForAnalysis.length / analysisBatchSize), posts_unavailable: communities.filter((item) => item.risk_flags.includes("posts_unavailable")).length, passed: items.filter((item) => item.score >= threshold).length, rejected: items.filter((item) => item.score < threshold).length, search_pages: discovery.search_pages, incomplete: incompleteReasons.length > 0, incomplete_reasons: incompleteReasons }, passed: items.filter((item) => item.score >= threshold), rejected: items.filter((item) => item.score < threshold) };
     if (persist) await communityResearchStore!.save(run);
     return run;
   };
@@ -1898,7 +1913,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
   const startCommunityResearch = async (input: { keywords: string[]; include_terms: string[]; exclude_terms: string[]; country_id?: number | undefined; city_id?: number | undefined; community_types?: Array<"group" | "page" | "event"> | undefined; min_members?: number | undefined; max_members?: number | undefined; limit?: number | undefined; posts_limit: number; scoring_rules?: Record<string, unknown> | undefined; clusters: Array<Record<string, unknown>> }, sessionId?: string) => {
     if (!communityResearchStore) throw new Error("Локальное хранилище снимков исследований не настроено.");
     const derivedTerms = [...new Set([...input.keywords, ...input.include_terms])];
-    const rules = input.scoring_rules ?? defaultCommunityScoring(derivedTerms, input.exclude_terms);
+    const rules = resolveCommunityScoring(input.scoring_rules, derivedTerms, input.exclude_terms);
     const terms = Array.isArray(rules.terms) ? rules.terms.filter((term): term is string => typeof term === "string") : [];
     const excludes = Array.isArray(rules.exclude_terms) ? rules.exclude_terms.filter((term): term is string => typeof term === "string") : [];
     const discovery = await discoverCommunityCandidates(input);
@@ -1910,7 +1925,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     const pending = input.limit === undefined ? selected : selected.slice(0, input.limit);
     const incompleteReasons = [...(discovery.provider_limited ? ["provider_search_limit"] : []), ...(selected.length > pending.length ? ["requested_result_limit"] : [])];
     const createdAt = new Date().toISOString();
-    const run: Record<string, unknown> = { run_id: randomUUID(), created_at: createdAt, expires_at: communityResearchStore.expiresAt(), scoring_version: "community-research-v1", status: "queued", request: { keywords: input.keywords, include_terms: input.include_terms, exclude_terms: input.exclude_terms, ...(input.country_id ? { country_id: input.country_id } : {}), ...(input.city_id ? { city_id: input.city_id } : {}), ...(input.community_types ? { community_types: input.community_types } : {}), ...(input.min_members !== undefined ? { min_members: input.min_members } : {}), ...(input.max_members !== undefined ? { max_members: input.max_members } : {}), ...(input.limit !== undefined ? { limit: input.limit } : {}), posts_limit: input.posts_limit, scoring_rules: rules, clusters: input.clusters }, progress: { discovered: discovery.items.length, selected: pending.length, processed: 0, remaining: pending.length, batch_size: analysisBatchSize, batches_total: Math.ceil(pending.length / analysisBatchSize), batches_completed: 0 }, summary: { source_matches: discovery.provider_matches, matched_filters: discovery.items.length, selected: pending.length, analyzed: 0, analysis_batch_size: analysisBatchSize, analysis_batches: 0, posts_unavailable: 0, passed: 0, rejected: 0, search_pages: discovery.search_pages, incomplete: incompleteReasons.length > 0, incomplete_reasons: incompleteReasons }, pending, passed: [], rejected: [] };
+    const run: Record<string, unknown> = { run_id: randomUUID(), created_at: createdAt, expires_at: communityResearchStore.expiresAt(), scoring_version: "community-research-v2", status: "queued", request: { keywords: input.keywords, include_terms: input.include_terms, exclude_terms: input.exclude_terms, ...(input.country_id ? { country_id: input.country_id } : {}), ...(input.city_id ? { city_id: input.city_id } : {}), ...(input.community_types ? { community_types: input.community_types } : {}), ...(input.min_members !== undefined ? { min_members: input.min_members } : {}), ...(input.max_members !== undefined ? { max_members: input.max_members } : {}), ...(input.limit !== undefined ? { limit: input.limit } : {}), posts_limit: input.posts_limit, scoring_rules: rules, clusters: input.clusters }, progress: { discovered: discovery.items.length, selected: pending.length, processed: 0, remaining: pending.length, batch_size: analysisBatchSize, batches_total: Math.ceil(pending.length / analysisBatchSize), batches_completed: 0 }, summary: { source_matches: discovery.provider_matches, matched_filters: discovery.items.length, selected: pending.length, analyzed: 0, analysis_batch_size: analysisBatchSize, analysis_batches: 0, posts_unavailable: 0, passed: 0, rejected: 0, search_pages: discovery.search_pages, incomplete: incompleteReasons.length > 0, incomplete_reasons: incompleteReasons }, pending, passed: [], rejected: [] };
     await communityResearchStore.save(run as never);
     const runId = run.run_id as string;
     communityResearchSubscribers.set(runId, new Set([sessionId]));
@@ -2015,15 +2030,16 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     title: "Оценить сообщества VK", description: "Только чтение: прозрачный локальный скоринг от 0 до 100 по пользовательским весам и кластерам.",
     inputSchema: { community_ids: z.array(z.number().int().positive()).min(1).max(500), scoring_rules: scoringRulesSchema, clusters: z.array(clusterSchema).max(50).default([]) }, outputSchema: { items: z.array(z.record(z.string(), z.unknown())) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   }, async ({ community_ids, scoring_rules, clusters }) => {
-    const terms = Array.isArray(scoring_rules.terms) ? scoring_rules.terms.filter((term): term is string => typeof term === "string") : [];
-    const excludes = Array.isArray(scoring_rules.exclude_terms) ? scoring_rules.exclude_terms.filter((term): term is string => typeof term === "string") : [];
+    const rules = resolveCommunityScoring(scoring_rules, [], []);
+    const terms = Array.isArray(rules.terms) ? rules.terms.filter((term): term is string => typeof term === "string") : [];
+    const excludes = Array.isArray(rules.exclude_terms) ? rules.exclude_terms.filter((term): term is string => typeof term === "string") : [];
     const communities: Candidate[] = [];
     for (const item of await communityClient.getByIds([...new Set(community_ids)])) {
       const result = candidate(item);
       if (!result.risk_flags.length) { try { result.activity = analyze(await communityClient.wall(item.id, 30), terms, excludes); result.risk_flags.push(...result.activity.risk_flags); } catch { result.risk_flags.push("posts_unavailable"); } }
       communities.push(result);
     }
-    return textAndData({ items: score(communities, scoring_rules, clusters) }, "Скоринг выполнен; причины начислений и штрафов включены.");
+    return textAndData({ items: score(communities, rules, clusters) }, "Скоринг выполнен; причины начислений и штрафов включены.");
   });
   server.registerTool("vk_export_community_candidates", {
     title: "Экспортировать кандидатов сообществ VK", description: "Только чтение: формирует CSV или JSON в памяти и помечает каждого кандидата статусом pending_approval.",

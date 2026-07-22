@@ -100,7 +100,7 @@ describe("MCP-контракт", () => {
 
     const valid = await client.callTool({ name: "vk_score_communities", arguments: { community_ids: [7], scoring_rules: { terms: ["регент"], weights: { name_term: 35, post_term: 25 }, per_match_weights: { name_term: 35, post_term: 25 } } } });
     expect(valid.isError).not.toBe(true);
-    expect(valid.structuredContent).toMatchObject({ items: [expect.objectContaining({ id: 7, score: 60, reasons: expect.arrayContaining(["термины в названии: 1 совп. +35 из 35", "термины в публикациях: 1 совп. +25 из 25"]) })] });
+    expect(valid.structuredContent).toMatchObject({ items: [expect.objectContaining({ id: 7, score: 95, reasons: expect.arrayContaining(["термины в названии: 1 совп. +35 из 35", "термины в публикациях: 1 совп. +25 из 25", "свежая активность: +15", "тематические публикации: 100% +20"]) })] });
 
     await Promise.all([client.close(), server.close()]);
   });
@@ -271,6 +271,37 @@ describe("MCP-контракт", () => {
       const restored = await client.callTool({ name: "vk_get_community_research_run", arguments: { run_id: run.run_id } });
       expect(restored.isError).not.toBe(true);
       expect(restored.structuredContent).toMatchObject({ run_id: run.run_id, status: "completed", summary: expect.objectContaining({ selected: 1, analyzed: 1, analysis_batch_size: 25, analysis_batches: 1, search_pages: 1, incomplete: false }) });
+      await Promise.all([client.close(), server.close()]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("добавляет базовые сигналы к неполному профилю скоринга исследования", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "vk-community-research-default-scoring-"));
+    try {
+      const communityClient = {
+        searchPage: async () => ({ count: 1, offset: 0, items: [{ id: 7 }] }),
+        getByIds: async () => [{ id: 7, name: "Регентские курсы", description: "Обучение", screen_name: "regent", members_count: 1_000, type: "group" }],
+        wall: async () => [{ date: Math.floor(Date.now() / 1_000), text: "Регентские занятия" }],
+      };
+      const store = new CommunityResearchStore(join(directory, "runs.json"), 24 * 60 * 60 * 1_000);
+      const server = createServer(createClientStub(), "readonly", { communityClient: communityClient as never, communityResearchStore: store });
+      const client = new Client({ name: "test-client", version: "0.0.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+      const started = await client.callTool({ name: "vk_start_community_research", arguments: { keywords: ["регент"], posts_limit: 1, scoring_rules: { weights: { name_term: 25 } } } });
+      const runId = (started.structuredContent as { run_id: string }).run_id;
+      let restored: { status: string; scoring_version: string; passed: Array<{ score: number; reasons: string[] }> } | undefined;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const current = await client.callTool({ name: "vk_get_community_research_run", arguments: { run_id: runId } });
+        restored = current.structuredContent as typeof restored;
+        if (restored?.status === "completed") break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+
+      expect(restored).toMatchObject({ status: "completed", scoring_version: "community-research-v2", passed: [expect.objectContaining({ score: 46, reasons: expect.arrayContaining(["свежая активность: +15", "тематические публикации: 100% +20"]) })] });
       await Promise.all([client.close(), server.close()]);
     } finally {
       await rm(directory, { recursive: true, force: true });
