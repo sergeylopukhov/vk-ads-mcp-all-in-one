@@ -358,7 +358,8 @@ export class VkAdsClient {
     if (!input.name.trim() || input.name.length > 120) throw new Error("name должен содержать от 1 до 120 символов.");
     if (!input.substr.trim() || input.substr.length > 2_000) throw new Error("substr должен содержать от 1 до 2000 символов.");
     if (input.value !== undefined && input.value !== null && (!Number.isInteger(input.value) || input.value < -2_147_483_647 || input.value > 2_147_483_647)) throw new Error("value выходит за допустимый диапазон integer.");
-    return this.post(`/remarketing/counters/${input.counterId}/goals.json`, { substr: input.substr, condition: input.condition, name: input.name, goal_type: input.goalType, ...(input.value === undefined ? {} : { value: input.value }) });
+    const apiCounterId = await this.remarketingCounterApiId(input.counterId);
+    return this.post(`/remarketing/counters/${apiCounterId}/goals.json`, { substr: input.substr, condition: input.condition, name: input.name, goal_type: input.goalType, ...(input.value === undefined ? {} : { value: input.value }) });
   }
 
   async updateTestCounterGoal(input: { counterId: number; goalId: number; name: string; value: number; goalType: "content" | "search" | "basket" | "wishlist" | "checkout" | "payment_info" | "purchase" | "lead" | "registration" | "custom" }): Promise<VkObject> {
@@ -366,15 +367,31 @@ export class VkAdsClient {
     this.assertPositiveId(input.goalId);
     if (!input.name.trim() || input.name.length > 120) throw new Error("name должен содержать от 1 до 120 символов.");
     if (!Number.isInteger(input.value) || input.value < -2_147_483_647 || input.value > 2_147_483_647) throw new Error("value цели должен быть целым числом в допустимом диапазоне.");
-    const goal = (await this.listRemarketingCounterGoals(input.counterId)).find((item) => Number(item.id) === input.goalId);
+    const apiCounterId = await this.remarketingCounterApiId(input.counterId);
+    const goal = (await this.listRemarketingCounterGoalsByApiId(apiCounterId)).find((item) => Number(item.id) === input.goalId);
     if (!goal) throw new Error("Цель не найдена среди доступных целей счётчика.");
-    return this.post(`/remarketing/counters/${input.counterId}/goals/${input.goalId}.json`, { name: input.name, value: input.value, goal_type: input.goalType });
+    return this.post(`/remarketing/counters/${apiCounterId}/goals/${input.goalId}.json`, { name: input.name, value: input.value, goal_type: input.goalType });
   }
 
   /** Официальный endpoint; доступ зависит от типа счётчика и роли credential. */
   async listRemarketingCounterGoals(counterId: number): Promise<VkObject[]> {
     this.assertPositiveId(counterId);
-    return this.getItems(`/remarketing/counters/${counterId}/goals.json`);
+    return this.listRemarketingCounterGoalsByApiId(await this.remarketingCounterApiId(counterId));
+  }
+
+  /** Связь VK Ads имеет внутренний ID, а endpoint целей принимает внешний Top.Mail.ru counter_id. */
+  private async remarketingCounterApiId(remarketingCounterId: number): Promise<number> {
+    const counter = await this.getRemarketingCounter(remarketingCounterId);
+    const apiCounterId = Number(counter.counter_id);
+    if (!Number.isInteger(apiCounterId) || apiCounterId <= 0) {
+      throw new Error("В карточке счётчика отсутствует корректный внешний counter_id для операций с целями.");
+    }
+    return apiCounterId;
+  }
+
+  private async listRemarketingCounterGoalsByApiId(apiCounterId: number): Promise<VkObject[]> {
+    this.assertPositiveId(apiCounterId);
+    return this.getItems(`/remarketing/counters/${apiCounterId}/goals.json`);
   }
 
   /** Только metadata целей офлайн-конверсий; endpoint не содержит исходные события. */
