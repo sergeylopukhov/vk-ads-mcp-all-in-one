@@ -265,6 +265,14 @@ async function askPositiveIds(readline, question, defaultValue = "") {
   }
 }
 
+async function askOptionalPositiveId(readline, question, defaultValue = "") {
+  while (true) {
+    const value = await ask(readline, question, defaultValue);
+    if (!value || (Number.isInteger(Number(value)) && Number(value) > 0)) return value;
+    console.log("Укажите положительный целый ID или оставьте поле пустым.");
+  }
+}
+
 async function ensureConfiguration(installDirectory) {
   const envPath = join(installDirectory, ".env");
   const envExists = await pathExists(envPath);
@@ -288,7 +296,20 @@ async function ensureConfiguration(installDirectory) {
   const current = parseEnvValues(currentContent);
   const readline = createInterface({ input: process.stdin, output: process.stdout });
   if (envExists && !(await askBoolean(readline, "Изменить сохранённые настройки?", false))) {
-    readline.close();
+    if (!current.VK_API_TOKEN && await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", false)) {
+      readline.close();
+      const token = await promptHidden("Core VK API token для сообществ (ввод скрыт): ");
+      if (!token) throw new Error("Core VK API token не может быть пустым.");
+      const featureReadline = createInterface({ input: process.stdin, output: process.stdout });
+      const accountId = await askOptionalPositiveId(featureReadline, "ID рекламного аккаунта Core VK API (нужен только для добавления в сегмент; можно оставить пустым)", "");
+      featureReadline.close();
+      const template = await readFile(join(installDirectory, ".env.example"), "utf8");
+      await writeFile(envPath, applyEnvValues(currentContent || template, { VK_API_TOKEN: token, VK_API_AD_ACCOUNT_ID: accountId }), { mode: 0o600 });
+      await chmod(envPath, 0o600).catch(() => {});
+      console.log("Функция публичных сообществ VK включена.");
+    } else {
+      readline.close();
+    }
     console.log("Существующий .env сохранён.");
     return {
       mode: current.VK_ADS_MODE === "write" ? "write" : "readonly",
@@ -319,6 +340,9 @@ async function ensureConfiguration(installDirectory) {
   let inAppEventTestAppIds = current.VK_ADS_TEST_MOBILE_APP_IDS || "";
   let allowRemarketingCounterWrites = current.VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES === "1";
   let remarketingCounterTestIds = current.VK_ADS_TEST_COUNTER_IDS || "";
+  const enableCommunityTools = await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", Boolean(current.VK_API_TOKEN));
+  const replaceCommunityToken = enableCommunityTools && (!current.VK_API_TOKEN || await askBoolean(readline, "Заменить сохранённый Core VK API token для сообществ?", false));
+  let communityAccountId = current.VK_API_AD_ACCOUNT_ID || "";
 
   if (configureAdvanced) {
     console.log("\nДополнительные разрешения записи. Оставляйте «нет», если функция не нужна.\n");
@@ -341,6 +365,15 @@ async function ensureConfiguration(installDirectory) {
   }
   readline.close();
   const clientSecret = replaceSecret ? await promptHidden("VK Ads client_secret (ввод скрыт): ") : current.VK_ADS_CLIENT_SECRET;
+  const communityToken = enableCommunityTools && replaceCommunityToken
+    ? await promptHidden("Core VK API token для сообществ (ввод скрыт): ")
+    : current.VK_API_TOKEN || "";
+  if (enableCommunityTools && !communityToken && !current.VK_API_TOKEN) throw new Error("Core VK API token не может быть пустым, если функция включена.");
+  if (enableCommunityTools) {
+    const accountReadline = createInterface({ input: process.stdin, output: process.stdout });
+    communityAccountId = await askOptionalPositiveId(accountReadline, "ID рекламного аккаунта Core VK API (нужен только для добавления в сегмент; можно оставить пустым)", communityAccountId);
+    accountReadline.close();
+  }
   if (!clientId || !clientSecret) throw new Error("client_id и client_secret не могут быть пустыми.");
   const template = await readFile(join(installDirectory, ".env.example"), "utf8");
   const base = envExists ? currentContent : template;
@@ -364,6 +397,8 @@ async function ensureConfiguration(installDirectory) {
     VK_ADS_TEST_MOBILE_APP_IDS: inAppEventTestAppIds,
     VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES: allowRemarketingCounterWrites ? "1" : "0",
     VK_ADS_TEST_COUNTER_IDS: remarketingCounterTestIds,
+    VK_API_TOKEN: enableCommunityTools ? (communityToken || current.VK_API_TOKEN) : "",
+    VK_API_AD_ACCOUNT_ID: enableCommunityTools ? communityAccountId : "",
   });
   await writeFile(envPath, content, { mode: 0o600 });
   await chmod(envPath, 0o600).catch(() => {});

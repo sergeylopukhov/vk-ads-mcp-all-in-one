@@ -11,6 +11,7 @@ import { TokenRateLimiter } from "./rate-limiter.js";
 import { instrumentFetch } from "./observability.js";
 import { VkAdsClient } from "./vk-client.js";
 import { VkAdsTokenManager } from "./vk-ads-token.js";
+import { VkCommunityClient } from "./vk-community-client.js";
 
 /** Профиль выбирается только при запуске; MCP не может подменить credential. */
 const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -38,16 +39,29 @@ const credentialFingerprint = createHash("sha256")
   .digest("hex");
 // Лимит действует на все запросы одного credential, включая параллельные MCP-процессы.
 const rateLimiter = new TokenRateLimiter({ credentialFingerprint });
+const coreVkCredentialFingerprint = createHash("sha256")
+  .update(process.env.VK_API_TOKEN?.trim() ?? "")
+  .digest("hex");
+const coreVkRateLimiter = new TokenRateLimiter({ credentialFingerprint: coreVkCredentialFingerprint });
 const client = new VkAdsClient({
   tokenProvider: config.tokenProvider,
   ...(tokenManager ? { tokenRefresher: () => tokenManager.refresh() } : {}),
   timeoutMs: config.timeoutMs,
   fetchImplementation: instrumentFetch(fetch, process.env.VK_ADS_LOG === "1"),
+  waitForRequest: () => coreVkRateLimiter.wait(),
+});
+// Core VK API использует только отдельный VK_API_TOKEN, никогда credential VK Ads.
+const communityClient = new VkCommunityClient({
+  tokenProvider: () => process.env.VK_API_TOKEN?.trim() ?? "",
+  timeoutMs: config.timeoutMs,
+  fetchImplementation: instrumentFetch(fetch, process.env.VK_ADS_LOG === "1"),
   waitForRequest: () => rateLimiter.wait(),
+  ...(process.env.VK_API_AD_ACCOUNT_ID?.trim() ? { adsAccountId: Number(process.env.VK_API_AD_ACCOUNT_ID) } : {}),
 });
 // Не принимаем MCP-запросы с почти истёкшим токеном; ошибки OAuth останавливают старт.
 await tokenManager?.renewOnStartup();
 const server = createServer(client, config.mode, {
+  communityClient,
   connectionId: config.connectionId,
   profileName: config.profileName,
   previewTtlMs: config.previewTtlMs,

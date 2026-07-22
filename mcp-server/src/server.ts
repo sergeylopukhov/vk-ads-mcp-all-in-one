@@ -13,6 +13,8 @@ import { validateHtml5Upload, validateImageUpload, validateLeadFormImageUpload, 
 import { validateConfirmedTestBannerDraft, type KnownStaticImage } from "./banner-preflight.js";
 import { validateTestAdGroupParent, validateTestAdPlanDraft, type WritePreflightResult } from "./write-preflight.js";
 import { validateAdvertisingDestination } from "./destination-policy.js";
+import { analyze, candidate, includeCandidate, score, type Candidate } from "./community-analysis.js";
+import { VkCommunityClient, type CommunityType } from "./vk-community-client.js";
 
 const pagingSchema = {
   offset: z.number().int().nonnegative().default(0).describe("Смещение в списке."),
@@ -143,7 +145,7 @@ const verifiedBannerFields = VERIFIED_BANNER_FIELDS;
 const exportRowsSchema = z.array(z.record(z.string().min(1).max(120), z.union([z.string().max(10_000), z.number().finite(), z.boolean(), z.null()]))).min(1).max(1_000);
 
 const testWriteOperationSchema = z.enum(["recover_token_limit", "create_url", "create_test_ad_plan", "create_test_campaign", "create_test_ad_group", "create_test_banner", "create_test_segment", "create_test_pricelist", "rename_test_ad_plan", "rename_test_campaign", "update_campaign_budget_limit_day", "rename_test_ad_group", "rename_test_banner", "rename_test_segment", "rename_test_lead_form", "rename_test_remarketing_counter", "delete_test_remarketing_counter", "delete_test_remarketing_counter_v2", "create_test_counter_goal", "update_test_counter_goal", "update_test_inapp_event_category", "update_test_pricelist", "create_test_async_report", "delete_test_async_report", "block_test_ad_plans", "block_test_ad_groups", "block_test_banners", "remoderate_test_banners", "delete_test_ad_plan", "delete_test_ad_group", "delete_test_segment", "add_test_segment_relation", "update_test_segment_relation", "delete_test_segment_relation", "upload_static_image", "upload_html5", "upload_test_video", "upload_lead_form_logo", "create_test_offer_batch", "export_leads", "export_survey_respondents", "upload_test_remarketing_user_list", "upload_test_offline_goal", "update_test_offline_goal", "rename_test_remarketing_user_list", "delete_test_remarketing_user_list", "delete_test_remarketing_user_list_v3", "connect_agency_client", "update_agency_client", "delete_agency_client", "update_manager_client", "delete_manager_client", "connect_existing_remarketing_counter", "update_ord_partner_acts", "update_ord_partner_pad", "create_ord_partner_subagent", "update_ord_partner_subagent", "transfer_to_client", "create_test_local_geo", "update_test_local_geo", "delete_test_local_geo", "copy_test_lead_form", "copy_test_survey_form", "manage_test_lead_forms_archive", "manage_test_survey_forms_archive", "send_test_lead", "create_test_sharing_key", "revoke_created_sharing_key", "share_test_skadnetwork_ids", "withdraw_test_skadnetwork_ids", "create_ad_plan", "update_ad_plan", "delete_ad_plan", "manage_ad_plans", "create_campaign", "update_campaign", "delete_campaign", "create_ad_group", "update_ad_group", "delete_ad_group", "manage_ad_groups", "create_banner", "update_banner", "delete_banner", "manage_banners", "delete_subscription", "refresh_apple_app_metadata", "refresh_google_app_metadata", "create_subscription", "delete_test_offline_goal"]);
-const writeOperationSchema = z.union([testWriteOperationSchema.exclude(["update_test_pricelist"]), z.literal("activate_configured_sharing_key"), z.literal("update_user_profile"), z.literal("delete_test_campaign")]);
+const writeOperationSchema = z.union([testWriteOperationSchema.exclude(["update_test_pricelist"]), z.literal("activate_configured_sharing_key"), z.literal("update_user_profile"), z.literal("delete_test_campaign"), z.literal("add_approved_communities_to_segment")]);
 
 /**
  * Эти legacy-пути есть в старом коде, но отсутствуют в текущем официальном
@@ -486,6 +488,8 @@ function normalizeTestWritePayloadCore(
       }).parse(payload);
       return parsed;
     }
+    case "add_approved_communities_to_segment":
+      return z.object({ segment_id: z.number().int().positive(), approved_community_ids: z.array(z.number().int().positive()).min(1).max(1000) }).strict().transform((value) => ({ ...value, approved_community_ids: [...new Set(value.approved_community_ids)] })).parse(payload);
     case "create_test_pricelist":
       return z.object({ name: z.string().min(14).max(120).startsWith("__MCP_TEST__") }).parse(payload);
     case "copy_test_lead_form":
@@ -985,6 +989,7 @@ async function pricelistFromPages(client: VkAdsClient, id: number): Promise<VkOb
 
 function writeImpact(operation: WriteOperation): { risk: "low" | "medium" | "high"; expected_change: string } {
   switch (operation) {
+    case "add_approved_communities_to_segment": return { risk: "medium", expected_change: "Добавить только явно утверждённые публичные сообщества в существующий сегмент; кампании, группы, объявления и бюджеты не меняются." };
     case "recover_token_limit": return { risk: "high", expected_change: "Удалить все токены текущей связки VK Ads clientId--user, затем выпустить ровно один новый токен и сохранить его refresh_token локально. Кампании, группы, баннеры, бюджеты и аудитории не изменяются." };
     case "activate_configured_sharing_key": return { risk: "high", expected_change: "Активировать внешний ключ шаринга и добавить все связанные с ним источники в текущий кабинет. Кампании, бюджеты и существующие сущности не изменяются, но новые источники станут доступны." };
     case "create_url": return { risk: "low", expected_change: "Зарегистрировать HTTPS landing URL в VK Ads; показы, banner и расход не создаются." };
@@ -1080,8 +1085,9 @@ function writeImpact(operation: WriteOperation): { risk: "low" | "medium" | "hig
   }
 }
 
-async function captureWriteBefore(client: VkAdsClient, operation: WriteOperation, payload: Record<string, unknown>): Promise<VkObject | null> {
+async function captureWriteBefore(client: VkAdsClient, operation: WriteOperation, payload: Record<string, unknown>, communityClient?: VkCommunityClient): Promise<VkObject | null> {
   switch (operation) {
+    case "add_approved_communities_to_segment": return communityClient ? await communityClient.getTargetGroup(payload.segment_id as number) : null;
     case "activate_configured_sharing_key": return { external_key_configured: true, activation_scope: "all_sources" };
     case "update_ad_plan":
     case "delete_ad_plan": return client.getAdPlan(payload.ad_plan_id as number);
@@ -1236,9 +1242,10 @@ async function preflightTestSegment(
   return { ready: checks.every((check) => check.status === "pass"), checks };
 }
 
-async function captureWriteAfter(client: VkAdsClient, operation: WriteOperation, payload: Record<string, unknown>, result: VkObject): Promise<VkObject> {
+async function captureWriteAfter(client: VkAdsClient, operation: WriteOperation, payload: Record<string, unknown>, result: VkObject, communityClient?: VkCommunityClient): Promise<VkObject> {
   try {
     switch (operation) {
+      case "add_approved_communities_to_segment": return communityClient ? { reread: true, segment: await communityClient.getTargetGroup(payload.segment_id as number) } : { reread: false, reason: "Core VK API-клиент недоступен." };
       case "recover_token_limit": return { reread: false, token_reissued: result.token_reissued === true, refresh_token_saved: result.refresh_token_saved === true, ...(typeof result.expires_at === "string" ? { expires_at: result.expires_at } : {}) };
       case "activate_configured_sharing_key": return { reread: false, activated: result.activated === true, reason: "Перечитывание не выполняется: список ключей содержит bearer-secret, а ответ активации может содержать внешние metadata." };
       case "create_url": return { reread: true, item: await client.getUrl(result.id as number) };
@@ -1760,7 +1767,7 @@ async function callReadTool(
   }
 }
 
-export function createServer(client: VkAdsClient, mode: ServerMode, options: { uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowProfileWrites?: boolean; allowSharingKeyRevoke?: boolean; externalSharingKey?: string; allowSkAdNetworkWrites?: boolean; skAdNetworkTestAppIds?: number[]; inAppEventTestAppIds?: number[]; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; remarketingCounterTestIds?: number[]; tokenRecovery?: { recover: () => Promise<{ token_reissued: true; refresh_token_saved: true; expires_at?: string }> }; connectionId?: string; profileName?: string; auditFile?: string; previewTtlMs?: number; requireWriteConfirmation?: boolean } = {}): McpServer {
+export function createServer(client: VkAdsClient, mode: ServerMode, options: { communityClient?: VkCommunityClient; uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowProfileWrites?: boolean; allowSharingKeyRevoke?: boolean; externalSharingKey?: string; allowSkAdNetworkWrites?: boolean; skAdNetworkTestAppIds?: number[]; inAppEventTestAppIds?: number[]; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; remarketingCounterTestIds?: number[]; tokenRecovery?: { recover: () => Promise<{ token_reissued: true; refresh_token_saved: true; expires_at?: string }> }; connectionId?: string; profileName?: string; auditFile?: string; previewTtlMs?: number; requireWriteConfirmation?: boolean } = {}): McpServer {
   const normalizeTestWritePayload = (operation: WriteOperation, payload: Record<string, unknown>, _legacyUploadDir?: string) => normalizeTestWritePayloadCore(
     operation,
     payload,
@@ -1777,6 +1784,49 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
   const uploadedImages = new Map<number, KnownStaticImage>();
   /** Secret хранится лишь до отзыва в памяти текущего процесса; handle не является ключом VK Ads. */
   const sessionSharingKeys = new Map<string, string>();
+
+  const communityClient = options.communityClient ?? new VkCommunityClient({ tokenProvider: () => "", timeoutMs: 30_000 });
+  const communityTypes = z.enum(["group", "page", "event"]);
+  const communityCandidateSchema = z.object({ id: z.number().int().positive(), url: z.string().url(), name: z.string(), description: z.string(), type: z.string().nullable(), members_count: z.number().int().nonnegative().nullable(), verified: z.boolean(), retrieved_at: z.string(), risk_flags: z.array(z.string()), activity: z.object({ last_post_at: z.string().nullable(), posts_per_week: z.number().nullable(), term_matches: z.array(z.string()), risk_flags: z.array(z.string()) }).optional() });
+  server.registerTool("vk_discover_communities", {
+    title: "Найти публичные сообщества VK", description: "Read-only: groups.search + groups.getById с дедупликацией, кешем metadata и без списков участников.",
+    inputSchema: { keywords: z.array(z.string().trim().min(1).max(120)).min(1).max(20), include_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), country_id: z.number().int().positive().optional(), city_id: z.number().int().positive().optional(), community_types: z.array(communityTypes).max(3).optional(), min_members: z.number().int().nonnegative().optional(), max_members: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(500).default(100) },
+    outputSchema: { items: z.array(communityCandidateSchema) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  }, async (input) => {
+    if (input.min_members !== undefined && input.max_members !== undefined && input.min_members > input.max_members) throw new Error("min_members не может быть больше max_members.");
+    const ids = new Set<number>();
+    for (const keyword of input.keywords) for (const type of input.community_types?.length ? input.community_types : [undefined]) {
+      for (const item of await communityClient.search(keyword, 0, Math.min(input.limit, 200), input.country_id, input.city_id, type as CommunityType | undefined)) ids.add(item.id);
+    }
+    const items = (await communityClient.getByIds([...ids])).map((item) => candidate(item)).filter((item) => includeCandidate(item, input.include_terms, input.exclude_terms, input.community_types, input.min_members, input.max_members)).slice(0, input.limit);
+    return textAndData({ items }, "Публичные сообщества найдены; данные участников не запрашивались.");
+  });
+  server.registerTool("vk_analyze_communities", {
+    title: "Проанализировать сообщества VK", description: "Read-only: metadata и последние публичные записи wall.get; полные тексты публикаций не возвращаются и не сохраняются.",
+    inputSchema: { community_ids: z.array(z.number().int().positive()).min(1).max(500), posts_limit: z.number().int().min(1).max(100).default(30), analysis_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]) }, outputSchema: { items: z.array(communityCandidateSchema) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  }, async (input) => {
+    const metadata = await communityClient.getByIds([...new Set(input.community_ids)]); const items: Candidate[] = [];
+    for (const item of metadata) { const result = candidate(item); if (!result.risk_flags.length) { try { result.activity = analyze(await communityClient.wall(item.id, input.posts_limit), input.analysis_terms, input.exclude_terms); result.risk_flags.push(...result.activity.risk_flags); } catch { result.risk_flags.push("posts_unavailable"); } } items.push(result); }
+    return textAndData({ items }, "Сообщества проанализированы без сохранения текстов публикаций.");
+  });
+  server.registerTool("vk_score_communities", {
+    title: "Оценить сообщества VK", description: "Read-only: прозрачный локальный скоринг 0–100 по пользовательским весам.",
+    inputSchema: { community_ids: z.array(z.number().int().positive()).min(1).max(500), scoring_rules: z.record(z.string(), z.unknown()), clusters: z.array(z.record(z.string(), z.unknown())).max(50).default([]) }, outputSchema: { items: z.array(z.record(z.string(), z.unknown())) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  }, async ({ community_ids, scoring_rules, clusters }) => {
+    const terms = Array.isArray(scoring_rules.terms) ? scoring_rules.terms.filter((term): term is string => typeof term === "string") : [];
+    const excludes = Array.isArray(scoring_rules.exclude_terms) ? scoring_rules.exclude_terms.filter((term): term is string => typeof term === "string") : [];
+    const communities: Candidate[] = [];
+    for (const item of await communityClient.getByIds([...new Set(community_ids)])) {
+      const result = candidate(item);
+      if (!result.risk_flags.length) { try { result.activity = analyze(await communityClient.wall(item.id, 30), terms, excludes); result.risk_flags.push(...result.activity.risk_flags); } catch { result.risk_flags.push("posts_unavailable"); } }
+      communities.push(result);
+    }
+    return textAndData({ items: score(communities, scoring_rules, clusters) }, "Скоринг выполнен; причины начислений и штрафов включены.");
+  });
+  server.registerTool("vk_export_community_candidates", {
+    title: "Экспортировать кандидатов сообществ VK", description: "Read-only: формирует CSV или JSON только в памяти; статус каждого кандидата pending_approval.",
+    inputSchema: { communities: z.array(communityCandidateSchema).min(1).max(500), scores: z.array(z.object({ id: z.number().int().positive(), score: z.number(), clusters: z.array(z.string()), reasons: z.array(z.string()), risk_flags: z.array(z.string()) })).max(500).default([]), format: z.enum(["csv", "json"]) }, outputSchema: { format: z.enum(["csv", "json"]), content: z.string(), row_count: z.number().int() }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  }, async ({ communities, scores, format }) => { const byId = new Map(scores.map((item) => [item.id, item])); const rows = communities.map((item) => { const scoreItem = byId.get(item.id); return { id: item.id, url: item.url, name: item.name, description: item.description, members_count: item.members_count, activity: item.activity?.last_post_at ?? null, score: scoreItem?.score ?? null, cluster: scoreItem?.clusters.join("|") ?? "", reasons: scoreItem?.reasons.join("|") ?? "", risk_flags: [...item.risk_flags, ...(scoreItem?.risk_flags ?? [])].join("|"), status: "pending_approval" }; }); const content = format === "json" ? JSON.stringify(rows) : toCsv(rows).content; return textAndData({ format, content, row_count: rows.length }, "Экспорт сформирован в памяти; запись в сегмент не запускается."); });
 
   server.registerTool(
     "get_provider_context",
@@ -2957,7 +3007,18 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       if (operation === "activate_configured_sharing_key" && !options.externalSharingKey) {
         throw new Error("Активация внешнего ключа недоступна: укажите VK_ADS_EXTERNAL_SHARING_KEY только в локальном .env и перезапустите MCP.");
       }
-      const before = await captureWriteBefore(client, operation, normalized);
+      const before = await captureWriteBefore(client, operation, normalized, communityClient);
+      const previewBefore = operation === "add_approved_communities_to_segment" && before
+        ? (() => {
+            const rawExisting = Array.isArray(before.group_ids) ? before.group_ids : [];
+            const existing = rawExisting.map(Number).filter((id) => Number.isInteger(id) && id > 0);
+            const requested = payload.approved_community_ids as number[];
+            const approved = normalized.approved_community_ids as number[];
+            const duplicates = requested.filter((id, index) => requested.indexOf(id) !== index);
+            const additions = approved.filter((id) => !existing.includes(id));
+            return { segment: { id: normalized.segment_id, ...(typeof before.name === "string" ? { name: before.name } : {}) }, existing_community_ids: existing, duplicate_ids: [...new Set(duplicates)], adding_community_ids: additions, changes_count: additions.length } as VkObject;
+          })()
+        : before;
       let preflight: WritePreflightResult | { ready: boolean; checks: Array<{ code: string; status: "pass" | "fail"; message: string }> } | undefined;
       if (operation === "create_test_ad_plan") {
         preflight = await preflightTestAdPlan(client, normalized);
@@ -2969,6 +3030,16 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
         preflight = await preflightTestAdGroup(client, normalized, before);
       } else if (operation === "create_test_banner") {
         preflight = await preflightConfirmedTestBanner(client, normalized, uploadedImages, before);
+      } else if (operation === "add_approved_communities_to_segment") {
+        const approved = normalized.approved_community_ids as number[];
+        const available = await communityClient.getByIds(approved);
+        const missing = approved.filter((id) => !available.some((item) => item.id === id));
+        const unavailable = available.filter((item) => item.is_closed || item.deactivated).map((item) => item.id);
+        preflight = { ready: before !== null && missing.length === 0 && unavailable.length === 0, checks: [
+          { code: "segment_exists", status: before !== null ? "pass" as const : "fail" as const, message: before !== null ? "Сегмент перечитан через Core VK API." : "Сегмент недоступен текущему VK API-токену." },
+          { code: "communities_available", status: missing.length === 0 ? "pass" as const : "fail" as const, message: missing.length === 0 ? "Все утверждённые сообщества доступны." : `Недоступны сообщества: ${missing.join(", ")}.` },
+          { code: "communities_public", status: unavailable.length === 0 ? "pass" as const : "fail" as const, message: unavailable.length === 0 ? "Закрытые или деактивированные сообщества отсутствуют." : `Недопустимые сообщества: ${unavailable.join(", ")}.` },
+        ] };
       } else if (operation === "connect_existing_remarketing_counter") {
         const alreadyConnected = before?.counter_already_connected === true;
         preflight = {
@@ -3003,11 +3074,22 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       return textAndData(
         {
           ...writeGate.prepare(operation, normalized, connectionId),
-          preflight: { before, ...writeImpact(operation) },
+          preflight: { before: previewBefore, ...writeImpact(operation) },
         },
         "Preview подготовлен. Выполнение возможно только после явной передачи указанной фразы подтверждения.",
       );
     };
+    server.registerTool(
+      "vk_add_approved_communities_to_segment",
+      {
+        title: "Подготовить добавление утверждённых сообществ в сегмент",
+        description: "Write preview only: перечитывает сегмент и публичные сообщества, удаляет дубли во входном списке и не выполняет запись без write_execute с явным подтверждением.",
+        inputSchema: { segment_id: z.number().int().positive(), approved_community_ids: z.array(z.number().int().positive()).min(1).max(1_000) },
+        outputSchema: previewOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+      },
+      async ({ segment_id, approved_community_ids }) => prepareWritePreview("add_approved_communities_to_segment", { segment_id, approved_community_ids }),
+    );
     const registerWritePreviewAlias = (
       name: string,
       title: string,
@@ -3487,6 +3569,11 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
         let result: VkObject;
         try {
           switch (preview.operation) {
+          case "add_approved_communities_to_segment": {
+            const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
+            result = await communityClient.addCommunitiesToTargetGroup(payload.segment_id as number, payload.approved_community_ids as number[]);
+            break;
+          }
           case "recover_token_limit": {
             if (!options.tokenRecovery) throw new Error("Восстановление токенов недоступно в этом профиле.");
             result = await options.tokenRecovery.recover();
@@ -4106,7 +4193,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
           }
           }
           const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
-          const after = await captureWriteAfter(client, preview.operation, payload, result);
+          const after = await captureWriteAfter(client, preview.operation, payload, result, communityClient);
           const audit = writeGate.complete(preview, "succeeded", (preview.operation === "export_leads" || preview.operation === "export_survey_respondents")
             ? { form_id: result.form_id, format: result.format, byte_length: result.byte_length }
             : { result, after });
