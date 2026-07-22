@@ -10,7 +10,7 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 20+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-stdio-1f6feb" alt="MCP stdio"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b8f60" alt="Лицензия MIT"></a>
-  <img src="https://img.shields.io/badge/version-1.0.1-6b7280" alt="Версия 1.0.1">
+  <img src="https://img.shields.io/badge/version-1.0.2-6b7280" alt="Версия 1.0.2">
 </p>
 
 Сервер подключает AI-клиент к кабинету VK Ads: читает рекламные планы, группы и объявления, получает статистику, работает с аудиториями, медиафайлами, отчётами и экспортом. По умолчанию запись выключена.
@@ -100,7 +100,7 @@ codex mcp add vk-ads-agency --env VK_ADS_PROFILE=agency -- node "$(pwd)/dist/ind
 VK_ADS_MODE=write node dist/index.js
 ```
 
-Перед записью сервер проверяет данные и создаёт preview. По умолчанию `write_execute` ждёт точного подтверждения; владелец локального профиля может явно отключить это требование через `VK_ADS_REQUIRE_WRITE_CONFIRMATION=0`. Тестовые сценарии используют только новые объекты с префиксом `__MCP_TEST__`; production-операции доступны лишь через отдельные фиксированные схемы, preflight и reread. Изменение дневного лимита может затронуть выбранную кампанию: перед выполнением проверьте preview и ID.
+В режиме `write` доступны все реализованные операции записи. Перед каждой сервер проверяет данные и создаёт preview; по умолчанию `write_execute` ждёт точного подтверждения. Владелец локального профиля может явно отключить это требование через `VK_ADS_REQUIRE_WRITE_CONFIRMATION=0`, при этом preflight и reread сохраняются. Ограничения роли, текущего доступа к объекту и опубликованного контракта VK Ads не обходятся. Перед выполнением проверьте preview и ID.
 
 ## Ошибки подключения
 

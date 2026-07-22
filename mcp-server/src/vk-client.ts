@@ -337,42 +337,37 @@ export class VkAdsClient {
 
   async renameTestRemarketingCounter(id: number, name: string): Promise<VkObject> {
     this.assertPositiveId(id);
-    this.assertTestName(name);
-    await this.assertExistingTestRemarketingCounter(id);
+    if (!name.trim() || name.length > 120) throw new Error("name должен содержать от 1 до 120 символов.");
     return this.post(`/remarketing/counters/${id}.json`, { name });
   }
 
   async deleteTestRemarketingCounter(id: number): Promise<VkObject> {
     this.assertPositiveId(id);
-    await this.assertExistingTestRemarketingCounter(id);
     return this.deleteV1(`/remarketing_counters/${id}.json`);
   }
 
   /** Отдельный v2-контракт: не заменяет legacy v1 DELETE. */
   async deleteTestRemarketingCounterV2(id: number): Promise<VkObject> {
     this.assertPositiveId(id);
-    await this.assertExistingTestRemarketingCounter(id);
     return this.delete(`/remarketing/counters/${id}.json`);
   }
 
-  /** Создаёт цель только внутри allowlist test-счётчика; сам счётчик не меняется. */
+  /** Создаёт цель в доступном текущему credential счётчике. */
   async createTestCounterGoal(input: { counterId: number; name: string; substr: string; condition: "uss" | "rss" | "jse" | "hd" | "ts"; goalType: "content" | "search" | "basket" | "wishlist" | "checkout" | "payment_info" | "purchase" | "lead" | "registration" | "custom"; value?: number | null }): Promise<VkObject> {
     this.assertPositiveId(input.counterId);
-    this.assertTestName(input.name);
+    if (!input.name.trim() || input.name.length > 120) throw new Error("name должен содержать от 1 до 120 символов.");
     if (!input.substr.trim() || input.substr.length > 2_000) throw new Error("substr должен содержать от 1 до 2000 символов.");
     if (input.value !== undefined && input.value !== null && (!Number.isInteger(input.value) || input.value < -2_147_483_647 || input.value > 2_147_483_647)) throw new Error("value выходит за допустимый диапазон integer.");
-    await this.assertExistingTestRemarketingCounter(input.counterId);
     return this.post(`/remarketing/counters/${input.counterId}/goals.json`, { substr: input.substr, condition: input.condition, name: input.name, goal_type: input.goalType, ...(input.value === undefined ? {} : { value: input.value }) });
   }
 
   async updateTestCounterGoal(input: { counterId: number; goalId: number; name: string; value: number; goalType: "content" | "search" | "basket" | "wishlist" | "checkout" | "payment_info" | "purchase" | "lead" | "registration" | "custom" }): Promise<VkObject> {
     this.assertPositiveId(input.counterId);
     this.assertPositiveId(input.goalId);
-    this.assertTestName(input.name);
+    if (!input.name.trim() || input.name.length > 120) throw new Error("name должен содержать от 1 до 120 символов.");
     if (!Number.isInteger(input.value) || input.value < -2_147_483_647 || input.value > 2_147_483_647) throw new Error("value цели должен быть целым числом в допустимом диапазоне.");
-    await this.assertExistingTestRemarketingCounter(input.counterId);
     const goal = (await this.listRemarketingCounterGoals(input.counterId)).find((item) => Number(item.id) === input.goalId);
-    if (!goal || typeof goal.name !== "string" || !goal.name.startsWith("__MCP_TEST__")) throw new Error("Разрешено изменить только существующую __MCP_TEST__ цель test-счётчика.");
+    if (!goal) throw new Error("Цель не найдена среди доступных целей счётчика.");
     return this.post(`/remarketing/counters/${input.counterId}/goals/${input.goalId}.json`, { name: input.name, value: input.value, goal_type: input.goalType });
   }
 

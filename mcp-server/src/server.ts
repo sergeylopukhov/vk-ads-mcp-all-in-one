@@ -514,11 +514,11 @@ function normalizeTestWritePayloadCore(
       return { offline_goal_id: parsed.offline_goal_id, name: parsed.name, file_path: list.filePath, filename: list.filename, mime_type: list.mimeType, size: list.size, sha256: list.sha256, line_count: list.lineCount };
     }
     case "create_test_counter_goal":
-      return z.object({ counter_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), substr: z.string().trim().min(1).max(2_000), condition: z.enum(["uss", "rss", "jse", "hd", "ts"]), goal_type: z.enum(["content", "search", "basket", "wishlist", "checkout", "payment_info", "purchase", "lead", "registration", "custom"]), value: z.number().int().min(-2_147_483_647).max(2_147_483_647).nullable().optional() }).parse(payload);
+      return z.object({ counter_id: z.number().int().positive(), name: z.string().trim().min(1).max(120), substr: z.string().trim().min(1).max(2_000), condition: z.enum(["uss", "rss", "jse", "hd", "ts"]), goal_type: z.enum(["content", "search", "basket", "wishlist", "checkout", "payment_info", "purchase", "lead", "registration", "custom"]), value: z.number().int().min(-2_147_483_647).max(2_147_483_647).nullable().optional() }).parse(payload);
     case "delete_test_remarketing_user_list_v3":
       return z.object({ list_id: z.number().int().positive() }).parse(payload);
     case "update_test_counter_goal":
-      return z.object({ counter_id: z.number().int().positive(), goal_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), value: z.number().int().min(-2_147_483_647).max(2_147_483_647), goal_type: z.enum(["content", "search", "basket", "wishlist", "checkout", "payment_info", "purchase", "lead", "registration", "custom"]) }).parse(payload);
+      return z.object({ counter_id: z.number().int().positive(), goal_id: z.number().int().positive(), name: z.string().trim().min(1).max(120), value: z.number().int().min(-2_147_483_647).max(2_147_483_647), goal_type: z.enum(["content", "search", "basket", "wishlist", "checkout", "payment_info", "purchase", "lead", "registration", "custom"]) }).parse(payload);
     case "update_test_inapp_event_category":
       return z.object({ app_id: z.number().int().positive(), tracker_id: z.number().int().positive(), event_id: z.number().int().positive(), category_id: z.number().int().positive() }).parse(payload);
     case "manage_test_lead_forms_archive":
@@ -854,15 +854,11 @@ async function preflightSkAdNetwork(
   client: VkAdsClient,
   operation: "share_test_skadnetwork_ids" | "withdraw_test_skadnetwork_ids",
   payload: Record<string, unknown>,
-  allowedTestAppIds: readonly number[],
 ): Promise<{ ready: boolean; checks: Array<{ code: string; status: "pass" | "fail"; message: string }> }> {
   const appId = payload.app_id as number;
   const count = payload.count as number;
   const recipient = payload.recipient as string;
   const checks: Array<{ code: string; status: "pass" | "fail"; message: string }> = [];
-  const inAllowlist = allowedTestAppIds.includes(appId);
-  checks.push({ code: "test_app_allowlist", status: inAllowlist ? "pass" : "fail", message: inAllowlist ? "iOS-приложение есть в локальном allowlist тестов." : "iOS app ID не входит в VK_ADS_TEST_IOS_APP_IDS." });
-  if (!inAllowlist) return { ready: false, checks };
   const app = await client.getAppleAppSkAdNetworkStatus(appId);
   const available = nonNegativeInteger((app.sk_ad_network_ids as VkObject | undefined)?.available);
   checks.push({ code: "owner_free_ids", status: available >= count ? "pass" : "fail", message: available >= count ? "У владельца достаточно свободных SKAdNetwork IDs." : "У владельца недостаточно свободных SKAdNetwork IDs." });
@@ -893,13 +889,9 @@ async function inAppEventFromPages(client: VkAdsClient, input: { appId: number; 
 async function preflightInAppEventCategory(
   client: VkAdsClient,
   payload: Record<string, unknown>,
-  allowedTestAppIds: readonly number[],
 ): Promise<{ ready: boolean; checks: Array<{ code: string; status: "pass" | "fail"; message: string }> }> {
   const appId = payload.app_id as number;
   const checks: Array<{ code: string; status: "pass" | "fail"; message: string }> = [];
-  const appAllowed = allowedTestAppIds.includes(appId);
-  checks.push({ code: "test_app_allowlist", status: appAllowed ? "pass" : "fail", message: appAllowed ? "Мобильное приложение есть в локальном allowlist тестов." : "app_id не входит в VK_ADS_TEST_MOBILE_APP_IDS." });
-  if (!appAllowed) return { ready: false, checks };
 
   const categories = await client.listInAppEventCategories();
   const categoryFound = categories.some((category) => Number(category.id) === Number(payload.category_id));
@@ -907,7 +899,7 @@ async function preflightInAppEventCategory(
 
   try {
     await inAppEventFromPages(client, { appId, trackerId: payload.tracker_id as number, eventId: payload.event_id as number });
-    checks.push({ code: "event_access", status: "pass", message: "Событие принадлежит разрешённому приложению и доступно текущему кабинету." });
+    checks.push({ code: "event_access", status: "pass", message: "Событие доступно текущему кабинету." });
   } catch {
     checks.push({ code: "event_access", status: "fail", message: "Событие не найдено в доступном списке текущего кабинета." });
   }
@@ -1049,9 +1041,9 @@ function writeImpact(operation: WriteOperation): { risk: "low" | "medium" | "hig
     case "delete_test_remarketing_counter_v2": return { risk: "high", expected_change: "Удалить только allowlist test-счётчик ремаркетинга через документированный v2 DELETE; операция необратима." };
     case "delete_test_offline_goal": return { risk: "high", expected_change: "Удалить только существующий __MCP_TEST__ список офлайн-конверсий; исходные записи и PII не читаются." };
     case "update_test_offline_goal": return { risk: "medium", expected_change: "Переименовать и/или дозагрузить только существующий __MCP_TEST__ список офлайн-конверсий; PII остаётся в multipart body и не попадает в audit." };
-    case "create_test_counter_goal": return { risk: "medium", expected_change: "Создать новую __MCP_TEST__ цель только внутри allowlist test-счётчика ремаркетинга." };
+    case "create_test_counter_goal": return { risk: "medium", expected_change: "Создать новую цель в указанном доступном счётчике ремаркетинга." };
     case "delete_test_remarketing_user_list_v3": return { risk: "high", expected_change: "Удалить только изолированный __MCP_TEST__ список ремаркетинга через документированный v3 DELETE; операция необратима." };
-    case "update_test_counter_goal": return { risk: "low", expected_change: "Изменить только allowlist __MCP_TEST__ цель test-счётчика ремаркетинга." };
+    case "update_test_counter_goal": return { risk: "medium", expected_change: "Изменить указанную существующую цель в доступном счётчике ремаркетинга." };
     case "rename_test_campaign": return { risk: "low", expected_change: "Переименовать только test campaign." };
     case "update_campaign_budget_limit_day": return { risk: "medium", expected_change: "Изменить дневной лимит выбранной кампании; показы и статус не меняются." };
     case "rename_test_ad_group": return { risk: "low", expected_change: "Переименовать только test ad group." };
@@ -1129,14 +1121,14 @@ async function captureWriteBefore(client: VkAdsClient, operation: WriteOperation
     case "copy_test_lead_form": return publicFormConfiguration(await client.getLeadFormDetail(payload.form_id as number));
     case "rename_test_lead_form": return publicFormConfiguration(await client.getLeadFormDetail(payload.form_id as number));
     case "rename_test_remarketing_counter":
-    case "delete_test_remarketing_counter": return publicCounterMetadata(await client.getRemarketingCounter(payload.counter_id as number));
-    case "delete_test_remarketing_counter_v2": return publicCounterMetadata(await client.getRemarketingCounter(payload.counter_id as number));
-    case "create_test_counter_goal": return publicCounterMetadata(await client.getRemarketingCounter(payload.counter_id as number));
+    case "delete_test_remarketing_counter":
+    case "delete_test_remarketing_counter_v2":
+    case "create_test_counter_goal":
+    case "update_test_counter_goal": return publicCounterMetadata(itemFromList(await client.listRemarketingCounters(), payload.counter_id as number, "Счётчик ремаркетинга"));
     case "delete_test_remarketing_user_list_v3": return publicSensitiveMetadata(await remarketingListFromPages(client, payload.list_id as number)) as VkObject;
     case "delete_test_offline_goal": return publicSensitiveMetadata((await client.listOfflineGoals()).find((item) => Number(item.id) === Number(payload.offline_goal_id))) as VkObject;
     case "update_test_offline_goal": return publicSensitiveMetadata((await client.listOfflineGoals()).find((item) => Number(item.id) === Number(payload.offline_goal_id))) as VkObject;
     case "upload_test_offline_goal": return { existing_test_offline_goals: (await client.listOfflineGoals()).filter((item) => typeof item.name === "string" && item.name.startsWith("__MCP_TEST__")).map(publicSensitiveMetadata) };
-    case "update_test_counter_goal": return publicCounterMetadata(await client.getRemarketingCounter(payload.counter_id as number));
     case "update_test_inapp_event_category": return publicSensitiveMetadata(await inAppEventFromPages(client, { appId: payload.app_id as number, trackerId: payload.tracker_id as number, eventId: payload.event_id as number })) as VkObject;
     case "send_test_lead": return publicFormConfiguration(await client.getLeadFormDetail(payload.form_id as number));
     case "create_test_sharing_key": return { segment: publicSensitiveMetadata(await client.getSegment(payload.segment_id as number)), recipients_count: 1 } as VkObject;
@@ -2965,36 +2957,6 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       if (operation === "activate_configured_sharing_key" && !options.externalSharingKey) {
         throw new Error("Активация внешнего ключа недоступна: укажите VK_ADS_EXTERNAL_SHARING_KEY только в локальном .env и перезапустите MCP.");
       }
-      if ((operation === "share_test_skadnetwork_ids" || operation === "withdraw_test_skadnetwork_ids") && !options.allowSkAdNetworkWrites) {
-        throw new Error("SKAdNetwork-запись отключена. Нужен отдельный VK_ADS_ALLOW_SKADNETWORK_WRITES=1 при запуске.");
-      }
-      if (operation === "update_test_inapp_event_category" && !options.allowInAppEventCategoryWrites) {
-        throw new Error("Изменение категории in-app события отключено. Нужен отдельный VK_ADS_ALLOW_INAPP_EVENT_CATEGORY_WRITES=1 при запуске.");
-      }
-      if (["update_agency_client", "delete_agency_client", "update_manager_client", "delete_manager_client"].includes(operation) && !options.allowAgencyWrites) {
-        throw new Error("Управление связью agency-client или manager-client отключено. Нужен отдельный VK_ADS_ALLOW_AGENCY_WRITES=1 при запуске.");
-      }
-      if (operation === "update_user_profile" && !options.allowProfileWrites) {
-        throw new Error("Изменение профиля отключено. Нужен отдельный VK_ADS_ALLOW_PROFILE_WRITES=1 при запуске.");
-      }
-      if (["update_ord_partner_acts", "update_ord_partner_pad", "create_ord_partner_subagent", "update_ord_partner_subagent"].includes(operation) && process.env.VK_ADS_ALLOW_ORD_WRITES !== "1") {
-        throw new Error("ОРД-записи отключены. Нужен отдельный VK_ADS_ALLOW_ORD_WRITES=1 при запуске.");
-      }
-      if (operation === "transfer_to_client" && process.env.VK_ADS_ALLOW_FINANCIAL_WRITES !== "1") {
-        throw new Error("Финансовые переводы отключены. Нужен отдельный VK_ADS_ALLOW_FINANCIAL_WRITES=1 при запуске.");
-      }
-      if ((operation === "rename_test_remarketing_counter" || operation === "delete_test_remarketing_counter" || operation === "delete_test_remarketing_counter_v2" || operation === "create_test_counter_goal" || operation === "update_test_counter_goal") && !options.allowRemarketingCounterWrites) {
-        throw new Error("Изменение test-счётчика ремаркетинга отключено. Нужен отдельный VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES=1 при запуске.");
-      }
-      if (operation === "connect_existing_remarketing_counter" && !options.allowRemarketingCounterWrites) {
-        throw new Error("Подключение существующего счётчика ремаркетинга отключено. Нужен отдельный VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES=1 при запуске.");
-      }
-      if (operation === "rename_test_remarketing_counter" || operation === "delete_test_remarketing_counter" || operation === "delete_test_remarketing_counter_v2" || operation === "create_test_counter_goal" || operation === "update_test_counter_goal") {
-        const counterId = normalized.counter_id as number;
-        if (!(options.remarketingCounterTestIds ?? []).includes(counterId)) {
-          throw new Error("Счётчик не входит в VK_ADS_TEST_COUNTER_IDS; запись заблокирована.");
-        }
-      }
       const before = await captureWriteBefore(client, operation, normalized);
       let preflight: WritePreflightResult | { ready: boolean; checks: Array<{ code: string; status: "pass" | "fail"; message: string }> } | undefined;
       if (operation === "create_test_ad_plan") {
@@ -3028,11 +2990,9 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
           }],
         };
       } else if (operation === "share_test_skadnetwork_ids" || operation === "withdraw_test_skadnetwork_ids") {
-        preflight = await preflightSkAdNetwork(client, operation, normalized, options.skAdNetworkTestAppIds ?? []);
+        preflight = await preflightSkAdNetwork(client, operation, normalized);
       } else if (operation === "update_test_inapp_event_category") {
-        preflight = await preflightInAppEventCategory(client, normalized, options.inAppEventTestAppIds ?? []);
-      } else if (operation === "revoke_created_sharing_key" && !options.allowSharingKeyRevoke) {
-        throw new Error("Отзыв ключа шаринга отключён. Он может остановить кампании получателя; нужен VK_ADS_ALLOW_SHARING_KEY_REVOKE=1 при запуске.");
+        preflight = await preflightInAppEventCategory(client, normalized);
       } else if (operation === "revoke_created_sharing_key" && !sessionSharingKeys.has(normalized.key_handle as string)) {
         throw new Error("Отзывать можно только ключ, созданный текущим MCP-сеансом.");
       }
@@ -3318,15 +3278,15 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       { banner_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
-      "vk_update_remarketing_counter", "Подготовить переименование test-счётчика", "Только счётчик из VK_ADS_TEST_COUNTER_IDS с именем `__MCP_TEST__`; URL, учётные данные и flags не передаются.", "rename_test_remarketing_counter",
-      { counter_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__") },
+      "vk_update_remarketing_counter", "Подготовить переименование счётчика", "Изменяет имя счётчика, доступного текущему credential; URL, учётные данные и flags не передаются.", "rename_test_remarketing_counter",
+      { counter_id: z.number().int().positive(), name: z.string().trim().min(1).max(120) },
     );
     registerWritePreviewAlias(
-      "vk_delete_remarketing_counter", "Подготовить удаление test-счётчика", "Только счётчик из VK_ADS_TEST_COUNTER_IDS с именем `__MCP_TEST__`; операция необратима.", "delete_test_remarketing_counter",
+      "vk_delete_remarketing_counter", "Подготовить удаление счётчика", "Удаляет счётчик, доступный текущему credential; операция необратима.", "delete_test_remarketing_counter",
       { counter_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
-      "vk_delete_remarketing_counter_v2", "Подготовить v2-удаление test-счётчика", "Только счётчик из VK_ADS_TEST_COUNTER_IDS с именем `__MCP_TEST__`; выполняет документированный v2 DELETE и не заменяет legacy v1-операцию.", "delete_test_remarketing_counter_v2",
+      "vk_delete_remarketing_counter_v2", "Подготовить v2-удаление счётчика", "Удаляет счётчик, доступный текущему credential, через документированный v2 DELETE; не заменяет legacy v1-операцию.", "delete_test_remarketing_counter_v2",
       { counter_id: z.number().int().positive() },
     );
     registerWritePreviewAlias(
@@ -3338,12 +3298,12 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { u
       { offline_goal_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), file_path: z.string().min(1).max(1_024).optional() },
     );
     registerWritePreviewAlias(
-      "vk_create_counter_goal", "Подготовить создание test-цели счётчика", "Создаёт только __MCP_TEST__ цель в счётчике из VK_ADS_TEST_COUNTER_IDS; счётчик и существующие цели не изменяются.", "create_test_counter_goal",
-      { counter_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), substr: z.string().trim().min(1).max(2_000), condition: z.enum(["uss", "rss", "jse", "hd", "ts"]), goal_type: z.enum(["content", "search", "basket", "wishlist", "checkout", "payment_info", "purchase", "lead", "registration", "custom"]), value: z.number().int().min(-2_147_483_647).max(2_147_483_647).nullable().optional() },
+      "vk_create_counter_goal", "Подготовить создание цели счётчика", "Создаёт цель в счётчике, доступном текущему credential; перед записью счётчик перечитывается.", "create_test_counter_goal",
+      { counter_id: z.number().int().positive(), name: z.string().trim().min(1).max(120), substr: z.string().trim().min(1).max(2_000), condition: z.enum(["uss", "rss", "jse", "hd", "ts"]), goal_type: z.enum(["content", "search", "basket", "wishlist", "checkout", "payment_info", "purchase", "lead", "registration", "custom"]), value: z.number().int().min(-2_147_483_647).max(2_147_483_647).nullable().optional() },
     );
     registerWritePreviewAlias(
-      "vk_update_counter_goal", "Подготовить изменение test-цели счётчика", "Только существующая `__MCP_TEST__` цель счётчика из VK_ADS_TEST_COUNTER_IDS; доступны документированные name, value и goal_type.", "update_test_counter_goal",
-      { counter_id: z.number().int().positive(), goal_id: z.number().int().positive(), name: z.string().min(14).max(120).startsWith("__MCP_TEST__"), value: z.number().int().min(-2_147_483_647).max(2_147_483_647), goal_type: z.enum(["content", "search", "basket", "wishlist", "checkout", "payment_info", "purchase", "lead", "registration", "custom"]) },
+      "vk_update_counter_goal", "Подготовить изменение цели счётчика", "Изменяет существующую цель в счётчике, доступном текущему credential; доступны документированные name, value и goal_type.", "update_test_counter_goal",
+      { counter_id: z.number().int().positive(), goal_id: z.number().int().positive(), name: z.string().trim().min(1).max(120), value: z.number().int().min(-2_147_483_647).max(2_147_483_647), goal_type: z.enum(["content", "search", "basket", "wishlist", "checkout", "payment_info", "purchase", "lead", "registration", "custom"]) },
     );
     registerWritePreviewAlias(
       "vk_delete_ad_group", "Подготовить удаление ad group", "Удаляет выбранную ad group через опубликованный HTTP DELETE после reread и подтверждения.", "delete_ad_group",

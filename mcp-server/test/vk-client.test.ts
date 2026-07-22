@@ -75,7 +75,7 @@ describe("VkAdsClient", () => {
     expect(request).toEqual({ url: "https://ads.vk.com/api/v3/subscription.json", method: "POST", body: '{"resource":"BANNER","callback_url":"https://callback.example.test/vk"}' });
   });
 
-  it("изменяет и удаляет только предварительно проверенный test-счётчик", async () => {
+  it("изменяет и удаляет доступный счётчик фиксированными путями", async () => {
     const requests: Array<{ url: string; method: string; body: string }> = [];
     const client = new VkAdsClient({
       tokenProvider: () => "test-token",
@@ -93,13 +93,9 @@ describe("VkAdsClient", () => {
     await expect(client.deleteTestRemarketingCounter(7)).resolves.toEqual({});
     await expect(client.deleteTestRemarketingCounterV2(7)).resolves.toEqual({});
     expect(requests).toEqual([
-      { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "POST", body: '{"name":"__MCP_TEST__ renamed"}' },
-      { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/7/goals.json", method: "POST", body: '{"substr":"order_accepted","condition":"jse","name":"__MCP_TEST__ purchase","goal_type":"purchase","value":45}' },
-      { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v1/remarketing_counters/7.json", method: "DELETE", body: "" },
-      { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "DELETE", body: "" },
     ]);
   });
@@ -234,7 +230,7 @@ describe("VkAdsClient", () => {
     ]);
   });
 
-  it("изменяет только найденную __MCP_TEST__ цель test-счётчика фиксированным detail path", async () => {
+  it("изменяет найденную цель счётчика фиксированным detail path", async () => {
     const requests: Array<{ url: string; method: string; body: string }> = [];
     const client = new VkAdsClient({
       tokenProvider: () => "test-token",
@@ -249,7 +245,6 @@ describe("VkAdsClient", () => {
 
     await expect(client.updateTestCounterGoal({ counterId: 7, goalId: 12, name: "__MCP_TEST__ goal", value: 3, goalType: "purchase" })).resolves.toMatchObject({ id: 12 });
     expect(requests).toEqual([
-      { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/7/goals.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/7/goals/12.json", method: "POST", body: '{"name":"__MCP_TEST__ goal","value":3,"goal_type":"purchase"}' },
     ]);
