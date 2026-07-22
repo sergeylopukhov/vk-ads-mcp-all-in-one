@@ -53,7 +53,7 @@
 | `vk_score_communities` | `read` | Прозрачно считает от 0 до 100 по `scoring_rules`, показывает причины, штрафы, риски и кластеры. | ✅ |
 | `vk_export_community_candidates` | `read` | Формирует CSV или JSON из результатов поиска, анализа и скоринга со статусом `pending_approval`. | ✅ |
 
-`vk_score_communities` принимает `terms`, `exclude_terms`, объект `weights`, `activity_fresh_days`, `members_range` и `min_score`. Поддерживаемые веса: `name_term`, `description_term`, `post_term`, `activity_fresh`, `members_range`, `exclude_term_penalty`. Нужен хотя бы один положительный вес; для весов совпадения нужен непустой `terms`. Неизвестные поля отклоняются с ошибкой.
+`vk_score_communities` принимает `terms`, `exclude_terms`, объект `weights`, `term_weights`, `activity_fresh_days`, `min_posts_per_week`, `min_thematic_post_share`, `members_range` и `min_score`. Поддерживаемые веса: `name_term`, `description_term`, `post_term`, `activity_fresh`, `activity_low_penalty`, `thematic_post_share`, `members_range`, `exclude_term_penalty`. `term_weights` позволяет повысить вклад отдельных профессиональных терминов. Нужен хотя бы один положительный вес; для весов совпадения нужен непустой `terms`. Неизвестные поля отклоняются с ошибкой.
 
 ## Кампании
 

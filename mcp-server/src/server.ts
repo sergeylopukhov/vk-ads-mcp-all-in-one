@@ -1782,12 +1782,15 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
 
   const communityClient = options.communityClient ?? new VkCommunityClient({ tokenProvider: () => "", timeoutMs: 30_000 });
   const communityTypes = z.enum(["group", "page", "event"]);
-  const communityCandidateSchema = z.object({ id: z.number().int().positive(), url: z.string().url(), name: z.string(), description: z.string(), type: z.string().nullable(), members_count: z.number().int().nonnegative().nullable(), verified: z.boolean(), retrieved_at: z.string(), risk_flags: z.array(z.string()), activity: z.object({ last_post_at: z.string().nullable(), posts_per_week: z.number().nullable(), term_matches: z.array(z.string()), risk_flags: z.array(z.string()) }).optional() });
+  const communityCandidateSchema = z.object({ id: z.number().int().positive(), url: z.string().url(), name: z.string(), description: z.string(), type: z.string().nullable(), members_count: z.number().int().nonnegative().nullable(), verified: z.boolean(), retrieved_at: z.string(), risk_flags: z.array(z.string()), activity: z.object({ last_post_at: z.string().nullable(), posts_per_week: z.number().nullable(), posts_analyzed: z.number().int().nonnegative(), thematic_posts: z.number().int().nonnegative(), thematic_post_share: z.number().min(0).max(1).nullable(), term_matches: z.array(z.string()), risk_flags: z.array(z.string()) }).optional() });
   const scoringRulesSchema = z.object({
     terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
     exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
-    weights: z.object({ name_term: z.number().finite().nonnegative().optional(), description_term: z.number().finite().nonnegative().optional(), post_term: z.number().finite().nonnegative().optional(), activity_fresh: z.number().finite().nonnegative().optional(), members_range: z.number().finite().nonnegative().optional(), exclude_term_penalty: z.number().finite().nonnegative().optional() }).strict().refine((weights) => Object.values(weights).some((weight) => typeof weight === "number" && weight > 0), "Укажите хотя бы один положительный вес."),
+    weights: z.object({ name_term: z.number().finite().nonnegative().optional(), description_term: z.number().finite().nonnegative().optional(), post_term: z.number().finite().nonnegative().optional(), activity_fresh: z.number().finite().nonnegative().optional(), activity_low_penalty: z.number().finite().nonnegative().optional(), thematic_post_share: z.number().finite().nonnegative().optional(), members_range: z.number().finite().nonnegative().optional(), exclude_term_penalty: z.number().finite().nonnegative().optional() }).strict().refine((weights) => Object.values(weights).some((weight) => typeof weight === "number" && weight > 0), "Укажите хотя бы один положительный вес."),
+    term_weights: z.record(z.string().trim().min(1).max(120), z.number().finite().positive()).default({}),
     activity_fresh_days: z.number().int().positive().max(3_650).default(30),
+    min_posts_per_week: z.number().nonnegative().max(10_000).default(0),
+    min_thematic_post_share: z.number().min(0).max(1).default(0),
     members_range: z.object({ min: z.number().int().nonnegative().optional(), max: z.number().int().nonnegative().optional() }).strict().optional(),
     min_score: z.number().finite().min(0).max(100).default(0),
   }).strict().superRefine((rules, context) => {

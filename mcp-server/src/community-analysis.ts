@@ -1,7 +1,7 @@
 import type { CommunityType, VkCommunity, VkWallPost } from "./vk-community-client.js";
 
 export interface Candidate { id: number; url: string; name: string; description: string; type: string | null; members_count: number | null; verified: boolean; retrieved_at: string; risk_flags: string[]; activity?: Activity | undefined }
-export interface Activity { last_post_at: string | null; posts_per_week: number | null; term_matches: string[]; risk_flags: string[] }
+export interface Activity { last_post_at: string | null; posts_per_week: number | null; posts_analyzed: number; thematic_posts: number; thematic_post_share: number | null; term_matches: string[]; risk_flags: string[] }
 export interface Score { id: number; score: number; clusters: string[]; reasons: string[]; risk_flags: string[] }
 
 const normalized = (value: string) => value.toLocaleLowerCase("ru-RU");
@@ -29,8 +29,9 @@ export function analyze(posts: VkWallPost[], terms: string[], excludes: string[]
   const newest = dates[0]; const oldest = dates.at(-1);
   const span = newest !== undefined && oldest !== undefined && dates.length > 1 ? Math.max(1, newest - oldest) : 0;
   const text = ordinary.map((post) => post.text || "").join("\n");
+  const thematicPosts = ordinary.filter((post) => matches(post.text || "", terms).length > 0).length;
   const flags = matches(text, excludes).length ? ["exclude_term_in_posts"] : [];
-  return { last_post_at: dates[0] ? new Date(dates[0] * 1000).toISOString() : null, posts_per_week: span ? Number((ordinary.length / (span / 604800)).toFixed(2)) : ordinary.length ? null : 0, term_matches: matches(text, terms), risk_flags: flags };
+  return { last_post_at: dates[0] ? new Date(dates[0] * 1000).toISOString() : null, posts_per_week: span ? Number((ordinary.length / (span / 604800)).toFixed(2)) : ordinary.length ? null : 0, posts_analyzed: ordinary.length, thematic_posts: thematicPosts, thematic_post_share: ordinary.length ? Number((thematicPosts / ordinary.length).toFixed(3)) : null, term_matches: matches(text, terms), risk_flags: flags };
 }
 
 export function score(items: Candidate[], rules: Record<string, unknown>, clusters: Array<Record<string, unknown>> = [], now = Date.now()): Score[] {
@@ -38,20 +39,31 @@ export function score(items: Candidate[], rules: Record<string, unknown>, cluste
   const terms = strings(rules.terms);
   const excludes = strings(rules.exclude_terms);
   const memberRange = object(rules.members_range);
+  const termWeights = object(rules.term_weights);
   const freshDays = number(rules.activity_fresh_days, 30);
+  const minPostsPerWeek = number(rules.min_posts_per_week, 0);
+  const minThematicShare = number(rules.min_thematic_post_share, 0);
   const pass = number(rules.min_score, 0);
   return items.map((item) => {
     let value = 0; const reasons: string[] = []; const text = `${item.name}\n${item.description}`;
     const add = (key: string, yes: boolean, label: string) => { const weight = number(weights[key], 0); if (yes && weight) { value += weight; reasons.push(`${label}: +${weight}`); } };
-    add("name_term", matches(item.name, terms).length > 0, "термин в названии");
-    add("description_term", matches(item.description, terms).length > 0, "термин в описании");
-    add("post_term", !!item.activity?.term_matches.length, "термин в публикациях");
+    const addMatches = (key: string, source: string, label: string) => {
+      const weight = number(weights[key], 0); const matched = weightedOccurrences(source, terms, termWeights);
+      if (weight && matched.score) { const points = weight * matched.score; value += points; reasons.push(`${label}: ${matched.count} совп. +${formatPoints(points)}`); }
+    };
+    addMatches("name_term", item.name, "термины в названии");
+    addMatches("description_term", item.description, "термины в описании");
+    addMatches("post_term", item.activity?.term_matches.join(" ") || "", "термины в публикациях");
     const fresh = item.activity?.last_post_at ? now - Date.parse(item.activity.last_post_at) <= freshDays * 86400000 : false;
     add("activity_fresh", fresh, "свежая активность");
     const min = typeof memberRange.min === "number" ? memberRange.min : undefined; const max = typeof memberRange.max === "number" ? memberRange.max : undefined;
     add("members_range", item.members_count !== null && (min === undefined || item.members_count >= min) && (max === undefined || item.members_count <= max), "размер сообщества");
+    const thematicShare = item.activity?.thematic_post_share;
+    const thematicWeight = number(weights.thematic_post_share, 0); if (thematicWeight && thematicShare !== null && thematicShare !== undefined) { const points = thematicWeight * thematicShare; value += points; reasons.push(`тематические публикации: ${Math.round(thematicShare * 100)}% +${formatPoints(points)}`); }
     const penalty = number(weights.exclude_term_penalty, 0); if (matches(text, excludes).length && penalty) { value -= Math.abs(penalty); reasons.push(`исключающий термин: -${Math.abs(penalty)}`); }
-    const risk_flags = [...item.risk_flags, ...(item.activity?.risk_flags || [])]; if (!fresh) risk_flags.push("inactive_or_no_posts");
+    const lowActivity = item.activity?.posts_per_week !== null && item.activity?.posts_per_week !== undefined && item.activity.posts_per_week < minPostsPerWeek;
+    const lowActivityPenalty = number(weights.activity_low_penalty, 0); if (lowActivity && lowActivityPenalty) { value -= lowActivityPenalty; reasons.push(`низкая активность: -${lowActivityPenalty}`); }
+    const risk_flags = [...item.risk_flags, ...(item.activity?.risk_flags || [])]; if (!fresh) risk_flags.push("inactive_or_no_posts"); if (lowActivity) risk_flags.push("low_activity"); if (thematicShare !== null && thematicShare !== undefined && thematicShare < minThematicShare) risk_flags.push("low_thematic_post_share");
     const clustersFound = clusters.filter((cluster) => {
       const include = strings(cluster.include_terms); const exclude = strings(cluster.exclude_terms); const minimum = number(cluster.min_score, 0);
       return value >= minimum && (!include.length || matches(text, include).length > 0) && matches(text, exclude).length === 0;
@@ -63,3 +75,5 @@ export function score(items: Candidate[], rules: Record<string, unknown>, cluste
 function object(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function strings(value: unknown): string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []; }
 function number(value: unknown, fallback: number): number { return typeof value === "number" && Number.isFinite(value) ? value : fallback; }
+function weightedOccurrences(text: string, terms: string[], termWeights: Record<string, unknown>): { count: number; score: number } { const source = normalized(text); let count = 0; let score = 0; for (const term of [...new Set(terms.map(normalized))]) { if (!term) continue; let from = 0; let occurrences = 0; while (true) { const index = source.indexOf(term, from); if (index < 0) break; occurrences += 1; from = index + term.length; } count += occurrences; score += occurrences * number(termWeights[term], 1); } return { count, score }; }
+function formatPoints(value: number): string { return Number.isInteger(value) ? String(value) : value.toFixed(1); }
