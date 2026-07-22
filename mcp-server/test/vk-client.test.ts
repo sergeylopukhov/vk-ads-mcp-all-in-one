@@ -1572,7 +1572,11 @@ describe("VkAdsClient", () => {
   });
 
   it("передаёт произвольное имя в write", async () => {
-    const client = new VkAdsClient({ tokenProvider: () => "test-token", timeoutMs: 1_000, fetchImplementation: fetch });
+    const client = new VkAdsClient({
+      tokenProvider: () => "test-token",
+      timeoutMs: 1_000,
+      fetchImplementation: async () => new Response(JSON.stringify({ detail: "Unauthorized" }), { status: 401 }),
+    });
     await expect(client.createTestAdPlan({ name: "Продажи", objective: "traffic", packageId: 11 })).rejects.toThrow("HTTP 401");
   });
 

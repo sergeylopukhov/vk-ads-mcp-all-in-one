@@ -1762,7 +1762,7 @@ async function callReadTool(
   }
 }
 
-export function createServer(client: VkAdsClient, mode: ServerMode, options: { communityClient?: VkCommunityClient; communityResearchStore?: CommunityResearchStore; uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowProfileWrites?: boolean; allowSharingKeyRevoke?: boolean; externalSharingKey?: string; allowSkAdNetworkWrites?: boolean; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; tokenRecovery?: { recover: () => Promise<{ token_reissued: true; refresh_token_saved: true; expires_at?: string }> }; connectionId?: string; profileName?: string; auditFile?: string; previewTtlMs?: number; requireWriteConfirmation?: boolean } = {}): McpServer {
+export function createServer(client: VkAdsClient, mode: ServerMode, options: { communityClient?: VkCommunityClient; communityResearchStore?: CommunityResearchStore; uploadDir?: string; piiUploadDir?: string; allowPiiUploads?: boolean; allowAgencyWrites?: boolean; allowProfileWrites?: boolean; allowSharingKeyRevoke?: boolean; externalSharingKey?: string; allowSkAdNetworkWrites?: boolean; allowInAppEventCategoryWrites?: boolean; allowRemarketingCounterWrites?: boolean; tokenRecovery?: { recover: () => Promise<{ token_reissued: true; refresh_token_saved: true; expires_at?: string }> }; connectionId?: string; profileName?: string; auditFile?: string; previewTtlMs?: number; requireWriteConfirmation?: boolean; communityResearchProgressIntervalMs?: number } = {}): McpServer {
   const normalizeTestWritePayload = (operation: WriteOperation, payload: Record<string, unknown>, _legacyUploadDir?: string) => normalizeTestWritePayloadCore(
     operation,
     payload,
@@ -1771,7 +1771,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     options.allowPiiUploads,
     options.allowAgencyWrites,
   );
-  const server = new McpServer({ name: "vk-ads-mcp", version: "1.2.2" });
+  const server = new McpServer({ name: "vk-ads-mcp", version: "1.2.3" }, { capabilities: { logging: {} } });
   const writeGate = new WriteGate(mode === "write", Date.now, randomUUID, options.auditFile, options.previewTtlMs, options.requireWriteConfirmation ?? true);
   const connectionId = options.connectionId ?? "default";
   const profileName = options.profileName ?? "default";
@@ -1870,11 +1870,32 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     return run;
   };
   const runningCommunityResearch = new Map<string, Promise<void>>();
+  const communityResearchSubscribers = new Map<string, Set<string | undefined>>();
+  const communityResearchProgressIntervalMs = Math.max(1, options.communityResearchProgressIntervalMs ?? 60_000);
+  const communityResearchStatusMessage = (run: Record<string, unknown>, final = false) => {
+    const progress = run.progress as Record<string, number>;
+    const summary = run.summary as Record<string, number>;
+    const status = run.status === "completed" ? "завершено" : run.status === "failed" ? "остановлено" : "выполняется";
+    const prefix = final ? "Исследование сообществ завершено" : "Прогресс исследования сообществ";
+    return `${prefix} (${run.run_id as string}): ${status}; обработано ${progress.processed ?? 0} из ${progress.selected ?? 0}, осталось ${progress.remaining ?? 0}; прошло ${summary.passed ?? 0}, отклонено ${summary.rejected ?? 0}.`;
+  };
+  const notifyCommunityResearchProgress = async (run: Record<string, unknown>, final = false) => {
+    const subscribers = communityResearchSubscribers.get(run.run_id as string);
+    if (!subscribers?.size) return;
+    const message = communityResearchStatusMessage(run, final);
+    await Promise.all([...subscribers].map(async (sessionId) => {
+      try {
+        await server.sendLoggingMessage({ level: "info", data: message }, sessionId);
+      } catch {
+        // Уведомления не должны останавливать фоновый анализ при отключении MCP-клиента.
+      }
+    }));
+  };
   const projectCommunityResearchRun = (value: Record<string, unknown>) => {
     const { pending: _pending, ...run } = value;
     return run;
   };
-  const startCommunityResearch = async (input: { keywords: string[]; include_terms: string[]; exclude_terms: string[]; country_id?: number | undefined; city_id?: number | undefined; community_types?: Array<"group" | "page" | "event"> | undefined; min_members?: number | undefined; max_members?: number | undefined; limit?: number | undefined; posts_limit: number; scoring_rules?: Record<string, unknown> | undefined; clusters: Array<Record<string, unknown>> }) => {
+  const startCommunityResearch = async (input: { keywords: string[]; include_terms: string[]; exclude_terms: string[]; country_id?: number | undefined; city_id?: number | undefined; community_types?: Array<"group" | "page" | "event"> | undefined; min_members?: number | undefined; max_members?: number | undefined; limit?: number | undefined; posts_limit: number; scoring_rules?: Record<string, unknown> | undefined; clusters: Array<Record<string, unknown>> }, sessionId?: string) => {
     if (!communityResearchStore) throw new Error("Локальное хранилище снимков исследований не настроено.");
     const derivedTerms = [...new Set([...input.keywords, ...input.include_terms])];
     const rules = input.scoring_rules ?? defaultCommunityScoring(derivedTerms, input.exclude_terms);
@@ -1892,10 +1913,19 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     const run: Record<string, unknown> = { run_id: randomUUID(), created_at: createdAt, expires_at: communityResearchStore.expiresAt(), scoring_version: "community-research-v1", status: "queued", request: { keywords: input.keywords, include_terms: input.include_terms, exclude_terms: input.exclude_terms, ...(input.country_id ? { country_id: input.country_id } : {}), ...(input.city_id ? { city_id: input.city_id } : {}), ...(input.community_types ? { community_types: input.community_types } : {}), ...(input.min_members !== undefined ? { min_members: input.min_members } : {}), ...(input.max_members !== undefined ? { max_members: input.max_members } : {}), ...(input.limit !== undefined ? { limit: input.limit } : {}), posts_limit: input.posts_limit, scoring_rules: rules, clusters: input.clusters }, progress: { discovered: discovery.items.length, selected: pending.length, processed: 0, remaining: pending.length, batch_size: analysisBatchSize, batches_total: Math.ceil(pending.length / analysisBatchSize), batches_completed: 0 }, summary: { source_matches: discovery.provider_matches, matched_filters: discovery.items.length, selected: pending.length, analyzed: 0, analysis_batch_size: analysisBatchSize, analysis_batches: 0, posts_unavailable: 0, passed: 0, rejected: 0, search_pages: discovery.search_pages, incomplete: incompleteReasons.length > 0, incomplete_reasons: incompleteReasons }, pending, passed: [], rejected: [] };
     await communityResearchStore.save(run as never);
     const runId = run.run_id as string;
+    communityResearchSubscribers.set(runId, new Set([sessionId]));
     const execute = async () => {
+      let progressTimer: ReturnType<typeof setInterval> | undefined;
       try {
         let current = await communityResearchStore.get(runId) as Record<string, unknown>;
         current.status = "running"; await communityResearchStore.save(current as never);
+        await notifyCommunityResearchProgress(current);
+        progressTimer = setInterval(() => {
+          void communityResearchStore.get(runId)
+            .then((saved) => notifyCommunityResearchProgress(saved as Record<string, unknown>))
+            .catch(() => undefined);
+        }, communityResearchProgressIntervalMs);
+        progressTimer.unref?.();
         while (Array.isArray(current.pending) && current.pending.length) {
           const batch = (current.pending as Candidate[]).splice(0, analysisBatchSize);
           const analyzed = await analyzeCommunityCandidates(batch, input.posts_limit, terms, excludes);
@@ -1919,21 +1949,29 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
         const current = await communityResearchStore.get(runId) as Record<string, unknown>;
         current.status = "failed"; current.error = "Фоновый анализ остановился из-за ошибки VK API. Запуск сохранён с обработанными пакетами.";
         await communityResearchStore.save(current as never);
-      } finally { runningCommunityResearch.delete(runId); }
+      } finally {
+        if (progressTimer) clearInterval(progressTimer);
+        try {
+          await notifyCommunityResearchProgress(await communityResearchStore.get(runId) as Record<string, unknown>, true);
+        } finally {
+          communityResearchSubscribers.delete(runId);
+          runningCommunityResearch.delete(runId);
+        }
+      }
     };
     const task = execute(); runningCommunityResearch.set(runId, task); void task;
     return projectCommunityResearchRun(run);
   };
   const communityResearchStartSchema = z.object({ run_id: z.string().uuid(), status: z.enum(["queued", "running", "completed", "failed"]), progress: communityResearchProgressSchema, summary: z.object({ source_matches: z.number().int().nonnegative(), matched_filters: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), analyzed: z.number().int().nonnegative(), analysis_batch_size: z.number().int().positive(), analysis_batches: z.number().int().nonnegative(), posts_unavailable: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), rejected: z.number().int().nonnegative(), search_pages: z.number().int().positive(), incomplete: z.boolean(), incomplete_reasons: z.array(z.string()) }) });
   server.registerTool("vk_start_community_research", {
-    title: "Запустить фоновое исследование сообществ VK", description: "Основной read-only запуск: быстро сохраняет очередь отфильтрованных кандидатов и анализирует их в фоне пакетами по 25. Возвращает run_id для проверки прогресса.",
+    title: "Запустить фоновое исследование сообществ VK", description: "Основной read-only запуск: быстро сохраняет очередь отфильтрованных кандидатов и анализирует их в фоне пакетами по 25. Раз в минуту отправляет MCP-уведомление с безопасным прогрессом и отдельное уведомление по завершении. Возвращает run_id для сохранённого результата.",
     inputSchema: communityResearchInputSchema, outputSchema: communityResearchStartSchema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false },
-  }, async (input) => textAndData(await startCommunityResearch(input), "Фоновое исследование запущено; рекламный кабинет не изменялся."));
+  }, async (input, extra) => textAndData(await startCommunityResearch(input, extra.sessionId), "Фоновое исследование запущено; рекламный кабинет не изменялся."));
   server.registerTool("vk_research_communities", {
-    title: "Запустить исследование сообществ VK", description: "Совместимый alias фонового запуска: возвращает run_id сразу, а анализ идёт пакетами по 25 в фоне.",
+    title: "Запустить исследование сообществ VK", description: "Совместимый alias фонового запуска: возвращает run_id сразу, анализирует пакетами по 25 и раз в минуту отправляет MCP-уведомление о прогрессе.",
     inputSchema: communityResearchInputSchema, outputSchema: communityResearchStartSchema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false },
-  }, async (input) => {
-    return textAndData(await startCommunityResearch(input), "Фоновое исследование запущено; рекламный кабинет не изменялся.");
+  }, async (input, extra) => {
+    return textAndData(await startCommunityResearch(input, extra.sessionId), "Фоновое исследование запущено; рекламный кабинет не изменялся.");
   });
   server.registerTool("vk_get_community_research_progress", {
     title: "Получить прогресс исследования сообществ", description: "Только чтение: показывает состояние, число обработанных и оставшихся кандидатов фонового запуска по run_id.",

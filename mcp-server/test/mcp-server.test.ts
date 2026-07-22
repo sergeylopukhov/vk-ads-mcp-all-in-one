@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { LoggingMessageNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -270,6 +271,45 @@ describe("MCP-контракт", () => {
       const restored = await client.callTool({ name: "vk_get_community_research_run", arguments: { run_id: run.run_id } });
       expect(restored.isError).not.toBe(true);
       expect(restored.structuredContent).toMatchObject({ run_id: run.run_id, status: "completed", summary: expect.objectContaining({ selected: 1, analyzed: 1, analysis_batch_size: 25, analysis_batches: 1, search_pages: 1, incomplete: false }) });
+      await Promise.all([client.close(), server.close()]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("отправляет безопасный прогресс и итог фонового исследования через MCP-уведомления", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "vk-community-research-notifications-"));
+    try {
+      const communityClient = {
+        searchPage: async () => ({ count: 26, offset: 0, items: Array.from({ length: 26 }, (_, index) => ({ id: index + 1 })) }),
+        getByIds: async (ids: number[]) => ids.map((id) => ({ id, name: `Регентские курсы ${id}`, description: "Обучение регентов", screen_name: `regent-${id}`, members_count: 1_000, type: "group" })),
+        wall: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 3));
+          return [{ date: Math.floor(Date.now() / 1_000), text: "Регентские занятия" }];
+        },
+      };
+      const store = new CommunityResearchStore(join(directory, "runs.json"), 24 * 60 * 60 * 1_000);
+      const server = createServer(createClientStub(), "readonly", { communityClient: communityClient as never, communityResearchStore: store, communityResearchProgressIntervalMs: 5 });
+      const client = new Client({ name: "test-client", version: "0.0.0" });
+      const notifications: string[] = [];
+      client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => {
+        notifications.push(String(notification.params.data));
+      });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+      const started = await client.callTool({ name: "vk_start_community_research", arguments: { keywords: ["регент"], posts_limit: 1 } });
+      const runId = (started.structuredContent as { run_id: string }).run_id;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const current = await client.callTool({ name: "vk_get_community_research_progress", arguments: { run_id: runId } });
+        if ((current.structuredContent as { status: string }).status === "completed") break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(notifications.some((message) => message.includes("обработано") && message.includes("осталось"))).toBe(true);
+      expect(notifications.some((message) => message.includes("Исследование сообществ завершено") && message.includes("26"))).toBe(true);
+      expect(notifications.join(" ")).not.toContain("Регентские занятия");
       await Promise.all([client.close(), server.close()]);
     } finally {
       await rm(directory, { recursive: true, force: true });
