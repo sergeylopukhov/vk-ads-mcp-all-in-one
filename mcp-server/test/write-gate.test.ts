@@ -18,6 +18,8 @@ describe("WriteGate", () => {
     });
 
     expect(preview.payload_hash).toHaveLength(64);
+    expect(preview.confirmation_statement).toBe("ПОДТВЕРЖДАЮ");
+    expect(() => gate.consume(preview.id, "ПОДТВЕРЖДАЮ 00000000-0000-4000-8000-000000000001")).toThrow("Неверная фраза");
     expect(gate.consume(preview.id, preview.confirmation_statement)).toMatchObject({ id: preview.id });
     expect(() => gate.consume(preview.id, preview.confirmation_statement)).toThrow("уже использован");
     time += 1;

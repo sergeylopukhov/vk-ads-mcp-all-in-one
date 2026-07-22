@@ -1129,7 +1129,7 @@ describe("MCP-контракт", () => {
     expect(JSON.stringify(preview.structuredContent)).not.toContain(externalKey);
     expect(activated).toEqual([]);
 
-    await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: "ПОДТВЕРЖДАЮ not-the-preview" } });
+    await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: "ПОДТВЕРЖДАЮ лишнее" } });
     expect(activated).toEqual([]);
 
     const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
@@ -1271,7 +1271,7 @@ describe("MCP-контракт", () => {
     expect(appleRefreshes).toBe(0);
     expect(apple).toMatchObject({ operation: "refresh_apple_app_metadata", preflight: { risk: "low", before: { id: 535176909, category_id: 4 } } });
     expect(JSON.stringify(apple)).not.toContain("private title");
-    const rejected = await client.callTool({ name: "write_execute", arguments: { preview_id: apple.id, confirmation_statement: "ПОДТВЕРЖДАЮ wrong" } });
+    const rejected = await client.callTool({ name: "write_execute", arguments: { preview_id: apple.id, confirmation_statement: "ПОДТВЕРЖДАЮ лишнее" } });
     expect(rejected.isError).toBe(true);
     expect(appleRefreshes).toBe(0);
     const appleExecuted = await client.callTool({ name: "write_execute", arguments: { preview_id: apple.id, confirmation_statement: apple.confirmation_statement } });

@@ -69,7 +69,7 @@ export class WriteGate {
       payload,
       payload_hash: payloadHash,
       expires_at: new Date(expiresAtMs).toISOString(),
-      confirmation_statement: `ПОДТВЕРЖДАЮ ${id}`,
+      confirmation_statement: "ПОДТВЕРЖДАЮ",
       expiresAtMs,
       consumed: false,
     };
