@@ -10,7 +10,7 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 20+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-stdio-1f6feb" alt="MCP stdio"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b8f60" alt="Лицензия MIT"></a>
-  <img src="https://img.shields.io/badge/version-1.2.4-6b7280" alt="Версия 1.2.4">
+  <img src="https://img.shields.io/badge/version-1.2.5-6b7280" alt="Версия 1.2.5">
 </p>
 
 Сервер подключает MCP-клиент к кабинету VK Ads: читает рекламные планы, группы и объявления, получает статистику, работает с аудиториями, медиафайлами и отчётами. По умолчанию запись выключена.
@@ -110,6 +110,7 @@ vk_research_communities({"keywords":["настольные игры"],"min_membe
 - `vk_research_communities`: основной инструмент. Принимает поисковые фразы и фильтры, автоматически анализирует активность, сохраняет снимок по `run_id` и отправляет уведомление о ходе раз в минуту, а затем итоговое уведомление. Без `scoring_rules` применяет универсальный профиль: нормированные совпадения в названии, описании и постах, свежесть, долю тематических публикаций, штраф за низкую активность и исключающие термины. Неполные `scoring_rules` меняют только явно заданные параметры; `clusters` добавляют пользовательскую классификацию.
 - `vk_get_community_research_progress`: повторно показывает сохранённые счётчики, если MCP-клиент не отображает уведомления.
 - `vk_get_community_research_run`: возвращает сохранённый снимок по `run_id` без повторного поиска и анализа.
+- `vk_rescore_community_research_run`: пересчитывает сохранённый завершённый запуск по новому профилю без нового поиска, чтения постов или запросов к VK. Создаёт новый `run_id` и сохраняет связь с исходным запуском.
 - `vk_find_community_candidates`: совместимый инструмент для одного вызова без сохранения снимка.
 - `vk_discover_communities`: низкоуровневый поиск без анализа активности; используйте его, только если хотите самостоятельно собрать цепочку.
 - `vk_analyze_communities`: обязательный `community_ids`; доступны `posts_limit`, `analysis_terms` и `exclude_terms`.

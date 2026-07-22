@@ -1771,7 +1771,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     options.allowPiiUploads,
     options.allowAgencyWrites,
   );
-  const server = new McpServer({ name: "vk-ads-mcp", version: "1.2.4" }, { capabilities: { logging: {} } });
+  const server = new McpServer({ name: "vk-ads-mcp", version: "1.2.5" }, { capabilities: { logging: {} } });
   const writeGate = new WriteGate(mode === "write", Date.now, randomUUID, options.auditFile, options.previewTtlMs, options.requireWriteConfirmation ?? true);
   const connectionId = options.connectionId ?? "default";
   const profileName = options.profileName ?? "default";
@@ -1853,11 +1853,42 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
   };
   const communityResearchItemSchema = communityCandidateSchema.extend(communityScoreSchema.shape);
   const communityResearchProgressSchema = z.object({ discovered: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), processed: z.number().int().nonnegative(), remaining: z.number().int().nonnegative(), batch_size: z.number().int().positive(), batches_total: z.number().int().nonnegative(), batches_completed: z.number().int().nonnegative() });
-  const communityResearchRunSchema = z.object({ run_id: z.string().uuid(), created_at: z.string().datetime(), expires_at: z.string().datetime(), scoring_version: z.enum(["community-research-v1", "community-research-v2"]), status: z.enum(["queued", "running", "completed", "failed"]), error: z.string().optional(), request: z.record(z.string(), z.unknown()), progress: communityResearchProgressSchema, summary: z.object({ source_matches: z.number().int().nonnegative(), matched_filters: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), analyzed: z.number().int().nonnegative(), analysis_batch_size: z.number().int().positive(), analysis_batches: z.number().int().nonnegative(), posts_unavailable: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), rejected: z.number().int().nonnegative(), search_pages: z.number().int().positive(), incomplete: z.boolean(), incomplete_reasons: z.array(z.string()) }), passed: z.array(communityResearchItemSchema), rejected: z.array(communityResearchItemSchema) });
+  const communityResearchRunSchema = z.object({ run_id: z.string().uuid(), rescore_of: z.string().uuid().optional(), created_at: z.string().datetime(), expires_at: z.string().datetime(), scoring_version: z.enum(["community-research-v1", "community-research-v2"]), status: z.enum(["queued", "running", "completed", "failed"]), error: z.string().optional(), request: z.record(z.string(), z.unknown()), progress: communityResearchProgressSchema, summary: z.object({ source_matches: z.number().int().nonnegative(), matched_filters: z.number().int().nonnegative(), selected: z.number().int().nonnegative(), analyzed: z.number().int().nonnegative(), analysis_batch_size: z.number().int().positive(), analysis_batches: z.number().int().nonnegative(), posts_unavailable: z.number().int().nonnegative(), passed: z.number().int().nonnegative(), rejected: z.number().int().nonnegative(), search_pages: z.number().int().positive(), incomplete: z.boolean(), incomplete_reasons: z.array(z.string()) }), passed: z.array(communityResearchItemSchema), rejected: z.array(communityResearchItemSchema) });
   const sortedCommunityResearch = (items: Array<Candidate & { score: number; clusters: string[]; reasons: string[] }>) => items.sort((left, right) => {
     const activityOrder = (Date.parse(right.activity?.last_post_at ?? "") || 0) - (Date.parse(left.activity?.last_post_at ?? "") || 0);
     return right.score - left.score || activityOrder || (right.members_count ?? 0) - (left.members_count ?? 0) || left.id - right.id;
   });
+  const stringsFrom = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  const rescoreCommunityResearch = async (runId: string, scoringRules: Record<string, unknown> | undefined, clusters: Array<Record<string, unknown>> | undefined) => {
+    if (!communityResearchStore) throw new Error("Локальное хранилище снимков исследований не настроено.");
+    const source = await communityResearchStore.get(runId) as Record<string, unknown>;
+    if (source.status !== "completed") throw new Error("Пересчёт доступен после завершения исходного исследования.");
+    const request = source.request as Record<string, unknown>;
+    const fallbackTerms = [...new Set([...stringsFrom(request.keywords), ...stringsFrom(request.include_terms)])];
+    const fallbackExcludes = stringsFrom(request.exclude_terms);
+    const rules = resolveCommunityScoring(scoringRules, fallbackTerms, fallbackExcludes);
+    const sourceClusters = Array.isArray(request.clusters) ? request.clusters.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))) : [];
+    const selectedClusters = clusters ?? sourceClusters;
+    const communities = [...(source.passed as Candidate[]), ...(source.rejected as Candidate[])];
+    const scores = new Map(score(communities, rules, selectedClusters).map((item) => [item.id, item]));
+    const items = sortedCommunityResearch(communities.map((community) => {
+      const scoreItem = scores.get(community.id)!;
+      return { ...community, score: scoreItem.score, clusters: scoreItem.clusters, reasons: scoreItem.reasons, risk_flags: scoreItem.risk_flags };
+    }));
+    const threshold = typeof rules.min_score === "number" ? rules.min_score : 0;
+    const progress = source.progress as Record<string, number>;
+    const sourceSummary = source.summary as Record<string, unknown>;
+    const createdAt = new Date().toISOString();
+    const result: Record<string, unknown> = {
+      run_id: randomUUID(), rescore_of: runId, created_at: createdAt, expires_at: communityResearchStore.expiresAt(), scoring_version: "community-research-v2", status: "completed",
+      request: { ...request, scoring_rules: rules, clusters: selectedClusters, rescore_of: runId },
+      progress: { ...progress, processed: communities.length, remaining: 0, batches_completed: progress.batches_total ?? progress.batches_completed ?? 0 },
+      summary: { ...sourceSummary, selected: communities.length, analyzed: communities.length, passed: items.filter((item) => item.score >= threshold).length, rejected: items.filter((item) => item.score < threshold).length },
+      passed: items.filter((item) => item.score >= threshold), rejected: items.filter((item) => item.score < threshold),
+    };
+    await communityResearchStore.save(result as never);
+    return projectCommunityResearchRun(result);
+  };
   const runCommunityResearch = async (input: { keywords: string[]; include_terms: string[]; exclude_terms: string[]; country_id?: number | undefined; city_id?: number | undefined; community_types?: Array<"group" | "page" | "event"> | undefined; min_members?: number | undefined; max_members?: number | undefined; limit?: number | undefined; posts_limit: number; scoring_rules?: Record<string, unknown> | undefined; clusters: Array<Record<string, unknown>> }, persist: boolean) => {
     if (persist && !communityResearchStore) throw new Error("Локальное хранилище снимков исследований не настроено.");
     const derivedTerms = [...new Set([...input.keywords, ...input.include_terms])];
@@ -2002,6 +2033,10 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     if (!communityResearchStore) throw new Error("Локальное хранилище снимков исследований не настроено.");
     return textAndData(projectCommunityResearchRun(await communityResearchStore.get(run_id) as Record<string, unknown>), "Снимок исследования получен из локального хранилища.");
   });
+  server.registerTool("vk_rescore_community_research_run", {
+    title: "Пересчитать сохранённое исследование сообществ", description: "Только чтение: повторно оценивает уже сохранённых кандидатов и их активность по новому профилю без поиска и обращений к VK. Возвращает новый run_id.",
+    inputSchema: { run_id: z.string().uuid(), scoring_rules: scoringRulesSchema.optional(), clusters: z.array(clusterSchema).max(50).optional() }, outputSchema: communityResearchRunSchema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false },
+  }, async ({ run_id, scoring_rules, clusters }) => textAndData(await rescoreCommunityResearch(run_id, scoring_rules, clusters), "Сохранённые сообщества пересчитаны без нового поиска и без изменений в рекламном кабинете."));
   server.registerTool("vk_find_community_candidates", {
     title: "Найти и оценить сообщества VK", description: "Только чтение: за один вызов ищет сообщества, анализирует последние публичные записи и возвращает прозрачный рейтинг. Подходит для обычного запроса без ручной цепочки инструментов.",
     inputSchema: communityResearchInputSchema, outputSchema: { items: z.array(communityCandidateSchema.extend(communityScoreSchema.shape)) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },

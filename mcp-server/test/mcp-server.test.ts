@@ -243,10 +243,11 @@ describe("MCP-контракт", () => {
   it("сохраняет полный запуск исследования и возвращает тот же снимок по run_id", async () => {
     const directory = await mkdtemp(join(tmpdir(), "vk-community-research-mcp-"));
     try {
+      let wallCalls = 0;
       const communityClient = {
         searchPage: async () => ({ count: 1, offset: 0, items: [{ id: 7 }] }),
         getByIds: async () => [{ id: 7, name: "Регентское дело", description: "Курсы для регентов", screen_name: "regent", members_count: 1_000, type: "group" }],
-        wall: async () => [{ date: Math.floor(Date.now() / 1_000), text: "Регентские занятия" }],
+        wall: async () => { wallCalls += 1; return [{ date: Math.floor(Date.now() / 1_000), text: "Регентские занятия" }]; },
       };
       const store = new CommunityResearchStore(join(directory, "runs.json"), 24 * 60 * 60 * 1_000);
       const server = createServer(createClientStub(), "readonly", { communityClient: communityClient as never, communityResearchStore: store });
@@ -271,6 +272,13 @@ describe("MCP-контракт", () => {
       const restored = await client.callTool({ name: "vk_get_community_research_run", arguments: { run_id: run.run_id } });
       expect(restored.isError).not.toBe(true);
       expect(restored.structuredContent).toMatchObject({ run_id: run.run_id, status: "completed", summary: expect.objectContaining({ selected: 1, analyzed: 1, analysis_batch_size: 25, analysis_batches: 1, search_pages: 1, incomplete: false }) });
+
+      const callsBeforeRescore = wallCalls;
+      const rescored = await client.callTool({ name: "vk_rescore_community_research_run", arguments: { run_id: run.run_id } });
+      expect(rescored.isError).not.toBe(true);
+      expect(rescored.structuredContent).toMatchObject({ rescore_of: run.run_id, run_id: expect.any(String), status: "completed", scoring_version: "community-research-v2" });
+      expect((rescored.structuredContent as { run_id: string }).run_id).not.toBe(run.run_id);
+      expect(wallCalls).toBe(callsBeforeRescore);
       await Promise.all([client.close(), server.close()]);
     } finally {
       await rm(directory, { recursive: true, force: true });
