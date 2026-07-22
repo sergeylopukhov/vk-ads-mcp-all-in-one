@@ -10,7 +10,7 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 20+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-stdio-1f6feb" alt="MCP stdio"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b8f60" alt="Лицензия MIT"></a>
-  <img src="https://img.shields.io/badge/version-1.2.0-6b7280" alt="Версия 1.2.0">
+  <img src="https://img.shields.io/badge/version-1.2.1-6b7280" alt="Версия 1.2.1">
 </p>
 
 Сервер подключает MCP-клиент к кабинету VK Ads: читает рекламные планы, группы и объявления, получает статистику, работает с аудиториями, медиафайлами и отчётами. По умолчанию запись выключена.
@@ -114,6 +114,29 @@ vk_export_community_candidates({"communities":[...],"format":"csv"})
 - `vk_analyze_communities`: обязательный `community_ids`; доступны `posts_limit`, `analysis_terms` и `exclude_terms`.
 - `vk_score_communities`: обязательные `community_ids` и `scoring_rules`. В правилах задаются термины, веса, диапазон размера сообщества, штрафы и минимальный балл; `clusters` — произвольные группы с собственными условиями.
 - `vk_export_community_candidates`: принимает результаты поиска или анализа, необязательные результаты скоринга и формат `csv` либо `json`.
+
+Для `vk_score_communities` используйте точную схему. Неизвестные поля и пустые веса отклоняются с ошибкой, а не превращаются в нулевой балл:
+
+```json
+{
+  "community_ids": [1, 2],
+  "scoring_rules": {
+    "terms": ["регент"],
+    "exclude_terms": ["вакансия"],
+    "weights": {
+      "name_term": 35,
+      "description_term": 15,
+      "post_term": 25,
+      "activity_fresh": 15,
+      "members_range": 10,
+      "exclude_term_penalty": 30
+    },
+    "activity_fresh_days": 90,
+    "members_range": { "min": 300, "max": 50000 },
+    "min_score": 50
+  }
+}
+```
 
 Закрытые, удалённые и недоступные сообщества отмечаются флагами. Полные тексты постов не возвращаются и не сохраняются. Поиск, анализ и экспорт не создают аудитории и не меняют рекламный кабинет.
 

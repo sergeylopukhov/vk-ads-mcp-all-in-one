@@ -81,6 +81,26 @@ describe("MCP-контракт", () => {
     await Promise.all([client.close(), server.close()]);
   });
 
+  it("отклоняет неявные правила скоринга и начисляет балл по корректной схеме", async () => {
+    const communityClient = {
+      getByIds: async () => [{ id: 7, name: "Регентское дело", description: "Курсы", screen_name: "regent", members_count: 1_000, type: "group" }],
+      wall: async () => [{ date: Math.floor(Date.now() / 1_000), text: "Регентские занятия" }],
+    };
+    const server = createServer(createClientStub(), "readonly", { communityClient: communityClient as never });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const invalid = await client.callTool({ name: "vk_score_communities", arguments: { community_ids: [7], scoring_rules: { terms: ["регент"], name_term: 35 } } });
+    expect(invalid.isError).toBe(true);
+
+    const valid = await client.callTool({ name: "vk_score_communities", arguments: { community_ids: [7], scoring_rules: { terms: ["регент"], weights: { name_term: 35, post_term: 25 } } } });
+    expect(valid.isError).not.toBe(true);
+    expect(valid.structuredContent).toMatchObject({ items: [expect.objectContaining({ id: 7, score: 60, reasons: expect.arrayContaining(["термин в названии: +35", "термин в публикациях: +25"]) })] });
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
   it("не готовит preview для legacy write-пути вне текущего официального индекса", async () => {
     const server = createServer(createClientStub(), "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });

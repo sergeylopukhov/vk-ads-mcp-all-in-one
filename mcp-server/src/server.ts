@@ -1783,6 +1783,18 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
   const communityClient = options.communityClient ?? new VkCommunityClient({ tokenProvider: () => "", timeoutMs: 30_000 });
   const communityTypes = z.enum(["group", "page", "event"]);
   const communityCandidateSchema = z.object({ id: z.number().int().positive(), url: z.string().url(), name: z.string(), description: z.string(), type: z.string().nullable(), members_count: z.number().int().nonnegative().nullable(), verified: z.boolean(), retrieved_at: z.string(), risk_flags: z.array(z.string()), activity: z.object({ last_post_at: z.string().nullable(), posts_per_week: z.number().nullable(), term_matches: z.array(z.string()), risk_flags: z.array(z.string()) }).optional() });
+  const scoringRulesSchema = z.object({
+    terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
+    exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
+    weights: z.object({ name_term: z.number().finite().nonnegative().optional(), description_term: z.number().finite().nonnegative().optional(), post_term: z.number().finite().nonnegative().optional(), activity_fresh: z.number().finite().nonnegative().optional(), members_range: z.number().finite().nonnegative().optional(), exclude_term_penalty: z.number().finite().nonnegative().optional() }).strict().refine((weights) => Object.values(weights).some((weight) => typeof weight === "number" && weight > 0), "Укажите хотя бы один положительный вес."),
+    activity_fresh_days: z.number().int().positive().max(3_650).default(30),
+    members_range: z.object({ min: z.number().int().nonnegative().optional(), max: z.number().int().nonnegative().optional() }).strict().optional(),
+    min_score: z.number().finite().min(0).max(100).default(0),
+  }).strict().superRefine((rules, context) => {
+    if ((rules.weights.name_term || rules.weights.description_term || rules.weights.post_term) && !rules.terms.length) context.addIssue({ code: "custom", path: ["terms"], message: "Для весов совпадения укажите хотя бы один terms." });
+    if (rules.members_range?.min !== undefined && rules.members_range.max !== undefined && rules.members_range.min > rules.members_range.max) context.addIssue({ code: "custom", path: ["members_range"], message: "min не может быть больше max." });
+  });
+  const clusterSchema = z.object({ name: z.string().trim().min(1).max(120), include_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), min_score: z.number().finite().min(0).max(100).default(0) }).strict();
   server.registerTool("vk_discover_communities", {
     title: "Найти публичные сообщества VK", description: "Только чтение: ищет через groups.search, дополняет metadata, удаляет дубли по ID и не запрашивает списки участников.",
     inputSchema: { keywords: z.array(z.string().trim().min(1).max(120)).min(1).max(20), include_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), country_id: z.number().int().positive().optional(), city_id: z.number().int().positive().optional(), community_types: z.array(communityTypes).max(3).optional(), min_members: z.number().int().nonnegative().optional(), max_members: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(500).default(100) },
@@ -1806,7 +1818,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
   });
   server.registerTool("vk_score_communities", {
     title: "Оценить сообщества VK", description: "Только чтение: прозрачный локальный скоринг от 0 до 100 по пользовательским весам и кластерам.",
-    inputSchema: { community_ids: z.array(z.number().int().positive()).min(1).max(500), scoring_rules: z.record(z.string(), z.unknown()), clusters: z.array(z.record(z.string(), z.unknown())).max(50).default([]) }, outputSchema: { items: z.array(z.record(z.string(), z.unknown())) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    inputSchema: { community_ids: z.array(z.number().int().positive()).min(1).max(500), scoring_rules: scoringRulesSchema, clusters: z.array(clusterSchema).max(50).default([]) }, outputSchema: { items: z.array(z.record(z.string(), z.unknown())) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   }, async ({ community_ids, scoring_rules, clusters }) => {
     const terms = Array.isArray(scoring_rules.terms) ? scoring_rules.terms.filter((term): term is string => typeof term === "string") : [];
     const excludes = Array.isArray(scoring_rules.exclude_terms) ? scoring_rules.exclude_terms.filter((term): term is string => typeof term === "string") : [];
