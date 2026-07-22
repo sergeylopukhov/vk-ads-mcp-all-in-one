@@ -101,6 +101,24 @@ describe("MCP-контракт", () => {
     await Promise.all([client.close(), server.close()]);
   });
 
+  it("выполняет поиск, анализ и скоринг сообществ одним read-only вызовом", async () => {
+    const communityClient = {
+      search: async () => [{ id: 7 }],
+      getByIds: async () => [{ id: 7, name: "Регентское дело", description: "Курсы для регентов", screen_name: "regent", members_count: 1_000, type: "group" }],
+      wall: async () => [{ date: Math.floor(Date.now() / 1_000), text: "Регентские занятия" }],
+    };
+    const server = createServer(createClientStub(), "readonly", { communityClient: communityClient as never });
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const result = await client.callTool({ name: "vk_find_community_candidates", arguments: { keywords: ["регент"], limit: 10, posts_limit: 10 } });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ items: [expect.objectContaining({ id: 7, score: expect.any(Number), activity: expect.objectContaining({ last_post_at: expect.any(String), posts_analyzed: 1 }), reasons: expect.any(Array) })] });
+    await Promise.all([client.close(), server.close()]);
+  });
+
   it("не готовит preview для legacy write-пути вне текущего официального индекса", async () => {
     const server = createServer(createClientStub(), "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });

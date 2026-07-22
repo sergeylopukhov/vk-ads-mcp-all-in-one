@@ -1782,6 +1782,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
   const communityClient = options.communityClient ?? new VkCommunityClient({ tokenProvider: () => "", timeoutMs: 30_000 });
   const communityTypes = z.enum(["group", "page", "event"]);
   const communityCandidateSchema = z.object({ id: z.number().int().positive(), url: z.string().url(), name: z.string(), description: z.string(), type: z.string().nullable(), members_count: z.number().int().nonnegative().nullable(), verified: z.boolean(), retrieved_at: z.string(), risk_flags: z.array(z.string()), activity: z.object({ last_post_at: z.string().nullable(), posts_per_week: z.number().nullable(), posts_analyzed: z.number().int().nonnegative(), thematic_posts: z.number().int().nonnegative(), thematic_post_share: z.number().min(0).max(1).nullable(), term_matches: z.array(z.string()), risk_flags: z.array(z.string()) }).optional() });
+  const communityScoreSchema = z.object({ score: z.number().min(0).max(100), clusters: z.array(z.string()), reasons: z.array(z.string()), risk_flags: z.array(z.string()) });
   const scoringRulesSchema = z.object({
     terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
     exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
@@ -1798,25 +1799,58 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     if (rules.members_range?.min !== undefined && rules.members_range.max !== undefined && rules.members_range.min > rules.members_range.max) context.addIssue({ code: "custom", path: ["members_range"], message: "min не может быть больше max." });
   });
   const clusterSchema = z.object({ name: z.string().trim().min(1).max(120), include_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), min_score: z.number().finite().min(0).max(100).default(0) }).strict();
-  server.registerTool("vk_discover_communities", {
-    title: "Найти публичные сообщества VK", description: "Только чтение: ищет через groups.search, дополняет metadata, удаляет дубли по ID и не запрашивает списки участников.",
-    inputSchema: { keywords: z.array(z.string().trim().min(1).max(120)).min(1).max(20), include_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), country_id: z.number().int().positive().optional(), city_id: z.number().int().positive().optional(), community_types: z.array(communityTypes).max(3).optional(), min_members: z.number().int().nonnegative().optional(), max_members: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(500).default(100) },
-    outputSchema: { items: z.array(communityCandidateSchema) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
-  }, async (input) => {
+  const communityResearchInputSchema = {
+    keywords: z.array(z.string().trim().min(1).max(120)).min(1).max(20), include_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), country_id: z.number().int().positive().optional(), city_id: z.number().int().positive().optional(), community_types: z.array(communityTypes).max(3).optional(), min_members: z.number().int().nonnegative().optional(), max_members: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(100).default(30), posts_limit: z.number().int().min(1).max(100).default(30), scoring_rules: scoringRulesSchema.optional(), clusters: z.array(clusterSchema).max(50).default([]),
+  };
+  const discoverCommunityCandidates = async (input: { keywords: string[]; include_terms: string[]; exclude_terms: string[]; country_id?: number | undefined; city_id?: number | undefined; community_types?: Array<"group" | "page" | "event"> | undefined; min_members?: number | undefined; max_members?: number | undefined; limit: number }): Promise<Candidate[]> => {
     if (input.min_members !== undefined && input.max_members !== undefined && input.min_members > input.max_members) throw new Error("min_members не может быть больше max_members.");
     const ids = new Set<number>();
     for (const keyword of input.keywords) for (const type of input.community_types?.length ? input.community_types : [undefined]) {
       for (const item of await communityClient.search(keyword, 0, Math.min(input.limit, 200), input.country_id, input.city_id, type as CommunityType | undefined)) ids.add(item.id);
     }
-    const items = (await communityClient.getByIds([...ids])).map((item) => candidate(item)).filter((item) => includeCandidate(item, input.include_terms, input.exclude_terms, input.community_types, input.min_members, input.max_members)).slice(0, input.limit);
+    return (await communityClient.getByIds([...ids])).map((item) => candidate(item)).filter((item) => includeCandidate(item, input.include_terms, input.exclude_terms, input.community_types, input.min_members, input.max_members)).slice(0, input.limit);
+  };
+  const analyzeCommunityCandidates = async (items: Candidate[], postsLimit: number, terms: string[], excludes: string[]): Promise<Candidate[]> => {
+    for (const item of items) if (!item.risk_flags.length) {
+      try { item.activity = analyze(await communityClient.wall(item.id, postsLimit), terms, excludes); item.risk_flags.push(...item.activity.risk_flags); } catch { item.risk_flags.push("posts_unavailable"); }
+    }
+    return items;
+  };
+  const defaultCommunityScoring = (terms: string[], excludes: string[]): Record<string, unknown> => ({
+    terms, exclude_terms: excludes,
+    weights: { name_term: 25, description_term: 25, post_term: 25, activity_fresh: 15, thematic_post_share: 10, exclude_term_penalty: 15 },
+    per_match_weights: { name_term: 8, description_term: 4, post_term: 3 }, activity_fresh_days: 30, min_posts_per_week: 0, min_thematic_post_share: 0, min_score: 0,
+  });
+  server.registerTool("vk_find_community_candidates", {
+    title: "Найти и оценить сообщества VK", description: "Только чтение: за один вызов ищет сообщества, анализирует последние публичные записи и возвращает прозрачный рейтинг. Подходит для обычного запроса без ручной цепочки инструментов.",
+    inputSchema: communityResearchInputSchema, outputSchema: { items: z.array(communityCandidateSchema.extend(communityScoreSchema.shape)) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  }, async (input) => {
+    const derivedTerms = [...new Set([...input.keywords, ...input.include_terms])];
+    const rules = input.scoring_rules ?? defaultCommunityScoring(derivedTerms, input.exclude_terms);
+    const terms = Array.isArray(rules.terms) ? rules.terms.filter((term): term is string => typeof term === "string") : [];
+    const excludes = Array.isArray(rules.exclude_terms) ? rules.exclude_terms.filter((term): term is string => typeof term === "string") : [];
+    const communities = await analyzeCommunityCandidates(await discoverCommunityCandidates(input), input.posts_limit, terms, excludes);
+    const scores = new Map(score(communities, rules, input.clusters).map((item) => [item.id, item]));
+    const items = communities.map((community) => {
+      const scoreItem = scores.get(community.id)!;
+      return { ...community, score: scoreItem.score, clusters: scoreItem.clusters, reasons: scoreItem.reasons, risk_flags: scoreItem.risk_flags };
+    }).sort((left, right) => right.score - left.score || right.members_count! - left.members_count!);
+    return textAndData({ items }, "Сообщества найдены, проанализированы и оценены без изменений в рекламном кабинете.");
+  });
+  server.registerTool("vk_discover_communities", {
+    title: "Найти публичные сообщества VK", description: "Только чтение: ищет через groups.search, дополняет metadata, удаляет дубли по ID и не запрашивает списки участников.",
+    inputSchema: { keywords: z.array(z.string().trim().min(1).max(120)).min(1).max(20), include_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), country_id: z.number().int().positive().optional(), city_id: z.number().int().positive().optional(), community_types: z.array(communityTypes).max(3).optional(), min_members: z.number().int().nonnegative().optional(), max_members: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(500).default(100) },
+    outputSchema: { items: z.array(communityCandidateSchema) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  }, async (input) => {
+    const items = await discoverCommunityCandidates(input);
     return textAndData({ items }, "Публичные сообщества найдены; данные участников не запрашивались.");
   });
   server.registerTool("vk_analyze_communities", {
     title: "Проанализировать сообщества VK", description: "Только чтение: анализирует metadata и последние публичные записи; полные тексты публикаций не возвращаются и не сохраняются.",
     inputSchema: { community_ids: z.array(z.number().int().positive()).min(1).max(500), posts_limit: z.number().int().min(1).max(100).default(30), analysis_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]), exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]) }, outputSchema: { items: z.array(communityCandidateSchema) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   }, async (input) => {
-    const metadata = await communityClient.getByIds([...new Set(input.community_ids)]); const items: Candidate[] = [];
-    for (const item of metadata) { const result = candidate(item); if (!result.risk_flags.length) { try { result.activity = analyze(await communityClient.wall(item.id, input.posts_limit), input.analysis_terms, input.exclude_terms); result.risk_flags.push(...result.activity.risk_flags); } catch { result.risk_flags.push("posts_unavailable"); } } items.push(result); }
+    const metadata = await communityClient.getByIds([...new Set(input.community_ids)]);
+    const items = await analyzeCommunityCandidates(metadata.map((item) => candidate(item)), input.posts_limit, input.analysis_terms, input.exclude_terms);
     return textAndData({ items }, "Сообщества проанализированы без сохранения текстов публикаций.");
   });
   server.registerTool("vk_score_communities", {

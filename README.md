@@ -102,15 +102,13 @@ codex mcp add vk-ads-agency --env VK_ADS_PROFILE=agency -- node "$(pwd)/dist/ind
 Примеры вызовов без записи:
 
 ```text
-vk_discover_communities({"keywords":["настольные игры"],"min_members":1000,"limit":50})
-vk_analyze_communities({"community_ids":[1,2],"analysis_terms":["турнир"]})
-vk_score_communities({"community_ids":[1,2],"scoring_rules":{"terms":["турнир"],"weights":{"name_term":25,"post_term":30,"activity_fresh":20},"min_score":50}})
-vk_export_community_candidates({"communities":[...],"format":"csv"})
+vk_find_community_candidates({"keywords":["настольные игры"],"min_members":1000,"limit":30})
 ```
 
 Основные параметры:
 
-- `vk_discover_communities`: обязательный `keywords`; доступны фильтры `include_terms`, `exclude_terms`, `country_id`, `city_id`, `community_types`, `min_members`, `max_members` и `limit`.
+- `vk_find_community_candidates`: основной инструмент. Принимает поисковые фразы и фильтры, автоматически анализирует активность и возвращает рейтинг. По умолчанию использует универсальные правила из поисковых фраз; `scoring_rules` и `clusters` позволяют задать собственную модель.
+- `vk_discover_communities`: низкоуровневый поиск без анализа активности; используйте его, только если хотите самостоятельно собрать цепочку.
 - `vk_analyze_communities`: обязательный `community_ids`; доступны `posts_limit`, `analysis_terms` и `exclude_terms`.
 - `vk_score_communities`: обязательные `community_ids` и `scoring_rules`. В правилах задаются термины, веса, диапазон размера сообщества, штрафы и минимальный балл; `clusters` — произвольные группы с собственными условиями.
 - `vk_export_community_candidates`: принимает результаты поиска или анализа, необязательные результаты скоринга и формат `csv` либо `json`.
