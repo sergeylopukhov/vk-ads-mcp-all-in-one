@@ -222,6 +222,15 @@ async function promptHidden(question) {
   return value.trim();
 }
 
+async function promptVisible(question) {
+  const readline = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await readline.question(question)).trim();
+  } finally {
+    readline.close();
+  }
+}
+
 async function ask(readline, question, defaultValue = "") {
   const answer = (await readline.question(`${question}${defaultValue ? ` (${defaultValue})` : ""}: `)).trim();
   return answer || defaultValue;
@@ -304,7 +313,7 @@ async function authorizeCommunityToolsLegacy(clientId) {
   authorizationUrl.search = new URLSearchParams({ client_id: clientId, scope: "335876", redirect_uri: COMMUNITY_LEGACY_REDIRECT_URI, display: "page", response_type: "token", revoke: "1" }).toString();
   console.log("Открываю legacy OAuth в браузере. После входа скопируйте полный URL страницы oauth.vk.com/blank.html и вернитесь сюда.");
   openBrowser(authorizationUrl.toString());
-  const callbackUrl = await promptHidden("URL страницы oauth.vk.com/blank.html (ввод скрыт): ");
+  const callbackUrl = await promptVisible("URL страницы oauth.vk.com/blank.html: ");
   let callback;
   try { callback = new URL(callbackUrl); } catch { throw new Error("Нужен полный URL страницы oauth.vk.com/blank.html после авторизации."); }
   if (callback.origin !== "https://oauth.vk.com" || callback.pathname !== "/blank.html") throw new Error("Нужен URL страницы https://oauth.vk.com/blank.html после авторизации.");
@@ -333,7 +342,7 @@ async function authorizeCommunityToolsVkId(clientId) {
   authorizationUrl.search = new URLSearchParams({ response_type: "code", client_id: clientId, scope: "groups wall", redirect_uri: COMMUNITY_REDIRECT_URI, state, code_challenge: challenge, code_challenge_method: "S256" }).toString();
   console.log("Открываю VK ID в браузере. После входа скопируйте полный URL страницы vk.ru/blank.html и вернитесь сюда.");
   openBrowser(authorizationUrl.toString());
-  const callbackUrl = await promptHidden("URL страницы vk.ru/blank.html (ввод скрыт): ");
+  const callbackUrl = await promptVisible("URL страницы vk.ru/blank.html: ");
   let callback;
   try { callback = new URL(callbackUrl); } catch { throw new Error("Нужен полный URL страницы vk.ru/blank.html после авторизации."); }
   if (callback.origin !== "https://vk.ru" || callback.pathname !== "/blank.html") throw new Error("Нужен URL страницы https://vk.ru/blank.html после авторизации.");
