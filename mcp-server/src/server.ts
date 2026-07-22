@@ -198,17 +198,13 @@ const productionAdPlanFieldsSchema = z.object({
   enable_utm: z.boolean().optional(),
   enable_offline_goals: z.boolean().optional(),
   objective: z.string().min(1).max(80).optional(),
-  ad_groups: z.array(z.object({
+  // POST /ad_plans.json принимает вложенные campaigns, а не ad_groups.
+  // Оставляем только поля подтверждённой схемы создания plan/campaign.
+  campaigns: z.array(z.object({
     name: z.string().min(1).max(120),
     status: productionStatusSchema.optional(),
     package_id: z.number().int().positive(),
     objective: z.string().min(1).max(80),
-    date_start: productionDateSchema.optional(),
-    date_end: productionDateSchema.optional(),
-    budget_limit_day: productionMoneySchema.optional(),
-    budget_limit: productionMoneySchema.optional(),
-    autobidding_mode: z.string().min(1).max(80).optional(),
-    targetings: productionTargetingsSchema.optional(),
   }).strict()).max(200).optional(),
 }).strict();
 const productionCampaignFieldsSchema = z.object({
@@ -354,8 +350,8 @@ function normalizeTestWritePayloadCore(
       return parsed;
     }
     case "update_ad_plan": {
-      const id = z.object({ ad_plan_id: z.number().int().positive() }).parse(payload).ad_plan_id;
-      return { ad_plan_id: id, ...requireAtLeastOneField(productionAdPlanFieldsSchema, payload) };
+      const { ad_plan_id, ...body } = z.object({ ad_plan_id: z.number().int().positive() }).passthrough().parse(payload);
+      return { ad_plan_id, ...requireAtLeastOneField(productionAdPlanFieldsSchema, body) };
     }
     case "delete_ad_plan":
       return z.object({ ad_plan_id: z.number().int().positive() }).strict().parse(payload);
@@ -388,8 +384,8 @@ function normalizeTestWritePayloadCore(
       return parsed;
     }
     case "update_ad_group": {
-      const id = z.object({ ad_group_id: z.number().int().positive() }).parse(payload).ad_group_id;
-      return { ad_group_id: id, ...requireAtLeastOneField(productionAdGroupFieldsSchema, payload) };
+      const { ad_group_id, ...body } = z.object({ ad_group_id: z.number().int().positive() }).passthrough().parse(payload);
+      return { ad_group_id, ...requireAtLeastOneField(productionAdGroupFieldsSchema, body) };
     }
     case "delete_ad_group":
       return z.object({ ad_group_id: z.number().int().positive() }).strict().parse(payload);
@@ -1208,6 +1204,16 @@ async function preflightTestAdPlan(client: VkAdsClient, payload: Record<string, 
   }, await client.listPackages());
 }
 
+async function preflightProductionAdPlan(client: VkAdsClient, payload: Record<string, unknown>): Promise<WritePreflightResult> {
+  const campaigns = payload.campaigns as Array<{ package_id: number; objective: string }>;
+  const packages = await client.listPackages();
+  const checks = campaigns.flatMap((campaign, index) => {
+    const result = validateTestAdPlanDraft({ package_id: campaign.package_id, objective: campaign.objective }, packages);
+    return result.checks.map((check) => ({ ...check, code: `campaign_${index + 1}_${check.code}` }));
+  });
+  return { ready: checks.every((check) => check.status === "pass"), checks };
+}
+
 async function preflightTestAdGroup(
   client: VkAdsClient,
   payload: Record<string, unknown>,
@@ -1771,7 +1777,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     options.allowPiiUploads,
     options.allowAgencyWrites,
   );
-  const server = new McpServer({ name: "vk-ads-mcp", version: "1.2.6" }, { capabilities: { logging: {} } });
+  const server = new McpServer({ name: "vk-ads-mcp", version: "1.2.7" }, { capabilities: { logging: {} } });
   const writeGate = new WriteGate(mode === "write", Date.now, randomUUID, options.auditFile, options.previewTtlMs, options.requireWriteConfirmation ?? true);
   const connectionId = options.connectionId ?? "default";
   const profileName = options.profileName ?? "default";
@@ -3269,7 +3275,9 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
       }
       const before = await captureWriteBefore(client, operation, normalized);
       let preflight: WritePreflightResult | { ready: boolean; checks: Array<{ code: string; status: "pass" | "fail"; message: string }> } | undefined;
-      if (operation === "create_test_ad_plan") {
+      if (operation === "create_ad_plan") {
+        preflight = await preflightProductionAdPlan(client, normalized);
+      } else if (operation === "create_test_ad_plan") {
         preflight = await preflightTestAdPlan(client, normalized);
       } else if (operation === "create_test_segment") {
         preflight = await preflightTestSegment(client, normalized);
@@ -3470,12 +3478,8 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
       { url: z.string().min(1).max(2_048).url() },
     );
     registerWritePreviewAlias(
-      "vk_create_ad_plan", "Подготовить создание ad plan", "Создаёт ad plan с фиксированной схемой VK Ads. По умолчанию статус blocked; production ID разрешён только через preview и одноразовое подтверждение.", "create_ad_plan",
-      { name: z.string().min(1).max(120), objective: z.string().min(1).max(80), status: productionStatusSchema.optional(), date_start: productionDateSchema.optional(), date_end: productionDateSchema.optional(), autobidding_mode: z.string().min(1).max(80).optional(), budget_limit_day: productionMoneySchema.optional(), budget_limit: productionMoneySchema.optional(), enable_utm: z.boolean().optional(), enable_offline_goals: z.boolean().optional(), ad_groups: productionAdPlanFieldsSchema.shape.ad_groups },
-    );
-    registerWritePreviewAlias(
-      "vk_create_campaign", "Подготовить создание campaign", "Создаёт campaign с документированными полями в существующем ad plan; по умолчанию blocked.", "create_campaign",
-      { ad_plan_id: z.number().int().positive(), package_id: z.number().int().positive(), objective: z.string().min(1).max(80), name: z.string().min(1).max(120), status: productionStatusSchema.optional(), date_start: productionDateSchema.optional(), date_end: productionDateSchema.optional(), budget_limit_day: productionMoneySchema.optional(), budget_limit: productionMoneySchema.optional(), autobidding_mode: z.string().min(1).max(80).optional() },
+      "vk_create_ad_plan", "Подготовить создание ad plan", "Создаёт blocked ad plan по POST /ad_plans.json с документированным вложенным массивом campaigns. Поле ad_groups для этого endpoint не принимается.", "create_ad_plan",
+      { name: z.string().min(1).max(120), objective: z.string().min(1).max(80), status: z.literal("blocked").optional(), date_start: productionDateSchema.optional(), date_end: productionDateSchema.optional(), autobidding_mode: z.string().min(1).max(80).optional(), budget_limit_day: productionMoneySchema.optional(), budget_limit: productionMoneySchema.optional(), enable_utm: z.boolean().optional(), enable_offline_goals: z.boolean().optional(), campaigns: productionAdPlanFieldsSchema.shape.campaigns.unwrap().min(1) },
     );
     registerWritePreviewAlias(
       "lead_form_copy", "Подготовить копирование лид-формы", "Копирует существующую форму с указанным именем. Контакты и ответы не читаются.", "copy_test_lead_form",
@@ -3542,26 +3546,6 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     registerWritePreviewAlias(
       "vk_update_ad_plan", "Подготовить изменение ad plan", "Изменяет только перечисленные документированные поля существующего ad plan.", "update_ad_plan",
       { ad_plan_id: z.number().int().positive(), name: z.string().min(1).max(120).optional(), status: productionStatusSchema.optional(), date_start: productionDateSchema.optional(), date_end: productionDateSchema.optional(), autobidding_mode: z.string().min(1).max(80).optional(), budget_limit_day: productionMoneySchema.optional(), budget_limit: productionMoneySchema.optional(), enable_utm: z.boolean().optional(), enable_offline_goals: z.boolean().optional(), objective: z.string().min(1).max(80).optional() },
-    );
-    server.registerTool(
-      "vk_update_campaign",
-      {
-        title: "Подготовить изменение кампании",
-        description: "Изменяет название или `budget_limit_day` существующей кампании. Запись выполняется только через preview и одноразовое подтверждение.",
-        inputSchema: {
-          campaign_id: z.number().int().positive(),
-          name: z.string().min(1).max(120).optional(),
-          budget_limit_day: z.number().finite().positive().optional(),
-        },
-        outputSchema: previewOutputSchema,
-        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
-      },
-      async ({ campaign_id, name, budget_limit_day }) => {
-        if ((name === undefined) === (budget_limit_day === undefined)) {
-          throw new Error("Укажите ровно одно поле: name или budget_limit_day.");
-        }
-        return prepareWritePreview("update_campaign", { campaign_id, ...(name === undefined ? { budget_limit_day } : { name }) });
-      },
     );
     registerWritePreviewAlias(
       "vk_delete_ad_plan", "Подготовить удаление ad plan", "Переводит выбранный ad plan в status=deleted после reread и подтверждения.", "delete_ad_plan",

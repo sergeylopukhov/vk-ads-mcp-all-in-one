@@ -1068,10 +1068,13 @@ describe("MCP-контракт", () => {
     expect(profile.structuredContent).toEqual({ profile: "agency_a", connection_id: "agency-client-a", selection: "startup_configuration" });
 
     const writeTools = await client.listTools();
-    expect(writeTools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(["vk_create_ad_plan", "vk_update_ad_plan", "vk_delete_ad_plan", "vk_create_campaign", "vk_update_campaign", "vk_create_ad_group", "vk_create_banner", "vk_update_banner", "vk_manage_banners", "vk_remoderate_banners", "vk_create_segment", "vk_update_segment", "vk_delete_segment", "vk_manage_segment_relations", "vk_create_remarketing_list", "vk_update_remarketing_list", "vk_delete_remarketing_list", "vk_connect_client", "vk_manage_local_geo", "vk_export_leads", "survey_respondents_export", "lead_form_copy", "vk_update_lead_form", "survey_form_copy", "lead_forms_archive_manage", "survey_forms_archive_manage"]));
+    const writeToolNames = writeTools.tools.map((tool) => tool.name);
+    expect(writeToolNames).toEqual(expect.arrayContaining(["vk_create_ad_plan", "vk_update_ad_plan", "vk_delete_ad_plan", "vk_create_ad_group", "vk_create_banner", "vk_update_banner", "vk_manage_banners", "vk_remoderate_banners", "vk_create_segment", "vk_update_segment", "vk_delete_segment", "vk_manage_segment_relations", "vk_create_remarketing_list", "vk_update_remarketing_list", "vk_delete_remarketing_list", "vk_connect_client", "vk_manage_local_geo", "vk_export_leads", "survey_respondents_export", "lead_form_copy", "vk_update_lead_form", "survey_form_copy", "lead_forms_archive_manage", "survey_forms_archive_manage"]));
+    expect(writeToolNames).not.toContain("vk_create_campaign");
+    expect(writeToolNames).not.toContain("vk_update_campaign");
 
     const preview = await client.callTool({ name: "vk_create_ad_plan", arguments: {
-      name: "Production created", objective: "traffic",
+      name: "Production created", objective: "traffic", campaigns: [{ name: "Production created — campaign", package_id: 1, objective: "traffic", status: "blocked" }],
     } });
     const previewData = preview.structuredContent as { id: string; confirmation_statement: string; connection_id: string; preflight: { expected_change: string } };
     expect(previewData).toMatchObject({ connection_id: "agency-client-a", preflight: { expected_change: expect.stringContaining("blocked") } });
@@ -1081,6 +1084,38 @@ describe("MCP-контракт", () => {
 
     const audit = await client.callTool({ name: "write_audit_list", arguments: {} });
     expect(audit.structuredContent).toMatchObject({ items: [{ id: previewData.id, status: "succeeded" }] });
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("принимает ad_plan_id в опубликованном vk_update_ad_plan и не отправляет его в body", async () => {
+    const server = createServer({
+      ...createClientStub(),
+      getAdPlan: async (id: number) => ({ id, name: "Existing blocked plan", status: "blocked" }),
+    } as unknown as VkAdsClient, "write");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "vk_update_ad_plan", arguments: { ad_plan_id: 42, name: "Renamed blocked plan" } });
+    expect(preview.isError).not.toBe(true);
+    expect(preview.structuredContent).toMatchObject({ operation: "update_ad_plan", payload: { ad_plan_id: 42, name: "Renamed blocked plan" } });
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("принимает ad_group_id в опубликованном vk_update_ad_group и не отправляет его в body", async () => {
+    const server = createServer({
+      ...createClientStub(),
+      getAdGroup: async (id: number) => ({ id, name: "Existing blocked group", status: "blocked" }),
+    } as unknown as VkAdsClient, "write");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "vk_update_ad_group", arguments: { ad_group_id: 42, name: "Renamed blocked group" } });
+    expect(preview.isError).not.toBe(true);
+    expect(preview.structuredContent).toMatchObject({ operation: "update_ad_group", payload: { ad_group_id: 42, name: "Renamed blocked group" } });
 
     await Promise.all([client.close(), server.close()]);
   });
