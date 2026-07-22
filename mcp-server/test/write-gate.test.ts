@@ -18,10 +18,10 @@ describe("WriteGate", () => {
     });
 
     expect(preview.payload_hash).toHaveLength(64);
-    expect(preview.confirmation_statement).toBe("ПОДТВЕРЖДАЮ");
-    expect(() => gate.consume(preview.id, "ПОДТВЕРЖДАЮ 00000000-0000-4000-8000-000000000001")).toThrow("Неверная фраза");
-    expect(gate.consume(preview.id, preview.confirmation_statement)).toMatchObject({ id: preview.id });
-    expect(() => gate.consume(preview.id, preview.confirmation_statement)).toThrow("уже использован");
+    expect(preview.confirmation_statement).toBe("Любое непустое сообщение пользователя");
+    expect(() => gate.consume(preview.id, "   ")).toThrow("Нужно непустое");
+    expect(gate.consume(preview.id, "выполняй")).toMatchObject({ id: preview.id });
+    expect(() => gate.consume(preview.id, "да")).toThrow("уже использован");
     time += 1;
   });
 

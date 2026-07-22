@@ -69,7 +69,7 @@ export class WriteGate {
       payload,
       payload_hash: payloadHash,
       expires_at: new Date(expiresAtMs).toISOString(),
-      confirmation_statement: "ПОДТВЕРЖДАЮ",
+      confirmation_statement: "Любое непустое сообщение пользователя",
       expiresAtMs,
       consumed: false,
     };
@@ -95,7 +95,7 @@ export class WriteGate {
       this.previews.delete(id);
       throw new Error("Срок подтверждения истёк; подготовьте новый preview.");
     }
-    if (this.requireConfirmation && statement !== preview.confirmation_statement) throw new Error("Неверная фраза подтверждения.");
+    if (this.requireConfirmation && !statement?.trim()) throw new Error("Нужно непустое подтверждение пользователя.");
     if (preview.connection_id !== connectionId) throw new Error("Подтверждение подготовлено для другого подключения VK Ads.");
     preview.consumed = true;
     return this.publicPreview(preview);
