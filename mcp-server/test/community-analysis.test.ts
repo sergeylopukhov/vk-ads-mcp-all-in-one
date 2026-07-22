@@ -5,12 +5,17 @@ import { VkCommunityClient } from "../src/vk-community-client.js";
 describe("сообщества VK", () => {
   it("кеширует metadata, дедуплицирует ID и не отдаёт лишние поля", async () => {
     let calls = 0;
-    const client = new VkCommunityClient({ tokenProvider: () => "token", timeoutMs: 1000, fetchImplementation: async () => {
-      calls += 1; return new Response(JSON.stringify({ response: [{ id: 7, name: "Клуб", screen_name: "club", members_count: 123, description: "Описание", is_verified: 1, users: [1] }] }));
+    let request: { url: string; authorization: string | null } | undefined;
+    const client = new VkCommunityClient({ tokenProvider: () => "token", timeoutMs: 1000, fetchImplementation: async (url, init) => {
+      calls += 1;
+      request = { url: String(url), authorization: new Headers(init?.headers).get("authorization") };
+      return new Response(JSON.stringify({ response: [{ id: 7, name: "Клуб", screen_name: "club", members_count: 123, description: "Описание", is_verified: 1, users: [1] }] }));
     } });
     expect(await client.getByIds([7, 7])).toMatchObject([{ id: 7, name: "Клуб", members_count: 123 }]);
     await client.getByIds([7]);
     expect(calls).toBe(1);
+    expect(request).toMatchObject({ authorization: "Bearer token" });
+    expect(request?.url).not.toContain("access_token");
   });
 
   it("фильтрует кандидатов и оценивает причины прозрачно", () => {

@@ -72,14 +72,17 @@ export class VkCommunityClient {
   private async call(method: string, params: Record<string, string | number>): Promise<unknown> {
     const token = this.options.tokenProvider().trim();
     if (!token) throw new Error("Для сообществ задайте отдельный VK_API_TOKEN в локальном .env.");
-    const url = new URL(`https://api.vk.com/method/${method}`);
-    const requestParams = { ...params, access_token: token, v: "5.199" };
+    const url = new URL(`https://api.vk.ru/method/${method}`);
+    const requestParams = { ...params, v: "5.199" };
     for (const [key, value] of Object.entries(requestParams)) url.searchParams.set(key, String(value));
     let last: Error | undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         await this.options.waitForRequest?.();
-        const response = await this.fetchImplementation(url, { signal: AbortSignal.timeout(this.options.timeoutMs) });
+        const response = await this.fetchImplementation(url, {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+          signal: AbortSignal.timeout(this.options.timeoutMs),
+        });
         const payload: unknown = await response.json();
         const error = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>).error : undefined;
         if (response.ok && !error) return (payload as Record<string, unknown>).response;
