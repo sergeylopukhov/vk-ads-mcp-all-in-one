@@ -18,6 +18,18 @@ describe("сообщества VK", () => {
     expect(request?.url).not.toContain("access_token");
   });
 
+  it("поддерживает legacy OAuth и актуальный формат groups.getById", async () => {
+    let request: { url: string; authorization: string | null } | undefined;
+    const client = new VkCommunityClient({ tokenProvider: () => "legacy-token", tokenType: "legacy", timeoutMs: 1000, fetchImplementation: async (url, init) => {
+      request = { url: String(url), authorization: new Headers(init?.headers).get("authorization") };
+      return new Response(JSON.stringify({ response: { groups: [{ id: 8, name: "Клуб" }] } }));
+    } });
+    await expect(client.getByIds([8])).resolves.toMatchObject([{ id: 8, name: "Клуб" }]);
+    expect(request?.url).toContain("https://api.vk.com/method/groups.getById");
+    expect(request?.url).toContain("access_token=legacy-token");
+    expect(request?.authorization).toBeNull();
+  });
+
   it("фильтрует кандидатов и оценивает причины прозрачно", () => {
     const item = candidate({ id: 7, name: "Турнир", description: "Настольные игры", type: "group", members_count: 1000, is_verified: 1 });
     item.activity = analyze([{ date: Math.floor(Date.now() / 1000), text: "Новый турнир" }], ["турнир"], ["ставки"]);

@@ -267,11 +267,37 @@ async function askPositiveIds(readline, question, defaultValue = "") {
 }
 
 const COMMUNITY_REDIRECT_URI = "https://vk.ru/blank.html";
+const COMMUNITY_LEGACY_REDIRECT_URI = "https://oauth.vk.com/blank.html";
+const DEFAULT_COMMUNITY_LEGACY_CLIENT_ID = "6270012";
 
 function printCommunityOAuthSetup() {
   console.log("Создайте приложение VK ID: https://id.vk.com/about/business/go/");
   console.log(`В его настройках добавьте доверенный redirect URL: ${COMMUNITY_REDIRECT_URI}`);
   console.log("Для Core VK API включите права groups и wall. Затем вставьте только client_id приложения.");
+}
+
+async function askCommunityTokenType(readline, defaultValue = "legacy") {
+  while (true) {
+    const value = await ask(readline, "Токен сообществ: 1 — legacy OAuth (рекомендуется), 2 — VK ID OAuth", defaultValue === "vk_id" ? "2" : "1");
+    if (value === "1") return "legacy";
+    if (value === "2") return "vk_id";
+    console.log("Введите 1 или 2.");
+  }
+}
+
+async function authorizeCommunityToolsLegacy(clientId) {
+  if (!/^\d+$/.test(clientId)) throw new Error("VK client_id должен состоять из цифр.");
+  const authorizationUrl = new URL("https://oauth.vk.com/authorize");
+  authorizationUrl.search = new URLSearchParams({ client_id: clientId, scope: "335876", redirect_uri: COMMUNITY_LEGACY_REDIRECT_URI, display: "page", response_type: "token", revoke: "1" }).toString();
+  console.log("Открываю legacy OAuth в браузере. После входа скопируйте полный URL страницы oauth.vk.com/blank.html и вернитесь сюда.");
+  openBrowser(authorizationUrl.toString());
+  const callbackUrl = await promptHidden("URL страницы oauth.vk.com/blank.html (ввод скрыт): ");
+  let callback;
+  try { callback = new URL(callbackUrl); } catch { throw new Error("Нужен полный URL страницы oauth.vk.com/blank.html после авторизации."); }
+  if (callback.origin !== "https://oauth.vk.com" || callback.pathname !== "/blank.html") throw new Error("Нужен URL страницы https://oauth.vk.com/blank.html после авторизации.");
+  const accessToken = new URLSearchParams(callback.hash.slice(1)).get("access_token");
+  if (!accessToken) throw new Error("OAuth не вернул access_token. Повторите авторизацию.");
+  return { accessToken, tokenType: "legacy" };
 }
 
 function openBrowser(url) {
@@ -285,7 +311,7 @@ function randomUrlValue() {
   return randomBytes(32).toString("base64url");
 }
 
-async function authorizeCommunityTools(clientId) {
+async function authorizeCommunityToolsVkId(clientId) {
   if (!/^\d+$/.test(clientId)) throw new Error("VK ID client_id должен состоять из цифр.");
   const state = randomUrlValue();
   const verifier = randomUrlValue();
@@ -311,7 +337,11 @@ async function authorizeCommunityTools(clientId) {
   });
   const payload = await tokenResponse.json().catch(() => undefined);
   if (!tokenResponse.ok || !payload || typeof payload !== "object" || typeof payload.access_token !== "string" || typeof payload.refresh_token !== "string") throw new Error("VK ID не выдал access_token и refresh_token. Проверьте доступы приложения groups и wall.");
-  return { accessToken: payload.access_token, refreshToken: payload.refresh_token, expiresIn: Number(payload.expires_in), deviceId };
+  return { accessToken: payload.access_token, refreshToken: payload.refresh_token, expiresIn: Number(payload.expires_in), deviceId, tokenType: "vk_id" };
+}
+
+async function authorizeCommunityTools(clientId, tokenType) {
+  return tokenType === "legacy" ? authorizeCommunityToolsLegacy(clientId) : authorizeCommunityToolsVkId(clientId);
 }
 
 async function ensureConfiguration(installDirectory) {
@@ -337,15 +367,17 @@ async function ensureConfiguration(installDirectory) {
   const current = parseEnvValues(currentContent);
   const readline = createInterface({ input: process.stdin, output: process.stdout });
   if (envExists && !(await askBoolean(readline, "Изменить сохранённые настройки?", false))) {
-    if (!current.VK_API_REFRESH_TOKEN && await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", false)) {
-      printCommunityOAuthSetup();
-      const communityClientId = await ask(readline, "VK ID client_id приложения", current.VK_API_CLIENT_ID || "");
+    if (!current.VK_API_TOKEN && await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", false)) {
+      const tokenType = await askCommunityTokenType(readline, current.VK_API_TOKEN_TYPE || (current.VK_API_REFRESH_TOKEN ? "vk_id" : "legacy"));
+      if (tokenType === "vk_id") printCommunityOAuthSetup();
+      const communityClientId = await ask(readline, tokenType === "legacy" ? "VK client_id приложения (Enter — встроенное)" : "VK ID client_id приложения", current.VK_API_CLIENT_ID || (tokenType === "legacy" ? DEFAULT_COMMUNITY_LEGACY_CLIENT_ID : ""));
       readline.close();
-      const communityAuth = await authorizeCommunityTools(communityClientId);
+      const communityAuth = await authorizeCommunityTools(communityClientId, tokenType);
       const template = await readFile(join(installDirectory, ".env.example"), "utf8");
       await writeFile(envPath, applyEnvValues(currentContent || template, {
         VK_API_TOKEN: communityAuth.accessToken,
-        VK_API_REFRESH_TOKEN: communityAuth.refreshToken,
+        VK_API_TOKEN_TYPE: communityAuth.tokenType,
+        VK_API_REFRESH_TOKEN: communityAuth.refreshToken || "",
         VK_API_TOKEN_EXPIRES_AT: Number.isInteger(communityAuth.expiresIn) && communityAuth.expiresIn > 0 ? new Date(Date.now() + communityAuth.expiresIn * 1000).toISOString() : "",
         VK_API_CLIENT_ID: communityClientId,
         VK_API_DEVICE_ID: communityAuth.deviceId,
@@ -385,12 +417,14 @@ async function ensureConfiguration(installDirectory) {
   let inAppEventTestAppIds = current.VK_ADS_TEST_MOBILE_APP_IDS || "";
   let allowRemarketingCounterWrites = current.VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES === "1";
   let remarketingCounterTestIds = current.VK_ADS_TEST_COUNTER_IDS || "";
-  const enableCommunityTools = await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", Boolean(current.VK_API_REFRESH_TOKEN));
-  const authorizeCommunities = enableCommunityTools && (!current.VK_API_REFRESH_TOKEN || await askBoolean(readline, "Авторизовать VK ID заново для сообществ?", false));
-  let communityClientId = current.VK_API_CLIENT_ID || "";
+  const enableCommunityTools = await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", Boolean(current.VK_API_TOKEN));
+  const authorizeCommunities = enableCommunityTools && (!current.VK_API_TOKEN || await askBoolean(readline, "Авторизовать токен сообществ заново?", false));
+  let communityTokenType = current.VK_API_TOKEN_TYPE || (current.VK_API_REFRESH_TOKEN ? "vk_id" : "legacy");
+  let communityClientId = current.VK_API_CLIENT_ID || (communityTokenType === "legacy" ? DEFAULT_COMMUNITY_LEGACY_CLIENT_ID : "");
   if (authorizeCommunities) {
-    printCommunityOAuthSetup();
-    communityClientId = await ask(readline, "VK ID client_id приложения", communityClientId);
+    communityTokenType = await askCommunityTokenType(readline, communityTokenType);
+    if (communityTokenType === "vk_id") printCommunityOAuthSetup();
+    communityClientId = await ask(readline, communityTokenType === "legacy" ? "VK client_id приложения (Enter — встроенное)" : "VK ID client_id приложения", communityClientId || (communityTokenType === "legacy" ? DEFAULT_COMMUNITY_LEGACY_CLIENT_ID : ""));
   }
 
   if (configureAdvanced) {
@@ -414,7 +448,7 @@ async function ensureConfiguration(installDirectory) {
   }
   readline.close();
   const clientSecret = replaceSecret ? await promptHidden("VK Ads client_secret (ввод скрыт): ") : current.VK_ADS_CLIENT_SECRET;
-  const communityAuth = authorizeCommunities ? await authorizeCommunityTools(communityClientId) : undefined;
+  const communityAuth = authorizeCommunities ? await authorizeCommunityTools(communityClientId, communityTokenType) : undefined;
   if (!clientId || !clientSecret) throw new Error("client_id и client_secret не могут быть пустыми.");
   const template = await readFile(join(installDirectory, ".env.example"), "utf8");
   const base = envExists ? currentContent : template;
@@ -439,7 +473,8 @@ async function ensureConfiguration(installDirectory) {
     VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES: allowRemarketingCounterWrites ? "1" : "0",
     VK_ADS_TEST_COUNTER_IDS: remarketingCounterTestIds,
     VK_API_TOKEN: enableCommunityTools ? (communityAuth?.accessToken || current.VK_API_TOKEN || "") : "",
-    VK_API_REFRESH_TOKEN: enableCommunityTools ? (communityAuth?.refreshToken || current.VK_API_REFRESH_TOKEN || "") : "",
+    VK_API_TOKEN_TYPE: enableCommunityTools ? (communityAuth?.tokenType || communityTokenType) : "",
+    VK_API_REFRESH_TOKEN: enableCommunityTools ? (communityAuth?.refreshToken || (communityTokenType === "vk_id" ? current.VK_API_REFRESH_TOKEN || "" : "")) : "",
     VK_API_TOKEN_EXPIRES_AT: enableCommunityTools ? (communityAuth && Number.isInteger(communityAuth.expiresIn) && communityAuth.expiresIn > 0 ? new Date(Date.now() + communityAuth.expiresIn * 1000).toISOString() : current.VK_API_TOKEN_EXPIRES_AT || "") : "",
     VK_API_CLIENT_ID: enableCommunityTools ? (communityAuth ? communityClientId : current.VK_API_CLIENT_ID || "") : "",
     VK_API_DEVICE_ID: enableCommunityTools ? (communityAuth?.deviceId || current.VK_API_DEVICE_ID || "") : "",

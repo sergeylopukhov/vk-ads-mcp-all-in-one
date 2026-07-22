@@ -16,6 +16,7 @@ export interface VkWallPost { date?: number; text?: string; is_pinned?: number; 
 
 interface Options {
   tokenProvider: () => string;
+  tokenType?: "legacy" | "vk_id";
   timeoutMs: number;
   fetchImplementation?: typeof fetch;
   waitForRequest?: () => Promise<void>;
@@ -72,15 +73,17 @@ export class VkCommunityClient {
   private async call(method: string, params: Record<string, string | number>): Promise<unknown> {
     const token = this.options.tokenProvider().trim();
     if (!token) throw new Error("Для сообществ задайте отдельный VK_API_TOKEN в локальном .env.");
-    const url = new URL(`https://api.vk.ru/method/${method}`);
+    const legacy = this.options.tokenType === "legacy";
+    const url = new URL(`https://${legacy ? "api.vk.com" : "api.vk.ru"}/method/${method}`);
     const requestParams = { ...params, v: "5.199" };
     for (const [key, value] of Object.entries(requestParams)) url.searchParams.set(key, String(value));
+    if (legacy) url.searchParams.set("access_token", token);
     let last: Error | undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         await this.options.waitForRequest?.();
         const response = await this.fetchImplementation(url, {
-          headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+          headers: legacy ? { Accept: "application/json" } : { Authorization: `Bearer ${token}`, Accept: "application/json" },
           signal: AbortSignal.timeout(this.options.timeoutMs),
         });
         const payload: unknown = await response.json();
@@ -101,7 +104,11 @@ export class VkCommunityClient {
 
 function asItems(value: unknown): unknown[] {
   if (Array.isArray(value)) return value;
-  if (value && typeof value === "object" && Array.isArray((value as Record<string, unknown>).items)) return (value as Record<string, unknown>).items as unknown[];
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    if (Array.isArray(source.items)) return source.items as unknown[];
+    if (Array.isArray(source.groups)) return source.groups as unknown[];
+  }
   return [];
 }
 

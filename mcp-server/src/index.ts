@@ -24,6 +24,7 @@ loadDotenv({ path: profileStorage.envFile, override: false, quiet: true });
 const config = loadConfig();
 const envFile = new EnvFile(profileStorage.envFile);
 let communityAccessToken = process.env.VK_API_TOKEN?.trim() ?? "";
+const communityTokenType = process.env.VK_API_TOKEN_TYPE === "legacy" ? "legacy" : "vk_id";
 const tokenManager = config.clientCredentials
   ? new VkAdsTokenManager({
       credentials: config.clientCredentials,
@@ -35,7 +36,7 @@ const tokenManager = config.clientCredentials
       timeoutMs: config.timeoutMs,
     })
   : undefined;
-const communityTokenManager = process.env.VK_API_CLIENT_ID?.trim() && process.env.VK_API_DEVICE_ID?.trim() && process.env.VK_API_REFRESH_TOKEN?.trim()
+const communityTokenManager = communityTokenType === "vk_id" && process.env.VK_API_CLIENT_ID?.trim() && process.env.VK_API_DEVICE_ID?.trim() && process.env.VK_API_REFRESH_TOKEN?.trim()
   ? new VkCommunityTokenManager({
       clientId: process.env.VK_API_CLIENT_ID.trim(),
       deviceId: process.env.VK_API_DEVICE_ID.trim(),
@@ -62,14 +63,15 @@ const client = new VkAdsClient({
   ...(tokenManager ? { tokenRefresher: () => tokenManager.refresh() } : {}),
   timeoutMs: config.timeoutMs,
   fetchImplementation: instrumentFetch(fetch, process.env.VK_ADS_LOG === "1"),
-  waitForRequest: () => coreVkRateLimiter.wait(),
+  waitForRequest: () => rateLimiter.wait(),
 });
 // Core VK API использует только отдельный VK_API_TOKEN, никогда credential VK Ads.
 const communityClient = new VkCommunityClient({
   tokenProvider: () => communityAccessToken,
+  tokenType: communityTokenType,
   timeoutMs: config.timeoutMs,
   fetchImplementation: instrumentFetch(fetch, process.env.VK_ADS_LOG === "1"),
-  waitForRequest: () => rateLimiter.wait(),
+  waitForRequest: () => coreVkRateLimiter.wait(),
 });
 // Не принимаем MCP-запросы с почти истёкшим токеном; ошибки OAuth останавливают старт.
 await tokenManager?.renewOnStartup();
