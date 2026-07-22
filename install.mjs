@@ -193,14 +193,27 @@ async function promptHidden(question) {
   process.stdin.setEncoding("utf8");
   let value = "";
   try {
-    input: for await (const chunk of process.stdin) {
-      for (const character of chunk) {
-        if (character === "\r" || character === "\n") break input;
-        if (character === "\u0003") throw new Error("Установка отменена.");
-        if (character === "\u007f" || character === "\b") value = value.slice(0, -1);
-        else value += character;
-      }
-    }
+    await new Promise((resolve, reject) => {
+      const finish = (error) => {
+        process.stdin.off("data", onData);
+        process.stdin.off("error", onError);
+        process.stdin.off("end", onEnd);
+        if (error) reject(error); else resolve();
+      };
+      const onError = (error) => finish(error);
+      const onEnd = () => finish(new Error("Скрытый ввод был прерван. Повторите установку в обычном терминале."));
+      const onData = (chunk) => {
+        for (const character of chunk) {
+          if (character === "\r" || character === "\n") return finish();
+          if (character === "\u0003") return finish(new Error("Установка отменена."));
+          if (character === "\u007f" || character === "\b") value = value.slice(0, -1);
+          else value += character;
+        }
+      };
+      process.stdin.on("data", onData);
+      process.stdin.once("error", onError);
+      process.stdin.once("end", onEnd);
+    });
   } finally {
     process.stdin.setRawMode(false);
     process.stdin.pause();
@@ -370,7 +383,7 @@ async function ensureConfiguration(installDirectory) {
     if (!current.VK_API_TOKEN && await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", false)) {
       const tokenType = await askCommunityTokenType(readline, current.VK_API_TOKEN_TYPE || (current.VK_API_REFRESH_TOKEN ? "vk_id" : "legacy"));
       if (tokenType === "vk_id") printCommunityOAuthSetup();
-      const communityClientId = await ask(readline, tokenType === "legacy" ? "VK client_id приложения (Enter — встроенное)" : "VK ID client_id приложения", current.VK_API_CLIENT_ID || (tokenType === "legacy" ? DEFAULT_COMMUNITY_LEGACY_CLIENT_ID : ""));
+      const communityClientId = await ask(readline, tokenType === "legacy" ? "VK client_id приложения (Enter — встроенное)" : "VK ID client_id приложения", tokenType === "legacy" ? (current.VK_API_TOKEN_TYPE === "legacy" ? current.VK_API_CLIENT_ID || DEFAULT_COMMUNITY_LEGACY_CLIENT_ID : DEFAULT_COMMUNITY_LEGACY_CLIENT_ID) : current.VK_API_CLIENT_ID || "");
       readline.close();
       const communityAuth = await authorizeCommunityTools(communityClientId, tokenType);
       const template = await readFile(join(installDirectory, ".env.example"), "utf8");
@@ -424,6 +437,7 @@ async function ensureConfiguration(installDirectory) {
   if (authorizeCommunities) {
     communityTokenType = await askCommunityTokenType(readline, communityTokenType);
     if (communityTokenType === "vk_id") printCommunityOAuthSetup();
+    if (communityTokenType === "legacy" && current.VK_API_TOKEN_TYPE !== "legacy") communityClientId = DEFAULT_COMMUNITY_LEGACY_CLIENT_ID;
     communityClientId = await ask(readline, communityTokenType === "legacy" ? "VK client_id приложения (Enter — встроенное)" : "VK ID client_id приложения", communityClientId || (communityTokenType === "legacy" ? DEFAULT_COMMUNITY_LEGACY_CLIENT_ID : ""));
   }
 

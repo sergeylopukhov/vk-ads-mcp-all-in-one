@@ -10,7 +10,7 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 20+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-stdio-1f6feb" alt="MCP stdio"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b8f60" alt="Лицензия MIT"></a>
-  <img src="https://img.shields.io/badge/version-1.1.4-6b7280" alt="Версия 1.1.4">
+  <img src="https://img.shields.io/badge/version-1.1.5-6b7280" alt="Версия 1.1.5">
 </p>
 
 Сервер подключает MCP-клиент к кабинету VK Ads: читает рекламные планы, группы и объявления, получает статистику, работает с аудиториями, медиафайлами и отчётами. По умолчанию запись выключена.
