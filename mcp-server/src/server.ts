@@ -403,8 +403,8 @@ function normalizeTestWritePayloadCore(
       return parsed;
     }
     case "update_banner": {
-      const id = z.object({ banner_id: z.number().int().positive() }).parse(payload).banner_id;
-      return { banner_id: id, ...requireAtLeastOneField(productionBannerFieldsSchema.omit({ ad_group_id: true }), payload) };
+      const { banner_id, ...body } = z.object({ banner_id: z.number().int().positive() }).passthrough().parse(payload);
+      return { banner_id, ...requireAtLeastOneField(productionBannerFieldsSchema, body) };
     }
     case "delete_banner":
       return z.object({ banner_id: z.number().int().positive() }).strict().parse(payload);
@@ -4149,6 +4149,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
           case "remoderate_test_banners": {
             const payload = normalizeTestWritePayload(preview.operation, preview.payload, options.uploadDir);
             result = await client.remoderateTestBanners(payload.banner_ids as number[]);
+            if (result.requested === false) throw new Error("VK Ads не разрешил повторную модерацию ни одного указанного banner; запись не выполнялась.");
             break;
           }
           case "delete_test_ad_plan": {

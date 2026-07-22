@@ -1120,6 +1120,41 @@ describe("MCP-контракт", () => {
     await Promise.all([client.close(), server.close()]);
   });
 
+  it("принимает banner_id в опубликованном vk_update_banner и не отправляет его в body", async () => {
+    const server = createServer({
+      ...createClientStub(),
+      getBanner: async (id: number) => ({ id, name: "Existing blocked banner", status: "blocked" }),
+    } as unknown as VkAdsClient, "write");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "vk_update_banner", arguments: { banner_id: 42, name: "Renamed blocked banner" } });
+    expect(preview.isError).not.toBe(true);
+    expect(preview.structuredContent).toMatchObject({ operation: "update_banner", payload: { banner_id: 42, name: "Renamed blocked banner" } });
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
+  it("считает remoderation без разрешения VK невыполненной операцией", async () => {
+    const server = createServer({
+      ...createClientStub(),
+      getBanner: async (id: number) => ({ id, name: "Test banner", user_can_request_remoderation: true }),
+      remoderateTestBanners: async () => ({ requested: false, results: [{ id: 42, remoderated: false }] }),
+    } as unknown as VkAdsClient, "write");
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const preview = await client.callTool({ name: "vk_remoderate_banners", arguments: { banner_ids: [42] } });
+    const data = preview.structuredContent as { id: string; confirmation_statement: string };
+    const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: data.id, confirmation_statement: data.confirmation_statement } });
+    expect(executed.isError).toBe(true);
+    expect(JSON.stringify(executed.content)).toContain("запись не выполнялась");
+
+    await Promise.all([client.close(), server.close()]);
+  });
+
   it("копирует лид-форму только через preview и скрывает реквизиты формы", async () => {
     const server = createServer({
       ...createClientStub(),
