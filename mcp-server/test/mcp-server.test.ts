@@ -511,12 +511,13 @@ describe("MCP-контракт", () => {
     await Promise.all([client.close(), server.close()]);
   });
 
-  it("изменяет только allowlist test-счётчик после отдельного opt-in", async () => {
+  it("изменяет доступный счётчик через preview", async () => {
     const server = createServer({
       ...createClientStub(),
       getRemarketingCounter: async () => ({ id: 77, name: "__MCP_TEST__ counter" }),
+      listRemarketingCounters: async () => [{ id: 77, name: "__MCP_TEST__ counter" }],
       renameTestRemarketingCounter: async () => ({ id: 77, name: "__MCP_TEST__ renamed" }),
-    } as unknown as VkAdsClient, "write", { allowRemarketingCounterWrites: true, remarketingCounterTestIds: [77] });
+    } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -526,23 +527,21 @@ describe("MCP-контракт", () => {
     const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: previewData.id, confirmation_statement: previewData.confirmation_statement } });
     expect(executed.structuredContent).toMatchObject({ result: { id: 77 }, after: { reread: true, item: { id: 77 } } });
 
-    const blocked = await client.callTool({ name: "vk_update_remarketing_counter", arguments: { counter_id: 78, name: "__MCP_TEST__ blocked" } });
-    expect(blocked.isError).toBe(true);
     await Promise.all([client.close(), server.close()]);
   });
 
-  it("изменяет только существующую test-цель allowlist test-счётчика", async () => {
+  it("изменяет существующую цель доступного счётчика", async () => {
     const server = createServer({
       ...createClientStub(),
-      getRemarketingCounter: async () => ({ id: 77, name: "__MCP_TEST__ counter" }),
+      listRemarketingCounters: async () => [{ id: 77, name: "Production counter" }],
       listRemarketingCounterGoals: async () => [{ id: 12, name: "__MCP_TEST__ goal" }],
       updateTestCounterGoal: async () => ({ id: 12, name: "__MCP_TEST__ goal renamed", value: 3, goal_type: "purchase" }),
-    } as unknown as VkAdsClient, "write", { allowRemarketingCounterWrites: true, remarketingCounterTestIds: [77] });
+    } as unknown as VkAdsClient, "write");
     const client = new Client({ name: "test-client", version: "0.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
-    const preview = await client.callTool({ name: "vk_update_counter_goal", arguments: { counter_id: 77, goal_id: 12, name: "__MCP_TEST__ goal renamed", value: 3, goal_type: "purchase" } });
+    const preview = await client.callTool({ name: "vk_update_counter_goal", arguments: { counter_id: 77, goal_id: 12, name: "Production goal renamed", value: 3, goal_type: "purchase" } });
     const previewData = preview.structuredContent as { id: string; confirmation_statement: string };
     const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: previewData.id, confirmation_statement: previewData.confirmation_statement } });
     expect(executed.structuredContent).toMatchObject({ result: { id: 12 }, after: { reread: true } });
@@ -1171,7 +1170,7 @@ describe("MCP-контракт", () => {
     await Promise.all([client.close(), server.close()]);
   });
 
-  it("блокирует SKAdNetwork без отдельного opt-in при запуске", async () => {
+  it("подготавливает SKAdNetwork-запись в write-режиме без отдельного opt-in", async () => {
     const server = createServer({
       ...createClientStub(),
       getAppleAppSkAdNetworkStatus: async () => ({ platform: "iOS", rb_mobile_app_id: 10, campaign_ids: [], sk_ad_network_ids: { available: 5 }, users: [] }),
@@ -1181,8 +1180,7 @@ describe("MCP-контракт", () => {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
     const preview = await client.callTool({ name: "skadnetwork_ids_share", arguments: { app_id: 10, recipient: "test@example.test", count: 1 } });
-    expect(preview.isError).toBe(true);
-    expect(preview.content[0]?.type === "text" ? preview.content[0].text : "").toContain("VK_ADS_ALLOW_SKADNETWORK_WRITES");
+    expect(preview.isError).not.toBe(true);
 
     await Promise.all([client.close(), server.close()]);
   });
@@ -1215,7 +1213,7 @@ describe("MCP-контракт", () => {
     await Promise.all([client.close(), server.close()]);
   });
 
-  it("блокирует изменение in-app события без отдельного opt-in", async () => {
+  it("проверяет доступность in-app события вместо отдельного opt-in", async () => {
     const server = createServer(createClientStub(), "write", { inAppEventTestAppIds: [65] });
     const client = new Client({ name: "test-client", version: "0.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -1223,7 +1221,7 @@ describe("MCP-контракт", () => {
 
     const preview = await client.callTool({ name: "vk_update_inapp_event_category", arguments: { app_id: 65, tracker_id: 1, event_id: 7, category_id: 2 } });
     expect(preview.isError).toBe(true);
-    expect(preview.content[0]?.type === "text" ? preview.content[0].text : "").toContain("VK_ADS_ALLOW_INAPP_EVENT_CATEGORY_WRITES");
+    expect(preview.content[0]?.type === "text" ? preview.content[0].text : "").toContain("In-app событие не найдено");
 
     await Promise.all([client.close(), server.close()]);
   });

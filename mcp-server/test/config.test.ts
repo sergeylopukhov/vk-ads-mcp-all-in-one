@@ -39,16 +39,13 @@ describe("локальная конфигурация", () => {
     expect(() => loadConfig({}).tokenProvider()).toThrow("Создайте файл .env");
   });
 
-  it("принимает allowlist тестовых iOS app ID только из конфигурации запуска", () => {
+  it("в write-режиме включает все реализованные категории записи без отдельных opt-in", () => {
     const config = loadConfig({
       VK_ADS_TOKEN: "test-token",
-      VK_ADS_ALLOW_SHARING_KEY_REVOKE: "1",
-      VK_ADS_ALLOW_SKADNETWORK_WRITES: "1",
       VK_ADS_TEST_IOS_APP_IDS: "10,20,10",
-      VK_ADS_ALLOW_INAPP_EVENT_CATEGORY_WRITES: "1",
       VK_ADS_TEST_MOBILE_APP_IDS: "30,40,30",
-      VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES: "1",
       VK_ADS_TEST_COUNTER_IDS: "50,60,50",
+      VK_ADS_MODE: "write",
     });
 
     expect(config.allowSharingKeyRevoke).toBe(true);
@@ -58,6 +55,7 @@ describe("локальная конфигурация", () => {
     expect(config.inAppEventTestAppIds).toEqual([30, 40]);
     expect(config.allowRemarketingCounterWrites).toBe(true);
     expect(config.remarketingCounterTestIds).toEqual([50, 60]);
+    expect(loadConfig({ VK_ADS_TOKEN: "test-token" }).allowRemarketingCounterWrites).toBe(false);
     expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_TEST_IOS_APP_IDS: "1,not-an-id" })).toThrow("VK_ADS_TEST_IOS_APP_IDS");
     expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_TEST_MOBILE_APP_IDS: "1,not-an-id" })).toThrow("VK_ADS_TEST_MOBILE_APP_IDS");
     expect(() => loadConfig({ VK_ADS_TOKEN: "test-token", VK_ADS_TEST_COUNTER_IDS: "1,not-an-id" })).toThrow("VK_ADS_TEST_COUNTER_IDS");
