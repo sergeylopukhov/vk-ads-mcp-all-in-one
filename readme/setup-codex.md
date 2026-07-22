@@ -16,7 +16,7 @@ curl -fsSL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/late
 irm https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.ps1 | iex
 ```
 
-Установщик запросит `client_id`, скрытый `client_secret`, режим `readonly/write` и отдельно предложит включить поиск публичных сообществ VK. Core VK API token для этой функции вводится скрыто; при обновлении старой установки выбор доступен снова. После настройки установщик зарегистрирует MCP-сервер под именем `vk-ads`.
+Установщик запросит `client_id`, скрытый `client_secret`, режим `readonly/write` и отдельно предложит включить поиск публичных сообществ VK. Для этой функции он запросит `client_id` приложения VK ID и проведёт авторизацию в браузере; при обновлении старой установки выбор доступен снова. После настройки установщик зарегистрирует MCP-сервер под именем `vk-ads`.
 
 Перезапустите Codex и отправьте запрос:
 

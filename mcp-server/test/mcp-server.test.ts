@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 
 import { createServer } from "../src/server.js";
 import { VkAdsApiError, type VkAdsClient } from "../src/vk-client.js";
-import type { VkCommunityClient } from "../src/vk-community-client.js";
 
 describe("MCP-контракт", () => {
   const createClientStub = () => ({
@@ -79,27 +78,6 @@ describe("MCP-контракт", () => {
     const planned = await client.callTool({ name: "search_tools", arguments: { query: "", include_planned: true } });
     expect(planned.structuredContent).toMatchObject({ total: expect.any(Number) });
 
-    await Promise.all([client.close(), server.close()]);
-  });
-
-  it("показывает preview и выполняет только явное добавление утверждённых сообществ", async () => {
-    const writes: Array<{ segmentId: number; ids: number[] }> = [];
-    const communityClient = {
-      getTargetGroup: async (id: number) => ({ id, name: "Audience", group_ids: [1] }),
-      getByIds: async (ids: number[]) => ids.map((id) => ({ id, name: `Group ${id}`, is_closed: 0 })),
-      addCommunitiesToTargetGroup: async (segmentId: number, ids: number[]) => { writes.push({ segmentId, ids }); return { id: segmentId }; },
-    } as unknown as VkCommunityClient;
-    const server = createServer(createClientStub(), "write", { communityClient });
-    const client = new Client({ name: "test-client", version: "0.0.0" });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-    const preview = await client.callTool({ name: "vk_add_approved_communities_to_segment", arguments: { segment_id: 42, approved_community_ids: [7, 7, 8] } });
-    expect(preview.structuredContent).toMatchObject({ operation: "add_approved_communities_to_segment", payload: { segment_id: 42, approved_community_ids: [7, 8] }, preflight: { before: { segment: { id: 42 }, existing_community_ids: [1], duplicate_ids: [7], adding_community_ids: [7, 8], changes_count: 2 } } });
-    expect(writes).toEqual([]);
-    const id = (preview.structuredContent as { id: string }).id;
-    const executed = await client.callTool({ name: "write_execute", arguments: { preview_id: id, confirmation_statement: "Подтверждаю добавление" } });
-    expect(executed.structuredContent).toMatchObject({ operation: "add_approved_communities_to_segment", after: { reread: true, segment: { id: 42 } } });
-    expect(writes).toEqual([{ segmentId: 42, ids: [7, 8] }]);
     await Promise.all([client.close(), server.close()]);
   });
 

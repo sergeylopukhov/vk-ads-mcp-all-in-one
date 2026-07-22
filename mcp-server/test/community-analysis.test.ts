@@ -13,20 +13,6 @@ describe("сообщества VK", () => {
     expect(calls).toBe(1);
   });
 
-  it("отправляет добавление сообществ в сегмент только фиксированным Core VK API методом", async () => {
-    let request: { url: string; method: string; body: string } | undefined;
-    const client = new VkCommunityClient({ tokenProvider: () => "token", timeoutMs: 1000, adsAccountId: 9, fetchImplementation: async (url, init) => {
-      request = { url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") };
-      return new Response(JSON.stringify({ response: 1 }));
-    } });
-    await expect(client.addCommunitiesToTargetGroup(42, [7, 7, 8])).resolves.toEqual({ id: 42 });
-    expect(request?.url).toBe("https://api.vk.com/method/ads.updateTargetGroup");
-    expect(request?.method).toBe("POST");
-    expect(request?.body).toContain("target_group_id=42");
-    expect(request?.body).toContain("account_id=9");
-    expect(request?.body).toContain("group_ids=7%2C8");
-  });
-
   it("фильтрует кандидатов и оценивает причины прозрачно", () => {
     const item = candidate({ id: 7, name: "Турнир", description: "Настольные игры", type: "group", members_count: 1000, is_verified: 1 });
     item.activity = analyze([{ date: Math.floor(Date.now() / 1000), text: "Новый турнир" }], ["турнир"], ["ставки"]);

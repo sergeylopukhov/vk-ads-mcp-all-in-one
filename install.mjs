@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -265,12 +267,73 @@ async function askPositiveIds(readline, question, defaultValue = "") {
   }
 }
 
-async function askOptionalPositiveId(readline, question, defaultValue = "") {
-  while (true) {
-    const value = await ask(readline, question, defaultValue);
-    if (!value || (Number.isInteger(Number(value)) && Number(value) > 0)) return value;
-    console.log("Укажите положительный целый ID или оставьте поле пустым.");
-  }
+const COMMUNITY_REDIRECT_URI = "http://127.0.0.1:38473/vk-id/callback";
+
+function printCommunityOAuthSetup() {
+  console.log("Создайте приложение VK ID: https://id.vk.com/about/business/go/");
+  console.log(`В его настройках добавьте redirect URL: ${COMMUNITY_REDIRECT_URI}`);
+  console.log("Для Core VK API включите права groups и wall. Затем вставьте только client_id приложения.");
+}
+
+function openBrowser(url) {
+  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+  const child = spawn(command, args, { detached: true, stdio: "ignore" });
+  child.unref();
+}
+
+function randomUrlValue() {
+  return randomBytes(32).toString("base64url");
+}
+
+async function authorizeCommunityTools(clientId) {
+  if (!/^\d+$/.test(clientId)) throw new Error("VK ID client_id должен состоять из цифр.");
+  const state = randomUrlValue();
+  const verifier = randomUrlValue();
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const callback = new URL(COMMUNITY_REDIRECT_URI);
+  const result = await new Promise((resolveResult, rejectResult) => {
+    const server = createServer(async (request, response) => {
+      const url = new URL(request.url || "/", COMMUNITY_REDIRECT_URI);
+      if (url.pathname !== callback.pathname) { response.writeHead(404).end(); return; }
+      const code = url.searchParams.get("code");
+      const returnedState = url.searchParams.get("state");
+      const deviceId = url.searchParams.get("device_id");
+      if (!code || !deviceId || returnedState !== state) {
+        response.writeHead(400, { "content-type": "text/plain; charset=utf-8" }).end("Авторизация не подтверждена. Вернитесь в терминал.");
+        rejectResult(new Error("VK ID вернул неполный или неподтверждённый callback."));
+        server.close();
+        return;
+      }
+      try {
+        const tokenResponse = await fetch("https://id.vk.ru/oauth2/auth", {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+          body: new URLSearchParams({ client_id: clientId, grant_type: "authorization_code", code_verifier: verifier, device_id: deviceId, code, redirect_uri: COMMUNITY_REDIRECT_URI }),
+          signal: AbortSignal.timeout(30_000),
+          redirect: "error",
+        });
+        const payload = await tokenResponse.json().catch(() => undefined);
+        if (!tokenResponse.ok || !payload || typeof payload !== "object" || typeof payload.access_token !== "string" || typeof payload.refresh_token !== "string") throw new Error("VK ID не выдал access_token и refresh_token. Проверьте доступы приложения groups и wall.");
+        response.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end("Готово. Можно закрыть эту вкладку и вернуться в терминал.");
+        resolveResult({ accessToken: payload.access_token, refreshToken: payload.refresh_token, expiresIn: Number(payload.expires_in), deviceId });
+      } catch (error) {
+        response.writeHead(502, { "content-type": "text/plain; charset=utf-8" }).end("VK ID не выдал токен. Вернитесь в терминал.");
+        rejectResult(error instanceof Error ? error : new Error("VK ID не выдал токен."));
+      } finally {
+        server.close();
+      }
+    });
+    server.once("error", (error) => rejectResult(new Error(`Не удалось запустить локальный callback VK ID: ${error.message}`)));
+    server.listen(38473, "127.0.0.1", () => {
+      const authorizationUrl = new URL("https://id.vk.ru/authorize");
+      authorizationUrl.search = new URLSearchParams({ response_type: "code", client_id: clientId, scope: "groups wall", redirect_uri: COMMUNITY_REDIRECT_URI, state, code_challenge: challenge, code_challenge_method: "S256" }).toString();
+      console.log("Открываю VK ID в браузере. После подтверждения вернитесь в терминал.");
+      openBrowser(authorizationUrl.toString());
+    });
+    setTimeout(() => { server.close(); rejectResult(new Error("Время ожидания авторизации VK ID истекло.")); }, 5 * 60_000).unref();
+  });
+  return result;
 }
 
 async function ensureConfiguration(installDirectory) {
@@ -296,15 +359,19 @@ async function ensureConfiguration(installDirectory) {
   const current = parseEnvValues(currentContent);
   const readline = createInterface({ input: process.stdin, output: process.stdout });
   if (envExists && !(await askBoolean(readline, "Изменить сохранённые настройки?", false))) {
-    if (!current.VK_API_TOKEN && await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", false)) {
+    if (!current.VK_API_REFRESH_TOKEN && await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", false)) {
+      printCommunityOAuthSetup();
+      const communityClientId = await ask(readline, "VK ID client_id приложения", current.VK_API_CLIENT_ID || "");
       readline.close();
-      const token = await promptHidden("Core VK API token для сообществ (ввод скрыт): ");
-      if (!token) throw new Error("Core VK API token не может быть пустым.");
-      const featureReadline = createInterface({ input: process.stdin, output: process.stdout });
-      const accountId = await askOptionalPositiveId(featureReadline, "ID рекламного аккаунта Core VK API (нужен только для добавления в сегмент; можно оставить пустым)", "");
-      featureReadline.close();
+      const communityAuth = await authorizeCommunityTools(communityClientId);
       const template = await readFile(join(installDirectory, ".env.example"), "utf8");
-      await writeFile(envPath, applyEnvValues(currentContent || template, { VK_API_TOKEN: token, VK_API_AD_ACCOUNT_ID: accountId }), { mode: 0o600 });
+      await writeFile(envPath, applyEnvValues(currentContent || template, {
+        VK_API_TOKEN: communityAuth.accessToken,
+        VK_API_REFRESH_TOKEN: communityAuth.refreshToken,
+        VK_API_TOKEN_EXPIRES_AT: Number.isInteger(communityAuth.expiresIn) && communityAuth.expiresIn > 0 ? new Date(Date.now() + communityAuth.expiresIn * 1000).toISOString() : "",
+        VK_API_CLIENT_ID: communityClientId,
+        VK_API_DEVICE_ID: communityAuth.deviceId,
+      }), { mode: 0o600 });
       await chmod(envPath, 0o600).catch(() => {});
       console.log("Функция публичных сообществ VK включена.");
     } else {
@@ -340,9 +407,13 @@ async function ensureConfiguration(installDirectory) {
   let inAppEventTestAppIds = current.VK_ADS_TEST_MOBILE_APP_IDS || "";
   let allowRemarketingCounterWrites = current.VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES === "1";
   let remarketingCounterTestIds = current.VK_ADS_TEST_COUNTER_IDS || "";
-  const enableCommunityTools = await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", Boolean(current.VK_API_TOKEN));
-  const replaceCommunityToken = enableCommunityTools && (!current.VK_API_TOKEN || await askBoolean(readline, "Заменить сохранённый Core VK API token для сообществ?", false));
-  let communityAccountId = current.VK_API_AD_ACCOUNT_ID || "";
+  const enableCommunityTools = await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", Boolean(current.VK_API_REFRESH_TOKEN));
+  const authorizeCommunities = enableCommunityTools && (!current.VK_API_REFRESH_TOKEN || await askBoolean(readline, "Авторизовать VK ID заново для сообществ?", false));
+  let communityClientId = current.VK_API_CLIENT_ID || "";
+  if (authorizeCommunities) {
+    printCommunityOAuthSetup();
+    communityClientId = await ask(readline, "VK ID client_id приложения", communityClientId);
+  }
 
   if (configureAdvanced) {
     console.log("\nДополнительные разрешения записи. Оставляйте «нет», если функция не нужна.\n");
@@ -365,15 +436,7 @@ async function ensureConfiguration(installDirectory) {
   }
   readline.close();
   const clientSecret = replaceSecret ? await promptHidden("VK Ads client_secret (ввод скрыт): ") : current.VK_ADS_CLIENT_SECRET;
-  const communityToken = enableCommunityTools && replaceCommunityToken
-    ? await promptHidden("Core VK API token для сообществ (ввод скрыт): ")
-    : current.VK_API_TOKEN || "";
-  if (enableCommunityTools && !communityToken && !current.VK_API_TOKEN) throw new Error("Core VK API token не может быть пустым, если функция включена.");
-  if (enableCommunityTools) {
-    const accountReadline = createInterface({ input: process.stdin, output: process.stdout });
-    communityAccountId = await askOptionalPositiveId(accountReadline, "ID рекламного аккаунта Core VK API (нужен только для добавления в сегмент; можно оставить пустым)", communityAccountId);
-    accountReadline.close();
-  }
+  const communityAuth = authorizeCommunities ? await authorizeCommunityTools(communityClientId) : undefined;
   if (!clientId || !clientSecret) throw new Error("client_id и client_secret не могут быть пустыми.");
   const template = await readFile(join(installDirectory, ".env.example"), "utf8");
   const base = envExists ? currentContent : template;
@@ -397,8 +460,11 @@ async function ensureConfiguration(installDirectory) {
     VK_ADS_TEST_MOBILE_APP_IDS: inAppEventTestAppIds,
     VK_ADS_ALLOW_REMARKETING_COUNTER_WRITES: allowRemarketingCounterWrites ? "1" : "0",
     VK_ADS_TEST_COUNTER_IDS: remarketingCounterTestIds,
-    VK_API_TOKEN: enableCommunityTools ? (communityToken || current.VK_API_TOKEN) : "",
-    VK_API_AD_ACCOUNT_ID: enableCommunityTools ? communityAccountId : "",
+    VK_API_TOKEN: enableCommunityTools ? (communityAuth?.accessToken || current.VK_API_TOKEN || "") : "",
+    VK_API_REFRESH_TOKEN: enableCommunityTools ? (communityAuth?.refreshToken || current.VK_API_REFRESH_TOKEN || "") : "",
+    VK_API_TOKEN_EXPIRES_AT: enableCommunityTools ? (communityAuth && Number.isInteger(communityAuth.expiresIn) && communityAuth.expiresIn > 0 ? new Date(Date.now() + communityAuth.expiresIn * 1000).toISOString() : current.VK_API_TOKEN_EXPIRES_AT || "") : "",
+    VK_API_CLIENT_ID: enableCommunityTools ? (communityAuth ? communityClientId : current.VK_API_CLIENT_ID || "") : "",
+    VK_API_DEVICE_ID: enableCommunityTools ? (communityAuth?.deviceId || current.VK_API_DEVICE_ID || "") : "",
   });
   await writeFile(envPath, content, { mode: 0o600 });
   await chmod(envPath, 0o600).catch(() => {});

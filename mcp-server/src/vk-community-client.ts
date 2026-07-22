@@ -22,7 +22,6 @@ interface Options {
   now?: () => number;
   cacheTtlMs?: number;
   sleep?: (ms: number) => Promise<void>;
-  adsAccountId?: number;
 }
 
 /** Изолированный клиент Core VK API: токен VK_API_TOKEN никогда не смешивается с VK Ads token. */
@@ -70,41 +69,17 @@ export class VkCommunityClient {
     return asItems(result).map((value) => typeof value === "object" && value !== null && !Array.isArray(value) ? value as VkWallPost : {});
   }
 
-  /** Core VK Ads target group: используется только для явного добавления ID сообществ после preview. */
-  async getTargetGroup(id: number): Promise<Record<string, unknown>> {
-    const result = await this.call("ads.getTargetGroups", { account_id: this.adsAccountId() });
-    const item = asItems(result).find((value) => value && typeof value === "object" && Number((value as Record<string, unknown>).id) === id);
-    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Сегмент не найден среди target groups, доступных текущему VK API-токену.");
-    return item as Record<string, unknown>;
-  }
-
-  async addCommunitiesToTargetGroup(targetGroupId: number, communityIds: number[]): Promise<{ id: number }> {
-    if (!Number.isInteger(targetGroupId) || targetGroupId <= 0) throw new Error("segment_id должен быть положительным целым ID.");
-    const ids = [...new Set(communityIds)].filter((id) => Number.isInteger(id) && id > 0);
-    if (!ids.length || ids.length > 1_000) throw new Error("Нужно от 1 до 1000 уникальных ID сообществ.");
-    await this.call("ads.updateTargetGroup", { account_id: this.adsAccountId(), target_group_id: targetGroupId, group_ids: ids.join(",") }, "POST");
-    return { id: targetGroupId };
-  }
-
-  private adsAccountId(): number {
-    const id = this.options.adsAccountId;
-    if (typeof id !== "number" || !Number.isInteger(id) || id <= 0) throw new Error("Для записи в сегмент задайте VK_API_AD_ACCOUNT_ID в локальном .env.");
-    return id;
-  }
-
-  private async call(method: string, params: Record<string, string | number>, httpMethod: "GET" | "POST" = "GET"): Promise<unknown> {
+  private async call(method: string, params: Record<string, string | number>): Promise<unknown> {
     const token = this.options.tokenProvider().trim();
     if (!token) throw new Error("Для сообществ задайте отдельный VK_API_TOKEN в локальном .env.");
     const url = new URL(`https://api.vk.com/method/${method}`);
     const requestParams = { ...params, access_token: token, v: "5.199" };
-    if (httpMethod === "GET") for (const [key, value] of Object.entries(requestParams)) url.searchParams.set(key, String(value));
+    for (const [key, value] of Object.entries(requestParams)) url.searchParams.set(key, String(value));
     let last: Error | undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         await this.options.waitForRequest?.();
-        const response = await this.fetchImplementation(url, httpMethod === "POST"
-          ? { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(Object.entries(requestParams).map(([key, value]) => [key, String(value)])).toString(), signal: AbortSignal.timeout(this.options.timeoutMs) }
-          : { signal: AbortSignal.timeout(this.options.timeoutMs) });
+        const response = await this.fetchImplementation(url, { signal: AbortSignal.timeout(this.options.timeoutMs) });
         const payload: unknown = await response.json();
         const error = payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>).error : undefined;
         if (response.ok && !error) return (payload as Record<string, unknown>).response;
