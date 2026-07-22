@@ -84,7 +84,10 @@ describe("VkAdsClient", () => {
         requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
         if (init?.method === "DELETE") return new Response(null, { status: 204 });
         if (init?.method === "POST") return new Response(JSON.stringify({ id: 7, name: "__MCP_TEST__ renamed" }), { status: 200 });
-        return new Response(JSON.stringify({ id: 7, counter_id: 70, name: "__MCP_TEST__ counter" }), { status: 200 });
+        if (String(url).endsWith("/remarketing/counters.json")) {
+          return new Response(JSON.stringify({ items: [{ id: 7, counter_id: 70, name: "__MCP_TEST__ counter" }] }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ id: 7, name: "__MCP_TEST__ counter" }), { status: 200 });
       },
     });
 
@@ -94,7 +97,7 @@ describe("VkAdsClient", () => {
     await expect(client.deleteTestRemarketingCounterV2(7)).resolves.toEqual({});
     expect(requests).toEqual([
       { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "POST", body: '{"name":"__MCP_TEST__ renamed"}' },
-      { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v2/remarketing/counters.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/70/goals.json", method: "POST", body: '{"substr":"order_accepted","condition":"jse","name":"__MCP_TEST__ purchase","goal_type":"purchase","value":45}' },
       { url: "https://ads.vk.com/api/v1/remarketing_counters/7.json", method: "DELETE", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "DELETE", body: "" },
@@ -240,13 +243,13 @@ describe("VkAdsClient", () => {
         requests.push({ url: String(url), method: init?.method ?? "GET", body: String(init?.body ?? "") });
         if (init?.method === "POST") return new Response(JSON.stringify({ id: 12, name: "__MCP_TEST__ goal", value: 3, goal_type: "purchase" }), { status: 200 });
         if (String(url).endsWith("/goals.json")) return new Response(JSON.stringify({ items: [{ id: 12, name: "__MCP_TEST__ goal" }] }), { status: 200 });
-        return new Response(JSON.stringify({ id: 7, counter_id: 70, name: "__MCP_TEST__ counter" }), { status: 200 });
+        return new Response(JSON.stringify({ items: [{ id: 7, counter_id: 70, name: "__MCP_TEST__ counter" }] }), { status: 200 });
       },
     });
 
     await expect(client.updateTestCounterGoal({ counterId: 7, goalId: 12, name: "__MCP_TEST__ goal", value: 3, goalType: "purchase" })).resolves.toMatchObject({ id: 12 });
     expect(requests).toEqual([
-      { url: "https://ads.vk.com/api/v2/remarketing/counters/7.json", method: "GET", body: "" },
+      { url: "https://ads.vk.com/api/v2/remarketing/counters.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/70/goals.json", method: "GET", body: "" },
       { url: "https://ads.vk.com/api/v2/remarketing/counters/70/goals/12.json", method: "POST", body: '{"name":"__MCP_TEST__ goal","value":3,"goal_type":"purchase"}' },
     ]);
@@ -605,8 +608,8 @@ describe("VkAdsClient", () => {
       timeoutMs: 1_000,
       fetchImplementation: async (url) => {
         receivedUrl = String(url);
-        if (receivedUrl.endsWith("/remarketing/counters/7.json")) {
-          return new Response(JSON.stringify({ id: 7, counter_id: 70, name: "Счётчик" }), { status: 200 });
+        if (receivedUrl.endsWith("/remarketing/counters.json")) {
+          return new Response(JSON.stringify({ items: [{ id: 7, counter_id: 70, name: "Счётчик" }] }), { status: 200 });
         }
         return new Response(JSON.stringify({ items: [{ id: 8, name: "Покупка" }] }), { status: 200 });
       },

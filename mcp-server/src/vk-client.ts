@@ -381,10 +381,11 @@ export class VkAdsClient {
 
   /** Связь VK Ads имеет внутренний ID, а endpoint целей принимает внешний Top.Mail.ru counter_id. */
   private async remarketingCounterApiId(remarketingCounterId: number): Promise<number> {
-    const counter = await this.getRemarketingCounter(remarketingCounterId);
+    const counter = (await this.listRemarketingCounters()).find((item) => Number(item.id) === remarketingCounterId);
+    if (!counter) throw new Error("Счётчик не найден среди объектов, доступных текущему кабинету.");
     const apiCounterId = Number(counter.counter_id);
     if (!Number.isInteger(apiCounterId) || apiCounterId <= 0) {
-      throw new Error("В карточке счётчика отсутствует корректный внешний counter_id для операций с целями.");
+      throw new Error("В доступном списке счётчиков отсутствует корректный внешний counter_id для операций с целями.");
     }
     return apiCounterId;
   }
