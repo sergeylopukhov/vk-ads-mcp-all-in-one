@@ -40,6 +40,7 @@ export function score(items: Candidate[], rules: Record<string, unknown>, cluste
   const excludes = strings(rules.exclude_terms);
   const memberRange = object(rules.members_range);
   const termWeights = object(rules.term_weights);
+  const perMatchWeights = object(rules.per_match_weights);
   const freshDays = number(rules.activity_fresh_days, 30);
   const minPostsPerWeek = number(rules.min_posts_per_week, 0);
   const minThematicShare = number(rules.min_thematic_post_share, 0);
@@ -48,8 +49,8 @@ export function score(items: Candidate[], rules: Record<string, unknown>, cluste
     let value = 0; const reasons: string[] = []; const text = `${item.name}\n${item.description}`;
     const add = (key: string, yes: boolean, label: string) => { const weight = number(weights[key], 0); if (yes && weight) { value += weight; reasons.push(`${label}: +${weight}`); } };
     const addMatches = (key: string, source: string, label: string) => {
-      const weight = number(weights[key], 0); const matched = weightedOccurrences(source, terms, termWeights);
-      if (weight && matched.score) { const points = weight * matched.score; value += points; reasons.push(`${label}: ${matched.count} совп. +${formatPoints(points)}`); }
+      const limit = number(weights[key], 0); const matched = weightedOccurrences(source, terms, termWeights); const perMatch = number(perMatchWeights[key], 1);
+      if (limit && matched.score) { const points = Math.min(limit, matched.score * perMatch); value += points; reasons.push(`${label}: ${matched.count} совп. +${formatPoints(points)} из ${limit}`); }
     };
     addMatches("name_term", item.name, "термины в названии");
     addMatches("description_term", item.description, "термины в описании");

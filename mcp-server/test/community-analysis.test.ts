@@ -34,16 +34,23 @@ describe("сообщества VK", () => {
     const item = candidate({ id: 7, name: "Турнир", description: "Настольные игры", type: "group", members_count: 1000, is_verified: 1 });
     item.activity = analyze([{ date: Math.floor(Date.now() / 1000), text: "Новый турнир" }], ["турнир"], ["ставки"]);
     expect(includeCandidate(item, ["игры"], ["ставки"], ["group"], 500, 2000)).toBe(true);
-    expect(score([item], { terms: ["турнир"], weights: { name_term: 25, description_term: 10, post_term: 30, activity_fresh: 20, members_range: 15 }, members_range: { min: 500, max: 2000 } })[0]).toMatchObject({ id: 7, score: 90, reasons: expect.arrayContaining(["термины в названии: 1 совп. +25"]) });
+    expect(score([item], { terms: ["турнир"], weights: { name_term: 25, description_term: 10, post_term: 30, activity_fresh: 20, members_range: 15 }, per_match_weights: { name_term: 25, description_term: 10, post_term: 30 }, members_range: { min: 500, max: 2000 } })[0]).toMatchObject({ id: 7, score: 90, reasons: expect.arrayContaining(["термины в названии: 1 совп. +25 из 25"]) });
   });
 
   it("ранжирует повторные и профессиональные совпадения, активность и тематические посты", () => {
     const item = candidate({ id: 9, name: "Уставщик и регент", description: "Уставщик", type: "group", members_count: 500 });
     item.activity = analyze([{ date: Math.floor(Date.now() / 1_000), text: "Уставщик ведёт занятие" }, { date: Math.floor(Date.now() / 1_000) - 604_800, text: "Новости" }], ["регент", "уставщик"], []);
-    const result = score([item], { terms: ["регент", "уставщик"], term_weights: { "уставщик": 2 }, weights: { name_term: 10, description_term: 10, post_term: 10, thematic_post_share: 20, activity_low_penalty: 15 }, min_posts_per_week: 3 })[0];
+    const result = score([item], { terms: ["регент", "уставщик"], term_weights: { "уставщик": 2 }, per_match_weights: { name_term: 5, description_term: 5, post_term: 5 }, weights: { name_term: 10, description_term: 10, post_term: 10, thematic_post_share: 20, activity_low_penalty: 15 }, min_posts_per_week: 3 })[0];
     expect(result.score).toBeGreaterThan(0);
     expect(result.reasons).toEqual(expect.arrayContaining([expect.stringContaining("тематические публикации"), "низкая активность: -15"]));
     expect(result.risk_flags).toContain("low_activity");
+  });
+
+  it("ограничивает вклад большого числа совпадений потолком сигнала", () => {
+    const item = candidate({ id: 10, name: "Курсы", description: Array(20).fill("регент").join(" "), type: "group", members_count: 100 });
+    const result = score([item], { terms: ["регент"], per_match_weights: { description_term: 5 }, weights: { description_term: 25 } })[0];
+    expect(result.score).toBe(25);
+    expect(result.reasons).toContain("термины в описании: 20 совп. +25 из 25");
   });
 
   it("помечает недоступные публикации как риск, не сохраняя их текст", () => {

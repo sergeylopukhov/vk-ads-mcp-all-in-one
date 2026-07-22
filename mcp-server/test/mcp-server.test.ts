@@ -94,9 +94,9 @@ describe("MCP-контракт", () => {
     const invalid = await client.callTool({ name: "vk_score_communities", arguments: { community_ids: [7], scoring_rules: { terms: ["регент"], name_term: 35 } } });
     expect(invalid.isError).toBe(true);
 
-    const valid = await client.callTool({ name: "vk_score_communities", arguments: { community_ids: [7], scoring_rules: { terms: ["регент"], weights: { name_term: 35, post_term: 25 } } } });
+    const valid = await client.callTool({ name: "vk_score_communities", arguments: { community_ids: [7], scoring_rules: { terms: ["регент"], weights: { name_term: 35, post_term: 25 }, per_match_weights: { name_term: 35, post_term: 25 } } } });
     expect(valid.isError).not.toBe(true);
-    expect(valid.structuredContent).toMatchObject({ items: [expect.objectContaining({ id: 7, score: 60, reasons: expect.arrayContaining(["термины в названии: 1 совп. +35", "термины в публикациях: 1 совп. +25"]) })] });
+    expect(valid.structuredContent).toMatchObject({ items: [expect.objectContaining({ id: 7, score: 60, reasons: expect.arrayContaining(["термины в названии: 1 совп. +35 из 35", "термины в публикациях: 1 совп. +25 из 25"]) })] });
 
     await Promise.all([client.close(), server.close()]);
   });

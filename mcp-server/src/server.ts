@@ -1788,6 +1788,7 @@ export function createServer(client: VkAdsClient, mode: ServerMode, options: { c
     exclude_terms: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
     weights: z.object({ name_term: z.number().finite().nonnegative().optional(), description_term: z.number().finite().nonnegative().optional(), post_term: z.number().finite().nonnegative().optional(), activity_fresh: z.number().finite().nonnegative().optional(), activity_low_penalty: z.number().finite().nonnegative().optional(), thematic_post_share: z.number().finite().nonnegative().optional(), members_range: z.number().finite().nonnegative().optional(), exclude_term_penalty: z.number().finite().nonnegative().optional() }).strict().refine((weights) => Object.values(weights).some((weight) => typeof weight === "number" && weight > 0), "Укажите хотя бы один положительный вес."),
     term_weights: z.record(z.string().trim().min(1).max(120), z.number().finite().positive()).default({}),
+    per_match_weights: z.object({ name_term: z.number().finite().positive().optional(), description_term: z.number().finite().positive().optional(), post_term: z.number().finite().positive().optional() }).strict().default({}),
     activity_fresh_days: z.number().int().positive().max(3_650).default(30),
     min_posts_per_week: z.number().nonnegative().max(10_000).default(0),
     min_thematic_post_share: z.number().min(0).max(1).default(0),
