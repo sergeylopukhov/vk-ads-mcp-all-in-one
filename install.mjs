@@ -289,7 +289,7 @@ async function askPositiveIds(readline, question, defaultValue = "") {
 }
 
 const COMMUNITY_REDIRECT_URI = "https://vk.ru/blank.html";
-const COMMUNITY_LEGACY_REDIRECT_URI = "https://oauth.vk.com/blank.html";
+const COMMUNITY_LEGACY_REDIRECT_URI = "https://oauth.vk.ru/blank.html";
 const DEFAULT_COMMUNITY_LEGACY_CLIENT_ID = "6270012";
 
 function printCommunityOAuthSetup() {
@@ -311,12 +311,12 @@ async function authorizeCommunityToolsLegacy(clientId) {
   if (!/^\d+$/.test(clientId)) throw new Error("VK client_id должен состоять из цифр.");
   const authorizationUrl = new URL("https://oauth.vk.com/authorize");
   authorizationUrl.search = new URLSearchParams({ client_id: clientId, scope: "335876", redirect_uri: COMMUNITY_LEGACY_REDIRECT_URI, display: "page", response_type: "token", revoke: "1" }).toString();
-  console.log("Открываю legacy OAuth в браузере. После входа скопируйте полный URL страницы oauth.vk.com/blank.html и вернитесь сюда.");
+  console.log("Открываю legacy OAuth в браузере. После входа скопируйте полный URL страницы oauth.vk.ru/blank.html и вернитесь сюда.");
   openBrowser(authorizationUrl.toString());
-  const callbackUrl = await promptVisible("URL страницы oauth.vk.com/blank.html: ");
+  const callbackUrl = await promptVisible("URL страницы oauth.vk.ru/blank.html: ");
   let callback;
-  try { callback = new URL(callbackUrl); } catch { throw new Error("Нужен полный URL страницы oauth.vk.com/blank.html после авторизации."); }
-  if (callback.origin !== "https://oauth.vk.com" || callback.pathname !== "/blank.html") throw new Error("Нужен URL страницы https://oauth.vk.com/blank.html после авторизации.");
+  try { callback = new URL(callbackUrl); } catch { throw new Error("Нужен полный URL страницы oauth.vk.ru/blank.html после авторизации."); }
+  if (!new Set(["https://oauth.vk.com", "https://oauth.vk.ru"]).has(callback.origin) || callback.pathname !== "/blank.html") throw new Error("Нужен URL страницы oauth.vk.ru/blank.html после авторизации.");
   const accessToken = new URLSearchParams(callback.hash.slice(1)).get("access_token");
   if (!accessToken) throw new Error("OAuth не вернул access_token. Повторите авторизацию.");
   return { accessToken, tokenType: "legacy" };
