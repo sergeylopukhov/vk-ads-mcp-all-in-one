@@ -68,6 +68,19 @@ export function parseEnvValues(content) {
   return values;
 }
 
+export function parseInstalledVersion(content) {
+  try {
+    const value = JSON.parse(content);
+    return typeof value?.ref === "string" && value.ref ? value.ref : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function requiresConfiguration(values) {
+  return !values.VK_ADS_CLIENT_ID || !values.VK_ADS_CLIENT_SECRET;
+}
+
 function parseArguments(argv) {
   const options = { ref: undefined, installDirectory: undefined, register: true };
   for (let index = 0; index < argv.length; index += 1) {
@@ -154,6 +167,31 @@ async function pathExists(path) {
     if (error?.code === "EISDIR") return true;
     if (error?.code === "ENOENT") return false;
     throw error;
+  }
+}
+
+async function installedVersion(installDirectory) {
+  try {
+    return parseInstalledVersion(await readFile(join(installDirectory, ".vk-ads-install.json"), "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function chooseInstallMode(installed, available, hasEnv) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY || (!installed && !hasEnv)) return "update";
+  const readline = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    console.log(`Установлена версия: ${installed || "неизвестна"}. Доступна версия: ${available}.`);
+    while (true) {
+      const answer = await ask(readline, "Действие: 1 — обновить без изменения настроек, 2 — установить заново", "1");
+      if (answer === "1") return "update";
+      if (answer === "2") return "reinstall";
+      console.log("Введите 1 или 2.");
+    }
+  } finally {
+    readline.close();
   }
 }
 
@@ -366,11 +404,12 @@ async function authorizeCommunityTools(clientId, tokenType) {
   return tokenType === "legacy" ? authorizeCommunityToolsLegacy(clientId) : authorizeCommunityToolsVkId(clientId);
 }
 
-async function ensureConfiguration(installDirectory) {
+async function ensureConfiguration(installDirectory, reinstall = false) {
   const envPath = join(installDirectory, ".env");
   const envExists = await pathExists(envPath);
 
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    if (reinstall) throw new Error("Для установки заново нужен интерактивный терминал.");
     if (!envExists) {
       await cp(join(installDirectory, ".env.example"), envPath);
       await chmod(envPath, 0o600).catch(() => {});
@@ -386,35 +425,13 @@ async function ensureConfiguration(installDirectory) {
   }
 
   const currentContent = envExists ? await readFile(envPath, "utf8") : "";
-  const current = parseEnvValues(currentContent);
-  const readline = createInterface({ input: process.stdin, output: process.stdout });
-  if (envExists && !(await askBoolean(readline, "Изменить сохранённые настройки?", false))) {
-    if (!current.VK_API_TOKEN && await askBoolean(readline, "Включить поиск и анализ публичных сообществ VK?", false)) {
-      const tokenType = await askCommunityTokenType(readline, current.VK_API_TOKEN_TYPE || (current.VK_API_REFRESH_TOKEN ? "vk_id" : "legacy"));
-      if (tokenType === "vk_id") printCommunityOAuthSetup();
-      const communityClientId = await ask(readline, tokenType === "legacy" ? "VK client_id приложения (Enter — встроенное)" : "VK ID client_id приложения", tokenType === "legacy" ? (current.VK_API_TOKEN_TYPE === "legacy" ? current.VK_API_CLIENT_ID || DEFAULT_COMMUNITY_LEGACY_CLIENT_ID : DEFAULT_COMMUNITY_LEGACY_CLIENT_ID) : current.VK_API_CLIENT_ID || "");
-      readline.close();
-      const communityAuth = await authorizeCommunityTools(communityClientId, tokenType);
-      const template = await readFile(join(installDirectory, ".env.example"), "utf8");
-      await writeFile(envPath, applyEnvValues(currentContent || template, {
-        VK_API_TOKEN: communityAuth.accessToken,
-        VK_API_TOKEN_TYPE: communityAuth.tokenType,
-        VK_API_REFRESH_TOKEN: communityAuth.refreshToken || "",
-        VK_API_TOKEN_EXPIRES_AT: Number.isInteger(communityAuth.expiresIn) && communityAuth.expiresIn > 0 ? new Date(Date.now() + communityAuth.expiresIn * 1000).toISOString() : "",
-        VK_API_CLIENT_ID: communityClientId,
-        VK_API_DEVICE_ID: communityAuth.deviceId,
-      }), { mode: 0o600 });
-      await chmod(envPath, 0o600).catch(() => {});
-      console.log("Функция публичных сообществ VK включена.");
-    } else {
-      readline.close();
-    }
-    console.log("Существующий .env сохранён.");
-    return {
-      mode: current.VK_ADS_MODE === "write" ? "write" : "readonly",
-      profileName: current.VK_ADS_PROFILE || "default",
-    };
+  const saved = parseEnvValues(currentContent);
+  const current = reinstall ? {} : saved;
+  if (!reinstall && envExists && !requiresConfiguration(current)) {
+    console.log("Настройки сохранены; обновление не запрашивает учётные данные.");
+    return { mode: current.VK_ADS_MODE === "write" ? "write" : "readonly", profileName: current.VK_ADS_PROFILE || "default" };
   }
+  const readline = createInterface({ input: process.stdin, output: process.stdout });
 
   console.log("\nНастройка VK Ads MCP. Нажмите Enter, чтобы принять значение в скобках.\n");
   const clientId = await ask(readline, "VK Ads client_id", current.VK_ADS_CLIENT_ID || "");
@@ -474,7 +491,7 @@ async function ensureConfiguration(installDirectory) {
   const communityAuth = authorizeCommunities ? await authorizeCommunityTools(communityClientId, communityTokenType) : undefined;
   if (!clientId || !clientSecret) throw new Error("client_id и client_secret не могут быть пустыми.");
   const template = await readFile(join(installDirectory, ".env.example"), "utf8");
-  const base = envExists ? currentContent : template;
+  const base = envExists && !reinstall ? currentContent : template;
   const content = applyEnvValues(base, {
     VK_ADS_PROFILE: profileName,
     VK_ADS_MODE: mode,
@@ -530,6 +547,7 @@ export async function main(argv = process.argv.slice(2)) {
 
   const installDirectory = resolve(options.installDirectory || defaultInstallDirectory());
   const ref = await resolveRef(options.ref);
+  const installMode = await chooseInstallMode(await installedVersion(installDirectory), ref, await pathExists(join(installDirectory, ".env")));
   const temporaryRoot = await mkdtemp(join(tmpdir(), "vk-ads-mcp-"));
   const stagingDirectory = join(temporaryRoot, "server");
   await mkdir(stagingDirectory, { recursive: true });
@@ -538,7 +556,7 @@ export async function main(argv = process.argv.slice(2)) {
     const commitSha = await downloadServer(ref, stagingDirectory);
     await buildServer(stagingDirectory);
     await deployServer(stagingDirectory, installDirectory, ref, commitSha);
-    const configuration = await ensureConfiguration(installDirectory);
+    const configuration = await ensureConfiguration(installDirectory, installMode === "reinstall");
     const registered = options.register ? registerCodex(installDirectory, configuration.profileName) : false;
     console.log(`\nVK Ads MCP установлен: ${installDirectory}`);
     console.log(`Версия источника: ${ref} (${commitSha.slice(0, 12)})`);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyEnvValues, defaultInstallDirectory, fillCredentials, parseEnvValues, resolveRef, selectServerFiles } from "../../install.mjs";
+import { applyEnvValues, defaultInstallDirectory, fillCredentials, parseEnvValues, parseInstalledVersion, requiresConfiguration, resolveRef, selectServerFiles } from "../../install.mjs";
 
 test("selectServerFiles keeps only files required to build the server", () => {
   const files = selectServerFiles([
@@ -35,6 +35,13 @@ test("parseEnvValues reads active values and ignores comments", () => {
     VK_ADS_MODE: "readonly",
     VK_ADS_UPLOAD_DIR: "/tmp/media files",
   });
+});
+
+test("installer recognises installed version and missing required credentials", () => {
+  assert.equal(parseInstalledVersion('{"ref":"v1.2.0"}'), "v1.2.0");
+  assert.equal(parseInstalledVersion("not json"), undefined);
+  assert.equal(requiresConfiguration({ VK_ADS_CLIENT_ID: "id", VK_ADS_CLIENT_SECRET: "secret" }), false);
+  assert.equal(requiresConfiguration({ VK_ADS_CLIENT_ID: "id" }), true);
 });
 
 test("defaultInstallDirectory is platform aware", () => {
