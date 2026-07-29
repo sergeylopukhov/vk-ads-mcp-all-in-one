@@ -1,21 +1,19 @@
 # Подключение к Codex
 
-Нужны Node.js 22 или новее, `client_id`, `client_secret` приложения VK Ads и авторизованный GitHub CLI, пока репозиторий приватный.
+Нужны Node.js 22 или новее, `client_id` и `client_secret` приложения VK Ads.
 
 ## Установка
 
 ### macOS и Linux
 
 ```bash
-gh auth login
-gh api -H "Accept: application/vnd.github.raw+json" repos/sergeylopukhov/vk-ads-mcp-all-in-one/contents/install.sh | sh
+curl -fsSL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.sh | sh
 ```
 
 ### Windows
 
 ```powershell
-gh auth login
-gh api -H "Accept: application/vnd.github.raw+json" repos/sergeylopukhov/vk-ads-mcp-all-in-one/contents/install.ps1 | Out-String | Invoke-Expression
+irm https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.ps1 | iex
 ```
 
 Установщик запросит `client_id`, скроет ввод `client_secret`, соберёт сервер и зарегистрирует MCP-подключение `vk-ads`. Одновременно он установит навык Codex в `~/.codex/skills/vk-ads-mcp/`.
