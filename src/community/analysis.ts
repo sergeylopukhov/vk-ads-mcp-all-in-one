@@ -1,8 +1,4 @@
-import type {
-  CommunityType,
-  VkCommunity,
-  VkWallPost,
-} from "./vk-client.js";
+import type { VkCommunity, VkWallPost } from "./vk-client.js";
 
 export interface Activity {
   last_post_at: string | null;
@@ -95,29 +91,6 @@ export function candidate(
     retrieved_at: retrievedAt,
     risk_flags: riskFlags,
   };
-}
-
-export function includeCandidate(
-  item: Candidate,
-  include: string[],
-  exclude: string[],
-  types?: CommunityType[],
-  min?: number,
-  max?: number,
-  excludeMatchMode: ExcludeMatchMode = "word_prefix",
-): boolean {
-  const text = `${item.name}\n${item.description}`;
-  return (
-    (types?.length
-      ? item.type !== null && types.includes(item.type as CommunityType)
-      : true) &&
-    (min === undefined ||
-      (item.members_count !== null && item.members_count >= min)) &&
-    (max === undefined ||
-      (item.members_count !== null && item.members_count <= max)) &&
-    (include.length === 0 || matches(text, include).length > 0) &&
-    matchExcludedTerms(text, exclude, excludeMatchMode).length === 0
-  );
 }
 
 export function analyze(

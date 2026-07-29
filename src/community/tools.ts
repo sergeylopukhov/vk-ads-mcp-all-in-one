@@ -6,7 +6,6 @@ import { z } from "zod";
 import {
   analyze,
   candidate,
-  includeCandidate,
   matchExcludedTerms,
   matches,
   reanalyzeDerivedActivity,
@@ -51,6 +50,7 @@ type ResearchInput = {
   include_terms: string[];
   exclude_terms: string[];
   exclude_match_mode: ExcludeMatchMode;
+  exclude_policy: "soft" | "hard";
   search_sort?: CommunitySearchSort | undefined;
   search_budget: {
     max_pages_per_query: number;
@@ -270,6 +270,7 @@ export const researchInputSchema = {
   exclude_match_mode: z
     .enum(["word_prefix", "substring"])
     .default("word_prefix"),
+  exclude_policy: z.enum(["soft", "hard"]).default("soft"),
   search_sort: z.enum(["relevance", "members"]).default("members"),
   search_budget: z
     .object({
@@ -327,10 +328,18 @@ const runOutputSchema = {
     source_matches: z.number().int().nonnegative(),
     provider_reported_matches: z.number().int().nonnegative().default(0),
     metadata_excluded: z.number().int().nonnegative().default(0),
+    metadata_flagged: z.number().int().nonnegative().default(0),
     metadata_exclusion_matches: z.record(
       z.string(),
       z.number().int().nonnegative(),
     ).default({}),
+    positive_metadata_unmatched: z.number().int().nonnegative().default(0),
+    structural_excluded: z.number().int().nonnegative().default(0),
+    structural_exclusion_reasons: z.record(
+      z.string(),
+      z.number().int().nonnegative(),
+    ).default({}),
+    metadata_unavailable: z.number().int().nonnegative().default(0),
     matched_filters: z.number().int().nonnegative(),
     selected: z.number().int().nonnegative(),
     analyzed: z.number().int().nonnegative(),
@@ -367,6 +376,7 @@ export function registerVkCommunityTools(
       | "include_terms"
       | "exclude_terms"
       | "exclude_match_mode"
+      | "exclude_policy"
       | "search_sort"
       | "search_budget"
       | "country_id"
@@ -381,7 +391,12 @@ export function registerVkCommunityTools(
     sourceMatches: number;
     providerReportedMatches: number;
     metadataExcluded: number;
+    metadataFlagged: number;
     metadataExclusionMatches: Record<string, number>;
+    positiveMetadataUnmatched: number;
+    structuralExcluded: number;
+    structuralExclusionReasons: Record<string, number>;
+    metadataUnavailable: number;
     providerLimited: boolean;
     budgetLimited: boolean;
   }> => {
@@ -398,8 +413,13 @@ export function registerVkCommunityTools(
     const found = new Map<number, Candidate>();
     const terms = [...new Set([...input.keywords, ...input.include_terms])];
     const sourceIds = new Set<number>();
+    const enrichedIds = new Set<number>();
     const metadataExcludedIds = new Set<number>();
+    const metadataFlaggedIds = new Set<number>();
     const metadataExclusionIds = new Map<string, Set<number>>();
+    const positiveMetadataUnmatchedIds = new Set<number>();
+    const structuralExcludedIds = new Set<number>();
+    const structuralExclusionIds = new Map<string, Set<number>>();
     let searchPages = 0;
     let providerReportedMatches = 0;
     let providerLimited = false;
@@ -438,34 +458,60 @@ export function registerVkCommunityTools(
             await client.getByIds(page.items.map((item) => item.id))
           ).map((item) => candidate(item));
           for (const item of pageCandidates) {
+            enrichedIds.add(item.id);
+            const structuralReasons = [
+              ...(input.community_types?.length &&
+              (item.type === null ||
+                !input.community_types.includes(item.type as CommunityType))
+                ? ["community_type"]
+                : []),
+              ...(input.min_members !== undefined &&
+              (item.members_count === null ||
+                item.members_count < input.min_members)
+                ? ["min_members"]
+                : []),
+              ...(input.max_members !== undefined &&
+              (item.members_count === null ||
+                item.members_count > input.max_members)
+                ? ["max_members"]
+                : []),
+            ];
+            if (structuralReasons.length > 0) {
+              structuralExcludedIds.add(item.id);
+              for (const reason of structuralReasons) {
+                const ids =
+                  structuralExclusionIds.get(reason) ?? new Set<number>();
+                ids.add(item.id);
+                structuralExclusionIds.set(reason, ids);
+              }
+              continue;
+            }
+            if (
+              terms.length > 0 &&
+              matches(`${item.name}\n${item.description}`, terms).length === 0
+            ) {
+              positiveMetadataUnmatchedIds.add(item.id);
+            }
             const exclusionMatches = matchExcludedTerms(
               `${item.name}\n${item.description}`,
               input.exclude_terms,
               input.exclude_match_mode,
             );
             if (exclusionMatches.length > 0) {
-              metadataExcludedIds.add(item.id);
               for (const term of exclusionMatches) {
                 const ids =
                   metadataExclusionIds.get(term) ?? new Set<number>();
                 ids.add(item.id);
                 metadataExclusionIds.set(term, ids);
               }
-              continue;
+              if (input.exclude_policy === "hard") {
+                metadataExcludedIds.add(item.id);
+                continue;
+              }
+              metadataFlaggedIds.add(item.id);
+              item.risk_flags.push("exclude_term_in_metadata");
             }
-            if (
-              includeCandidate(
-                item,
-                terms,
-                input.exclude_terms,
-                input.community_types,
-                input.min_members,
-                input.max_members,
-                input.exclude_match_mode,
-              )
-            ) {
-              found.set(item.id, item);
-            }
+            found.set(item.id, item);
           }
           const next = offset + page.items.length;
           const reachedBudget =
@@ -516,12 +562,24 @@ export function registerVkCommunityTools(
       sourceMatches: sourceIds.size,
       providerReportedMatches,
       metadataExcluded: metadataExcludedIds.size,
+      metadataFlagged: metadataFlaggedIds.size,
       metadataExclusionMatches: Object.fromEntries(
         [...metadataExclusionIds].map(([term, ids]) => [
           term,
           ids.size,
         ]),
       ),
+      positiveMetadataUnmatched: positiveMetadataUnmatchedIds.size,
+      structuralExcluded: structuralExcludedIds.size,
+      structuralExclusionReasons: Object.fromEntries(
+        [...structuralExclusionIds].map(([reason, ids]) => [
+          reason,
+          ids.size,
+        ]),
+      ),
+      metadataUnavailable: [...sourceIds].filter(
+        (id) => !enrichedIds.has(id),
+      ).length,
       providerLimited,
       budgetLimited,
     };
@@ -535,7 +593,13 @@ export function registerVkCommunityTools(
     excludeMatchMode: ExcludeMatchMode,
   ): Promise<Candidate[]> => {
     for (const item of items) {
-      if (item.risk_flags.length > 0) continue;
+      if (
+        item.risk_flags.some(
+          (flag) => flag !== "exclude_term_in_metadata",
+        )
+      ) {
+        continue;
+      }
       try {
         item.activity = analyze(
           await client.wall(item.id, postsLimit),
@@ -659,8 +723,15 @@ export function registerVkCommunityTools(
         source_matches: discovery.sourceMatches,
         provider_reported_matches: discovery.providerReportedMatches,
         metadata_excluded: discovery.metadataExcluded,
+        metadata_flagged: discovery.metadataFlagged,
         metadata_exclusion_matches:
           discovery.metadataExclusionMatches,
+        positive_metadata_unmatched:
+          discovery.positiveMetadataUnmatched,
+        structural_excluded: discovery.structuralExcluded,
+        structural_exclusion_reasons:
+          discovery.structuralExclusionReasons,
+        metadata_unavailable: discovery.metadataUnavailable,
         matched_filters: discovery.items.length,
         selected: selected.length,
         analyzed: 0,
@@ -835,7 +906,12 @@ export function registerVkCommunityTools(
         sourceMatches: 0,
         providerReportedMatches: 0,
         metadataExcluded: 0,
+        metadataFlagged: 0,
         metadataExclusionMatches: {},
+        positiveMetadataUnmatched: 0,
+        structuralExcluded: 0,
+        structuralExclusionReasons: {},
+        metadataUnavailable: 0,
         providerLimited: false,
         budgetLimited: false,
       },
@@ -1148,12 +1224,13 @@ export function registerVkCommunityTools(
     {
       title: "Найти публичные сообщества VK",
       description:
-        "Ищет через groups.search в заданном бюджете, фильтрует metadata и удаляет дубли по ID.",
+        "Ищет через groups.search в заданном бюджете, применяет явные структурные ограничения, помечает мягкие минус-совпадения и удаляет дубли по ID.",
       inputSchema: {
         keywords: researchInputSchema.keywords,
         include_terms: researchInputSchema.include_terms,
         exclude_terms: researchInputSchema.exclude_terms,
         exclude_match_mode: researchInputSchema.exclude_match_mode,
+        exclude_policy: researchInputSchema.exclude_policy,
         search_sort: researchInputSchema.search_sort,
         search_budget: researchInputSchema.search_budget,
         country_id: researchInputSchema.country_id,

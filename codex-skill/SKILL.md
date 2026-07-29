@@ -72,6 +72,10 @@ qualifiers in multiword exclusions; never broaden "оптовый поставщ
 generic term "поставщик". Research every community that passes the metadata
 filters. A requested result count is a reporting target, not an analysis cap;
 control provider request volume only through `search_budget`.
+Never infer `country_id` or `city_id` from the user's language, domain, or
+location. Omit both fields for a worldwide search unless the user explicitly
+requests or confirms a geography. Keep `exclude_policy=soft` unless the user
+explicitly authorizes hard removal by metadata minus-terms.
 After every community search, state the active recommendation and review
 thresholds. If the result contains fewer suitable candidates than requested,
 do not stop at "nothing found": explain the limiting stage and offer score
