@@ -1175,22 +1175,51 @@ async function askCommunityTokenType(defaultValue = "legacy") {
   );
 }
 
-function openBrowser(url) {
+export async function openBrowser(
+  url,
+  {
+    platform = process.platform,
+    spawnProcess = spawn,
+  } = {},
+) {
   const command =
-    process.platform === "darwin"
+    platform === "darwin"
       ? "open"
-      : process.platform === "win32"
+      : platform === "win32"
         ? "cmd"
         : "xdg-open";
   const args =
-    process.platform === "win32"
+    platform === "win32"
       ? ["/c", "start", "", url]
       : [url];
-  const child = spawn(command, args, {
-    detached: true,
-    stdio: "ignore",
+
+  return new Promise((resolvePromise) => {
+    let child;
+    try {
+      child = spawnProcess(command, args, {
+        detached: true,
+        stdio: "ignore",
+      });
+    } catch {
+      resolvePromise(false);
+      return;
+    }
+
+    let settled = false;
+    const finish = (opened) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolvePromise(opened);
+    };
+
+    child.once("error", () => finish(false));
+    child.once("spawn", () => {
+      child.unref();
+      finish(true);
+    });
   });
-  child.unref();
 }
 
 async function authorizeCommunityLegacy(clientId) {
@@ -1209,7 +1238,12 @@ async function authorizeCommunityLegacy(clientId) {
   console.log(
     "Открываю OAuth VK. После входа скопируйте полный URL страницы oauth.vk.ru/blank.html.",
   );
-  openBrowser(authorizationUrl.toString());
+  console.log(`Ссылка для входа:\n${authorizationUrl.toString()}`);
+  if (!(await openBrowser(authorizationUrl.toString()))) {
+    console.log(
+      "Не удалось открыть браузер автоматически. Откройте ссылку выше вручную.",
+    );
+  }
   const callbackUrl = await promptVisible(
     "URL страницы oauth.vk.ru/blank.html: ",
   );
@@ -1262,7 +1296,12 @@ async function authorizeCommunityVkId(clientId) {
   console.log(
     "Открываю VK ID. После входа скопируйте полный URL страницы vk.ru/blank.html.",
   );
-  openBrowser(authorizationUrl.toString());
+  console.log(`Ссылка для входа:\n${authorizationUrl.toString()}`);
+  if (!(await openBrowser(authorizationUrl.toString()))) {
+    console.log(
+      "Не удалось открыть браузер автоматически. Откройте ссылку выше вручную.",
+    );
+  }
   const callbackUrl = await promptVisible(
     "URL страницы vk.ru/blank.html: ",
   );
