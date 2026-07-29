@@ -1330,6 +1330,16 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
     "VK Ads client_id",
     current.VK_ADS_CLIENT_ID || "",
   );
+  const clientSecret = await promptHidden(
+    "VK Ads client_secret (ввод скрыт): ",
+  );
+
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      "client_id и client_secret не могут быть пустыми.",
+    );
+  }
+
   enableCommunityTools = await promptBoolean(
     "Подключить поиск и анализ публичных сообществ VK?",
     Boolean(current.VK_API_TOKEN),
@@ -1371,15 +1381,6 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
     );
   }
 
-  const clientSecret = await promptHidden(
-    "VK Ads client_secret (ввод скрыт): ",
-  );
-
-  if (!clientId || !clientSecret) {
-    throw new Error(
-      "client_id и client_secret не могут быть пустыми.",
-    );
-  }
   const communityAuth = authorizeCommunities
     ? await authorizeCommunity(communityClientId, communityTokenType)
     : undefined;
