@@ -85,6 +85,7 @@ import {
   OFFLINE_CONVERSION_STATISTICS_SUMMARY_GET_TOOL,
   OAUTH_CODE_INFO_TOOL,
   OAUTH_CURRENT_TOKENS_DELETE_TOOL,
+  OAUTH_TOKEN_REFRESH_TOOL,
   ORD_USER_STATUS_GET_TOOL,
   ORD_USER_UPDATE_TOOL,
   REMARKETING_COUNTERS_LIST_TOOL,
@@ -173,6 +174,15 @@ describe("VK Ads MCP stdio server", () => {
             annotations: {
               readOnlyHint: false,
               destructiveHint: true,
+              idempotentHint: false,
+              openWorldHint: true,
+            },
+          },
+          {
+            name: OAUTH_TOKEN_REFRESH_TOOL,
+            annotations: {
+              readOnlyHint: false,
+              destructiveHint: false,
               idempotentHint: false,
               openWorldHint: true,
             },

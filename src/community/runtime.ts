@@ -75,6 +75,12 @@ export async function createDefaultVkCommunityRuntime(): Promise<VkCommunityRunt
       tokenType,
       timeoutMs: 30_000,
       waitForRequest,
+      ...(tokenManager === undefined
+        ? {}
+        : {
+            refreshAfterAuthenticationFailure: async () =>
+              await tokenManager.refresh(),
+          }),
     }),
     store: new CommunityResearchStore(
       process.env.VK_COMMUNITY_RESEARCH_FILE?.trim() ||

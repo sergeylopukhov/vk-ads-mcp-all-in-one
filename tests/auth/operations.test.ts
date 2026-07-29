@@ -28,6 +28,8 @@ describe("DefaultVkAdsOAuthOperations", () => {
         userTypes: ["advert"],
       })),
       deleteCurrentUserTokens: vi.fn(async () => undefined),
+      issueClientCredentialsToken: vi.fn(),
+      refreshAccessToken: vi.fn(),
     };
     const operations = new DefaultVkAdsOAuthOperations(
       store,
@@ -51,6 +53,8 @@ describe("DefaultVkAdsOAuthOperations", () => {
     const oauthClient = {
       getAuthorizationCodeInfo: vi.fn(),
       deleteCurrentUserTokens: vi.fn(async () => undefined),
+      issueClientCredentialsToken: vi.fn(),
+      refreshAccessToken: vi.fn(),
     };
     const operations = new DefaultVkAdsOAuthOperations(
       store,
@@ -69,6 +73,42 @@ describe("DefaultVkAdsOAuthOperations", () => {
       oauthClient.deleteCurrentUserTokens.mock.invocationCallOrder[0],
     ).toBeLessThan(
       vi.mocked(store.clearTokens).mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("refreshes the current token pair under the lock", async () => {
+    const store = createStore();
+    const oauthClient = {
+      getAuthorizationCodeInfo: vi.fn(),
+      deleteCurrentUserTokens: vi.fn(),
+      issueClientCredentialsToken: vi.fn(),
+      refreshAccessToken: vi.fn(async () => ({
+        accessToken: "replacement-access",
+        refreshToken: "replacement-refresh",
+        expiresInSeconds: 3_600,
+      })),
+    };
+    const operations = new DefaultVkAdsOAuthOperations(
+      store,
+      oauthClient,
+    );
+    const before = Date.now();
+
+    const result = await operations.refreshCurrentTokens();
+
+    expect(vi.mocked(store.withRefreshLock)).toHaveBeenCalledTimes(1);
+    expect(oauthClient.refreshAccessToken).toHaveBeenCalledWith(
+      "client-id",
+      "client-secret",
+      "refresh-token",
+    );
+    expect(store.saveTokens).toHaveBeenCalledWith({
+      accessToken: "replacement-access",
+      refreshToken: "replacement-refresh",
+      expiresAt: expect.any(Number),
+    });
+    expect(result.expiresAt).toBeGreaterThanOrEqual(
+      before + 3_600_000,
     );
   });
 });

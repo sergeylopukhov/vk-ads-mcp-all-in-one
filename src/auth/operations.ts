@@ -1,21 +1,28 @@
 import {
   EnvFileVkAdsCredentialStore,
+  type PersistedTokenSet,
   type VkAdsCredentialStore,
 } from "./env-store.js";
+import { VkAdsTokenUnavailableError } from "./errors.js";
 import {
   VkAdsOAuthClient,
   type VkAdsAuthorizationCodeInfo,
+  type VkAdsTokenResponse,
 } from "./oauth-client.js";
 
 type VkAdsOAuthOperationsClient = Pick<
   VkAdsOAuthClient,
-  "getAuthorizationCodeInfo" | "deleteCurrentUserTokens"
+  | "getAuthorizationCodeInfo"
+  | "deleteCurrentUserTokens"
+  | "issueClientCredentialsToken"
+  | "refreshAccessToken"
 >;
 
 export interface VkAdsOAuthOperations {
   inspectAuthorizationCode(
     code: string,
   ): Promise<VkAdsAuthorizationCodeInfo>;
+  refreshCurrentTokens?(): Promise<{ expiresAt: number }>;
   deleteCurrentUserTokens(): Promise<void>;
 }
 
@@ -48,6 +55,36 @@ export class DefaultVkAdsOAuthOperations
         credentials.clientSecret,
       );
       await this.store.clearTokens();
+    });
+  }
+
+  async refreshCurrentTokens(): Promise<{ expiresAt: number }> {
+    return await this.store.withRefreshLock(async () => {
+      const credentials = await this.store.load();
+      let response: VkAdsTokenResponse;
+
+      if (credentials.refreshToken !== undefined) {
+        response = await this.oauthClient.refreshAccessToken(
+          credentials.clientId,
+          credentials.clientSecret,
+          credentials.refreshToken,
+        );
+      } else if (credentials.accessToken === undefined) {
+        response = await this.oauthClient.issueClientCredentialsToken(
+          credentials.clientId,
+          credentials.clientSecret,
+        );
+      } else {
+        throw new VkAdsTokenUnavailableError();
+      }
+
+      const tokens: PersistedTokenSet = {
+        accessToken: response.accessToken,
+        refreshToken: response.refreshToken,
+        expiresAt: Date.now() + response.expiresInSeconds * 1_000,
+      };
+      await this.store.saveTokens(tokens);
+      return { expiresAt: tokens.expiresAt };
     });
   }
 }

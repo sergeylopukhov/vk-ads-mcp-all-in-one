@@ -73,6 +73,44 @@ describe("community analysis", () => {
     expect(requestUrl).toContain("access_token=legacy-token");
   });
 
+  it("refreshes a rejected VK ID token once and retries the request", async () => {
+    let token = "expired-token";
+    let calls = 0;
+    const client = new VkCommunityClient({
+      tokenProvider: () => token,
+      timeoutMs: 1_000,
+      refreshAfterAuthenticationFailure: async () => {
+        token = "replacement-token";
+        return token;
+      },
+      fetchImplementation: async (_url, init) => {
+        calls += 1;
+        const authorization = new Headers(init?.headers).get(
+          "authorization",
+        );
+        if (authorization === "Bearer expired-token") {
+          return new Response(
+            JSON.stringify({
+              error: { error_code: 5, error_msg: "User authorization failed" },
+            }),
+            { status: 401 },
+          );
+        }
+        expect(authorization).toBe("Bearer replacement-token");
+        return new Response(
+          JSON.stringify({
+            response: { groups: [{ id: 9, name: "Сообщество" }] },
+          }),
+        );
+      },
+    });
+
+    await expect(client.getByIds([9])).resolves.toMatchObject([
+      { id: 9, name: "Сообщество" },
+    ]);
+    expect(calls).toBe(2);
+  });
+
   it("filters candidates and scores transparent reasons", () => {
     const item = candidate({
       id: 7,

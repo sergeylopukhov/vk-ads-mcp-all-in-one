@@ -32,6 +32,7 @@ export interface VkCommunityClientOptions {
   timeoutMs: number;
   fetchImplementation?: typeof fetch;
   waitForRequest?: () => Promise<void>;
+  refreshAfterAuthenticationFailure?: () => Promise<string>;
   now?: () => number;
   cacheTtlMs?: number;
   sleep?: (milliseconds: number) => Promise<void>;
@@ -143,8 +144,7 @@ export class VkCommunityClient {
     method: string,
     params: Record<string, string | number>,
   ): Promise<unknown> {
-    const token = this.options.tokenProvider().trim();
-    if (token === "") {
+    if (this.options.tokenProvider().trim() === "") {
       throw new Error(
         "Для инструментов сообществ задайте отдельный VK_API_TOKEN в auth.env.",
       );
@@ -160,11 +160,12 @@ export class VkCommunityClient {
     })) {
       url.searchParams.set(key, String(value));
     }
-    if (legacy) url.searchParams.set("access_token", token);
-
     let lastError: Error | undefined;
+    let authenticationRetried = false;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
+        const token = this.options.tokenProvider().trim();
+        if (legacy) url.searchParams.set("access_token", token);
         await this.options.waitForRequest?.();
         const response = await this.fetchImplementation(url, {
           headers: legacy
@@ -181,6 +182,16 @@ export class VkCommunityClient {
           return asObject(payload).response;
         }
         const code = Number(asObject(providerError).error_code);
+        if (
+          !legacy &&
+          !authenticationRetried &&
+          this.options.refreshAfterAuthenticationFailure !== undefined &&
+          (response.status === 401 || code === 5)
+        ) {
+          await this.options.refreshAfterAuthenticationFailure();
+          authenticationRetried = true;
+          continue;
+        }
         if (
           (response.status === 429 ||
             response.status >= 500 ||

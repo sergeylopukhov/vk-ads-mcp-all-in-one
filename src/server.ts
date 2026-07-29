@@ -125,11 +125,13 @@ import { CommunityResearchStore } from "./community/research-store.js";
 
 export const SERVER_INFO = {
   name: "vk-ads-mcp",
-  version: "0.1.0",
+  version: "0.3.0",
 } as const;
 
 export const CONNECTION_CHECK_TOOL = "vk_ads_connection_check";
 export const OAUTH_CODE_INFO_TOOL = "vk_ads_oauth_code_info";
+export const OAUTH_TOKEN_REFRESH_TOOL =
+  "vk_ads_oauth_token_refresh";
 export const OAUTH_CURRENT_TOKENS_DELETE_TOOL =
   "vk_ads_oauth_current_tokens_delete";
 export const AD_PLANS_LIST_TOOL = "vk_ads_ad_plans_list";
@@ -1285,7 +1287,6 @@ export function createVkAdsMcpServer(
     },
     async () => {
       await auditLog.ensureReady();
-      await vkAdsClient.getCurrentUser();
 
       try {
         await oauthOperations.deleteCurrentUserTokens();
@@ -1322,6 +1323,71 @@ export function createVkAdsMcpServer(
         structuredContent: {
           deleted: true as const,
           reauthenticated: true as const,
+          auditRecorded: true,
+        },
+      };
+    },
+  );
+
+  server.registerTool(
+    OAUTH_TOKEN_REFRESH_TOOL,
+    {
+      title: "Обновить токен VK Рекламы",
+      description:
+        "По явному запросу обновляет текущую пару access/refresh token, сохраняет её атомарно и проверяет новую авторизацию. Если refresh token уже отозван, используйте vk_ads_oauth_current_tokens_delete.",
+      inputSchema: {},
+      outputSchema: {
+        refreshed: z.literal(true),
+        verified: z.literal(true),
+        expiresAt: z.string().datetime(),
+        auditRecorded: z.boolean(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async () => {
+      if (oauthOperations.refreshCurrentTokens === undefined) {
+        throw new VkAdsApiError(
+          "OAuth token refresh is unavailable.",
+          "oauth_refresh_unavailable",
+        );
+      }
+
+      await auditLog.ensureReady();
+      let expiresAt: number;
+
+      try {
+        ({ expiresAt } =
+          await oauthOperations.refreshCurrentTokens());
+        await vkAdsClient.getCurrentUser();
+      } catch (error) {
+        await auditLog.record({
+          operation: "oauth.current_tokens.refresh",
+          outcome: "failed",
+        });
+        throw error;
+      }
+
+      await auditLog.record({
+        operation: "oauth.current_tokens.refresh",
+        outcome: "success",
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: "Токен обновлён; новая авторизация подтверждена.",
+          },
+        ],
+        structuredContent: {
+          refreshed: true as const,
+          verified: true as const,
+          expiresAt: new Date(expiresAt).toISOString(),
           auditRecorded: true,
         },
       };

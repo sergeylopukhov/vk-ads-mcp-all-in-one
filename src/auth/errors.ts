@@ -27,7 +27,11 @@ export class VkAdsTokenLimitError extends VkAdsAuthError {
 
 export class VkAdsTokenRefreshError extends VkAdsAuthError {
   constructor(code: string, httpStatus?: number) {
-    super("VK Ads rejected the token refresh request.", code, httpStatus);
+    super(
+      "VK Ads rejected the token refresh request. If the token pair was revoked on another device, call vk_ads_oauth_current_tokens_delete with explicit confirmation to revoke all current tokens and reauthenticate.",
+      code,
+      httpStatus,
+    );
   }
 }
 

@@ -67,6 +67,7 @@ import {
   OFFLINE_CONVERSION_STATISTICS_SUMMARY_GET_TOOL,
   OAUTH_CODE_INFO_TOOL,
   OAUTH_CURRENT_TOKENS_DELETE_TOOL,
+  OAUTH_TOKEN_REFRESH_TOOL,
   LEAD_FORMS_LIST_TOOL,
   LEAD_FORM_GET_TOOL,
   LEAD_FORM_LOGO_UPLOAD_TOOL,
@@ -89,6 +90,65 @@ import {
 } from "../src/server.js";
 
 describe("VK Ads MCP tools", () => {
+  it("resets revoked tokens without preflighting the rejected access token", async () => {
+    let resetCompleted = false;
+    const getCurrentUser = vi.fn(async () => {
+      if (!resetCompleted) {
+        throw new Error("revoked access token");
+      }
+      return { id: 123, types: ["advert"] };
+    });
+    const auditLog = {
+      ensureReady: vi.fn(async () => undefined),
+      record: vi.fn(async () => undefined),
+    };
+    const oauthOperations = {
+      inspectAuthorizationCode: vi.fn(),
+      refreshCurrentTokens: vi.fn(),
+      deleteCurrentUserTokens: vi.fn(async () => {
+        resetCompleted = true;
+      }),
+    };
+    const server = createVkAdsMcpServer(
+      { getCurrentUser } as never,
+      auditLog,
+      oauthOperations,
+    );
+    const client = new Client({
+      name: "vk-ads-reset-test",
+      version: "0.1.0",
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([
+        server.connect(serverTransport),
+        client.connect(clientTransport),
+      ]);
+      await expect(
+        client.callTool({
+          name: OAUTH_CURRENT_TOKENS_DELETE_TOOL,
+          arguments: {
+            confirmation: "DELETE_ALL_CURRENT_VK_ADS_TOKENS",
+          },
+        }),
+      ).resolves.toMatchObject({
+        structuredContent: {
+          deleted: true,
+          reauthenticated: true,
+        },
+      });
+      expect(getCurrentUser).toHaveBeenCalledTimes(1);
+      expect(
+        oauthOperations.deleteCurrentUserTokens,
+      ).toHaveBeenCalledTimes(1);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("returns a sanitized connection result", async () => {
     const getCurrentUser = vi.fn(async () => ({
       id: 123,
@@ -125,6 +185,9 @@ describe("VK Ads MCP tools", () => {
         userTypes: ["advert"],
       })),
       deleteCurrentUserTokens: vi.fn(async () => undefined),
+      refreshCurrentTokens: vi.fn(async () => ({
+        expiresAt: Date.parse("2026-07-30T12:00:00.000Z"),
+      })),
     };
     const server = createVkAdsMcpServer(
       {
@@ -176,6 +239,19 @@ describe("VK Ads MCP tools", () => {
         client.connect(clientTransport),
       ]);
 
+      await expect(
+        client.callTool({
+          name: OAUTH_TOKEN_REFRESH_TOOL,
+          arguments: {},
+        }),
+      ).resolves.toMatchObject({
+        structuredContent: {
+          refreshed: true,
+          verified: true,
+          expiresAt: "2026-07-30T12:00:00.000Z",
+          auditRecorded: true,
+        },
+      });
       await expect(
         client.callTool({
           name: CONNECTION_CHECK_TOOL,
@@ -232,6 +308,9 @@ describe("VK Ads MCP tools", () => {
       ).toHaveBeenCalledWith("one-time-code");
       expect(
         oauthOperations.deleteCurrentUserTokens,
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        oauthOperations.refreshCurrentTokens,
       ).toHaveBeenCalledTimes(1);
     } finally {
       await client.close();
