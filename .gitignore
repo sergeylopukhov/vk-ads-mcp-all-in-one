@@ -1,5 +1,8 @@
 # Internal development files
-.github/
+.github/*
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/release.yml
 tests/
 tsconfig.test.json
 scripts/
