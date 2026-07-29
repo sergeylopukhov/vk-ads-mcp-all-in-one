@@ -68,7 +68,7 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one
 </details>
 
 > [!NOTE]
-> Поддерживаются OpenCode, Codex CLI, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor. По умолчанию выбраны все найденные клиенты. Для продолжения нужен хотя бы один. Чтобы установить сервер без подключения к клиенту, используйте `--no-register`.
+> Поддерживаются OpenCode, OpenClaw, Hermes Agent, Codex CLI, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor. По умолчанию выбраны все найденные клиенты. Для продолжения нужен хотя бы один. Чтобы установить сервер без подключения к клиенту, используйте `--no-register`.
 
 <details>
 <summary><strong>Что устанавливается вместе с MCP</strong></summary>
@@ -155,7 +155,7 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --install-dir "/полны
 Для установки без интерактивного выбора:
 
 ```bash
-npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --clients codex,claude,cursor
+npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --clients codex,openclaw,hermes
 ```
 
 Параметр `--all-detected` подключает все найденные клиенты, а `--no-register` пропускает их настройку.
@@ -326,7 +326,7 @@ VK_COMMUNITY_RESEARCH_TTL_DAYS=30
 ## MCP-клиенты
 
 > [!NOTE]
-> Установщик находит OpenCode, Codex CLI, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor, затем предлагает выбрать нужные клиенты.
+> Установщик находит OpenCode, OpenClaw, Hermes Agent, Codex CLI, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor, затем предлагает выбрать нужные клиенты.
 
 <table width="100%">
   <thead>
@@ -341,7 +341,7 @@ VK_COMMUNITY_RESEARCH_TTL_DAYS=30
       <td><a href="docs/setup-codex.md">Установка и проверка подключения</a></td>
     </tr>
     <tr>
-      <td>OpenCode, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor</td>
+      <td>OpenCode, OpenClaw, Hermes Agent, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor</td>
       <td><a href="docs/setup-clients.md">Команды подключения и пути к конфигурациям</a></td>
     </tr>
   </tbody>
@@ -367,7 +367,7 @@ VK_COMMUNITY_RESEARCH_TTL_DAYS=30
     </tr>
     <tr>
       <td><a href="docs/setup-clients.md">Подключение MCP-клиентов</a></td>
-      <td>Настройка OpenCode, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor</td>
+      <td>Настройка OpenCode, OpenClaw, Hermes Agent, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor</td>
     </tr>
     <tr>
       <td><a href="docs/SECURITY.md">Политика безопасности</a></td>

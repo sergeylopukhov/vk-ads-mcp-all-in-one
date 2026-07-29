@@ -87,6 +87,18 @@ export const MCP_CLIENTS = [
     markers: [".cursor"],
     configurableWithoutCli: true,
   },
+  {
+    id: "openclaw",
+    label: "OpenClaw",
+    commands: ["openclaw"],
+    markers: [".openclaw"],
+  },
+  {
+    id: "hermes",
+    label: "Hermes Agent",
+    commands: ["hermes"],
+    markers: [".hermes"],
+  },
 ];
 const MCP_CLIENT_ALIASES = new Map([
   ["chatgpt", "codex"],
@@ -96,6 +108,9 @@ const MCP_CLIENT_ALIASES = new Map([
   ["qwen-code", "qwen"],
   ["kimi-code", "kimi"],
   ["open-code", "opencode"],
+  ["open-claw", "openclaw"],
+  ["openclow", "openclaw"],
+  ["hermes-agent", "hermes"],
 ]);
 
 let cachedGitHubToken;
@@ -320,11 +335,21 @@ export async function detectMcpClients({
     const commands = client.commands.filter((command) =>
       hasCommand(command),
     );
-    const markerPaths = client.markers.map((marker) =>
-      client.id === "kimi" && environment.KIMI_CODE_HOME
-        ? resolve(environment.KIMI_CODE_HOME)
-        : join(home, marker),
-    );
+    const markerPaths = client.markers.map((marker) => {
+      if (client.id === "kimi" && environment.KIMI_CODE_HOME) {
+        return resolve(environment.KIMI_CODE_HOME);
+      }
+      if (
+        client.id === "openclaw" &&
+        environment.OPENCLAW_STATE_DIR
+      ) {
+        return resolve(environment.OPENCLAW_STATE_DIR);
+      }
+      if (client.id === "hermes" && environment.HERMES_HOME) {
+        return resolve(environment.HERMES_HOME);
+      }
+      return join(home, marker);
+    });
 
     if (client.id === "opencode" && environment.XDG_CONFIG_HOME) {
       markerPaths.push(
@@ -1465,6 +1490,10 @@ export function clientSkillDirectory(
     environment.XDG_CONFIG_HOME || join(home, ".config"),
     "opencode",
   );
+  const openClawStateRoot =
+    environment.OPENCLAW_STATE_DIR || join(home, ".openclaw");
+  const hermesHome =
+    environment.HERMES_HOME || join(home, ".hermes");
   const roots = new Map([
     ["codex", join(home, ".agents", "skills")],
     ["claude", join(home, ".claude", "skills")],
@@ -1479,6 +1508,8 @@ export function clientSkillDirectory(
     ],
     ["opencode", join(openCodeConfigRoot, "skills")],
     ["cursor", join(home, ".cursor", "skills")],
+    ["openclaw", join(openClawStateRoot, "skills")],
+    ["hermes", join(hermesHome, "skills")],
   ]);
   const root = roots.get(clientId);
 
@@ -2035,6 +2066,63 @@ async function setupCursor(
   };
 }
 
+export function openClawMcpAddArgs(command, args) {
+  return [
+    "mcp",
+    "add",
+    "vk-ads",
+    "--command",
+    command,
+    ...args.flatMap((argument) => ["--arg", argument]),
+  ];
+}
+
+export function hermesMcpAddArgs(command, args) {
+  return [
+    "mcp",
+    "add",
+    "vk-ads",
+    "--command",
+    command,
+    "--args",
+    ...args,
+  ];
+}
+
+async function setupOpenClaw(installDirectory) {
+  if (!commandAvailable("openclaw")) {
+    throw new Error("OpenClaw CLI не найден.");
+  }
+
+  const serverPath = join(installDirectory, "dist", "index.js");
+  tryRemove("openclaw", ["mcp", "unset", "vk-ads"]);
+  run(
+    "openclaw",
+    openClawMcpAddArgs(process.execPath, [serverPath]),
+  );
+  run("openclaw", ["mcp", "doctor", "vk-ads", "--probe"]);
+  return {};
+}
+
+async function setupHermes(installDirectory) {
+  if (!commandAvailable("hermes")) {
+    throw new Error("Hermes Agent CLI не найден.");
+  }
+
+  const serverPath = join(installDirectory, "dist", "index.js");
+  tryRemove("hermes", ["mcp", "remove", "vk-ads"]);
+  run(
+    "hermes",
+    hermesMcpAddArgs(process.execPath, [serverPath]),
+    {
+      input: "y\n",
+      stdio: ["pipe", "inherit", "inherit"],
+    },
+  );
+  run("hermes", ["mcp", "test", "vk-ads"]);
+  return {};
+}
+
 async function setupMcpClients(clientIds, installDirectory) {
   const setupById = {
     codex: setupCodex,
@@ -2044,6 +2132,8 @@ async function setupMcpClients(clientIds, installDirectory) {
     opencode: setupOpenCode,
     kimi: setupKimi,
     cursor: setupCursor,
+    openclaw: setupOpenClaw,
+    hermes: setupHermes,
   };
   const results = [];
 
