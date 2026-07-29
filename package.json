@@ -1,6 +1,6 @@
 {
   "name": "vk-ads-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "MCP server for the VK Ads API",
   "license": "MIT",
@@ -26,6 +26,7 @@
   "packageManager": "npm@10.9.8",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js"

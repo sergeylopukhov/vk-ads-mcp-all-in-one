@@ -69,14 +69,17 @@ Before every community tool call, omit custom `scoring_rules.weights` unless
 they materially improve the search. If weights are present, the same payload
 must include attainable `min_score` and `review_min_score` values. Preserve
 qualifiers in multiword exclusions; never broaden "оптовый поставщик" to the
-generic term "поставщик". For a small foreground search, set the tool's
-result `limit` to the number of final candidates the user requested; use the
-separate search budget to inspect a wider candidate pool.
+generic term "поставщик". Research every community that passes the metadata
+filters. A requested result count is a reporting target, not an analysis cap;
+control provider request volume only through `search_budget`.
 After every community search, state the active recommendation and review
 thresholds. If the result contains fewer suitable candidates than requested,
 do not stop at "nothing found": explain the limiting stage and offer score
 adjustment, search expansion, query refinement, or an explicit filter change.
 Never lower thresholds or relax exclusions without the user's choice.
+When the user gives an exact recommendation threshold without a review
+threshold, use that exact `min_score` and keep a 15-point review band below it,
+bounded at zero.
 
 For analytical work, also read
 [references/reporting.md](references/reporting.md) and produce a detailed
