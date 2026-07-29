@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import {
+  formatProviderErrorSuffix,
+  normalizeProviderError,
+} from "../provider-error.js";
+import {
   VkAdsAuthError,
   VkAdsTokenLimitError,
   VkAdsTokenRefreshError,
@@ -54,32 +58,6 @@ interface VkAdsOAuthClientOptions {
   codeInfoEndpoint?: string;
   tokenDeleteEndpoint?: string;
   fetchImpl?: FetchLike;
-}
-
-function extractProviderErrorCode(payload: unknown): string | undefined {
-  if (typeof payload !== "object" || payload === null) {
-    return undefined;
-  }
-
-  const record = payload as Record<string, unknown>;
-
-  if (typeof record.error === "string") {
-    return record.error;
-  }
-
-  if (typeof record.code === "string") {
-    return record.code;
-  }
-
-  if (
-    typeof record.error === "object" &&
-    record.error !== null &&
-    typeof (record.error as Record<string, unknown>).code === "string"
-  ) {
-    return (record.error as Record<string, unknown>).code as string;
-  }
-
-  return undefined;
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -139,9 +117,13 @@ export class VkAdsOAuthClient {
     const payload = await readJson(response);
 
     if (!response.ok) {
+      const providerError = normalizeProviderError(
+        payload,
+        "oauth_request_failed",
+      );
       throw new VkAdsAuthError(
-        "VK Ads rejected the authorization-code inspection request.",
-        extractProviderErrorCode(payload) ?? "oauth_request_failed",
+        `VK Ads rejected the authorization-code inspection request.${formatProviderErrorSuffix(providerError)}`,
+        providerError.code,
         response.status,
       );
     }
@@ -199,9 +181,14 @@ export class VkAdsOAuthClient {
       payload = undefined;
     }
 
+    const providerError = normalizeProviderError(
+      payload,
+      "oauth_request_failed",
+    );
+
     throw new VkAdsAuthError(
-      "VK Ads rejected the token-deletion request.",
-      extractProviderErrorCode(payload) ?? "oauth_request_failed",
+      `VK Ads rejected the token-deletion request.${formatProviderErrorSuffix(providerError)}`,
+      providerError.code,
       response.status,
     );
   }
@@ -261,18 +248,26 @@ export class VkAdsOAuthClient {
     const payload = await readJson(response);
 
     if (!response.ok) {
-      const code = extractProviderErrorCode(payload) ?? "oauth_request_failed";
+      const providerError = normalizeProviderError(
+        payload,
+        "oauth_request_failed",
+      );
+      const { code } = providerError;
 
       if (response.status === 403 && code === "token_limit_exceeded") {
         throw new VkAdsTokenLimitError();
       }
 
       if (isRefresh) {
-        throw new VkAdsTokenRefreshError(code, response.status);
+        throw new VkAdsTokenRefreshError(
+          code,
+          response.status,
+          formatProviderErrorSuffix(providerError),
+        );
       }
 
       throw new VkAdsAuthError(
-        "VK Ads rejected the token creation request.",
+        `VK Ads rejected the token creation request.${formatProviderErrorSuffix(providerError)}`,
         code,
         response.status,
       );

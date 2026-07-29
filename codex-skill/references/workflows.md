@@ -36,6 +36,19 @@
 For mass actions, enumerate the resolved targets before execution. Do not widen
 phrases such as "these campaigns" beyond the visible selection.
 
+## Provider validation failures
+
+1. Read the normalized provider code, message, and field paths returned by MCP.
+2. Attribute the failure only to fields named by VK. Do not infer that a
+   creative, URL, group, package, or limit is faulty without matching provider
+   evidence.
+3. Do not repeat the same write or cycle through alternative creatives after a
+   rejected request.
+4. If VK omits field details, inspect the applicable package, banner pattern,
+   and reference data before proposing another payload.
+5. Retry only after changing the identified invalid field. For an earlier
+   ambiguous write, first reread provider state to exclude a duplicate.
+
 ## Community research
 
 1. Read `community-research.md`, collect the missing brief in chat or through

@@ -1,5 +1,10 @@
 import { randomBytes } from "node:crypto";
 
+import {
+  formatProviderErrorSuffix,
+  normalizeProviderError,
+} from "../provider-error.js";
+
 const RENEWAL_WINDOW_MS = 5 * 60_000;
 
 interface TokenResponse {
@@ -99,8 +104,12 @@ export class VkCommunityTokenManager {
       Array.isArray(payload) ||
       typeof (payload as TokenResponse).access_token !== "string"
     ) {
+      const providerError = normalizeProviderError(
+        payload,
+        `http_${response.status}`,
+      );
       throw new Error(
-        "VK ID не обновил токен сообществ. Выполните авторизацию заново.",
+        `VK ID не обновил токен сообществ.${formatProviderErrorSuffix(providerError)} Выполните авторизацию заново.`,
       );
     }
 

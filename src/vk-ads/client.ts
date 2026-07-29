@@ -3,6 +3,10 @@ import { z } from "zod";
 import { EnvFileVkAdsCredentialStore } from "../auth/env-store.js";
 import { VkAdsOAuthClient, type FetchLike } from "../auth/oauth-client.js";
 import { VkAdsTokenManager } from "../auth/token-manager.js";
+import {
+  formatProviderErrorSuffix,
+  normalizeProviderError,
+} from "../provider-error.js";
 import { VkAdsApiError } from "./errors.js";
 import {
   appendPagination,
@@ -1684,30 +1688,21 @@ interface VkAdsApiClientOptions {
   fetchImpl?: FetchLike;
 }
 
-function extractProviderErrorCode(payload: unknown): string | undefined {
-  if (typeof payload !== "object" || payload === null) {
-    return undefined;
-  }
+function createProviderApiError(
+  payload: unknown,
+  httpStatus: number,
+): VkAdsApiError {
+  const providerError = normalizeProviderError(
+    payload,
+    "api_request_failed",
+  );
 
-  const record = payload as Record<string, unknown>;
-
-  if (typeof record.error === "string") {
-    return record.error;
-  }
-
-  if (typeof record.code === "string") {
-    return record.code;
-  }
-
-  if (
-    typeof record.error === "object" &&
-    record.error !== null &&
-    typeof (record.error as Record<string, unknown>).code === "string"
-  ) {
-    return (record.error as Record<string, unknown>).code as string;
-  }
-
-  return undefined;
+  return new VkAdsApiError(
+    `VK Ads rejected the API request with code ${providerError.code}.${formatProviderErrorSuffix(providerError)}`,
+    providerError.code,
+    httpStatus,
+    providerError.fieldIssues,
+  );
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -4595,14 +4590,7 @@ export class VkAdsApiClient {
     const payload = await readJson(response);
 
     if (!response.ok) {
-      const code =
-        extractProviderErrorCode(payload) ?? "api_request_failed";
-
-      throw new VkAdsApiError(
-        `VK Ads rejected the API request with code ${code}.`,
-        code,
-        response.status,
-      );
+      throw createProviderApiError(payload, response.status);
     }
 
     const parsed = schema.safeParse(payload);
@@ -4641,14 +4629,7 @@ export class VkAdsApiClient {
 
     if (!response.ok) {
       const payload = await readJson(response);
-      const code =
-        extractProviderErrorCode(payload) ?? "api_request_failed";
-
-      throw new VkAdsApiError(
-        `VK Ads rejected the API request with code ${code}.`,
-        code,
-        response.status,
-      );
+      throw createProviderApiError(payload, response.status);
     }
 
     if (response.status !== 200 && response.status !== 204) {
@@ -4685,14 +4666,7 @@ export class VkAdsApiClient {
 
     if (!response.ok) {
       const payload = await readJson(response);
-      const code =
-        extractProviderErrorCode(payload) ?? "api_request_failed";
-
-      throw new VkAdsApiError(
-        `VK Ads rejected the API request with code ${code}.`,
-        code,
-        response.status,
-      );
+      throw createProviderApiError(payload, response.status);
     }
 
     const bytes = new Uint8Array(await response.arrayBuffer());
@@ -4741,14 +4715,7 @@ export class VkAdsApiClient {
     const payload = await readJson(response);
 
     if (!response.ok) {
-      const code =
-        extractProviderErrorCode(payload) ?? "api_request_failed";
-
-      throw new VkAdsApiError(
-        `VK Ads rejected the API request with code ${code}.`,
-        code,
-        response.status,
-      );
+      throw createProviderApiError(payload, response.status);
     }
 
     const parsed = schema.safeParse(payload);
@@ -4792,14 +4759,7 @@ export class VkAdsApiClient {
     const payload = await readJson(response);
 
     if (!response.ok) {
-      const code =
-        extractProviderErrorCode(payload) ?? "api_request_failed";
-
-      throw new VkAdsApiError(
-        `VK Ads rejected the API request with code ${code}.`,
-        code,
-        response.status,
-      );
+      throw createProviderApiError(payload, response.status);
     }
 
     const parsed = schema.safeParse(payload);
@@ -4840,14 +4800,7 @@ export class VkAdsApiClient {
 
     if (!response.ok) {
       const payload = await readJson(response);
-      const code =
-        extractProviderErrorCode(payload) ?? "api_request_failed";
-
-      throw new VkAdsApiError(
-        `VK Ads rejected the API request with code ${code}.`,
-        code,
-        response.status,
-      );
+      throw createProviderApiError(payload, response.status);
     }
 
     if (response.status !== 200 && response.status !== 204) {

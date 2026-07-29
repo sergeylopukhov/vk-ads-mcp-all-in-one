@@ -1,6 +1,11 @@
 export type CommunityType = "group" | "page" | "event";
 export type CommunitySearchSort = "relevance" | "members";
 
+import {
+  formatProviderErrorSuffix,
+  normalizeProviderError,
+} from "../provider-error.js";
+
 export interface VkCommunity {
   id: number;
   name: string;
@@ -181,7 +186,11 @@ export class VkCommunityClient {
         if (response.ok && providerError === undefined) {
           return asObject(payload).response;
         }
-        const code = Number(asObject(providerError).error_code);
+        const normalizedProviderError = normalizeProviderError(
+          payload,
+          `http_${response.status}`,
+        );
+        const code = Number(normalizedProviderError.code);
         if (
           !legacy &&
           !authenticationRetried &&
@@ -206,7 +215,7 @@ export class VkCommunityClient {
             Number.isInteger(code)
               ? `код ${code}`
               : `HTTP ${response.status}`
-          }).`,
+          }).${formatProviderErrorSuffix(normalizedProviderError)}`,
         );
       } catch (error) {
         lastError =
