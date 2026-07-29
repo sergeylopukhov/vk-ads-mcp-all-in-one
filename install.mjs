@@ -1123,16 +1123,43 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
   console.log(`Настройки сохранены: ${authPath}`);
 }
 
+export function clientSkillDirectory(
+  clientId,
+  home = homedir(),
+  environment = process.env,
+) {
+  const roots = new Map([
+    ["codex", join(home, ".agents", "skills")],
+    ["claude", join(home, ".claude", "skills")],
+    ["gemini", join(home, ".gemini", "skills")],
+    ["qwen", join(home, ".qwen", "skills")],
+    [
+      "kimi",
+      join(
+        environment.KIMI_CODE_HOME || join(home, ".kimi-code"),
+        "skills",
+      ),
+    ],
+    ["cursor", join(home, ".cursor", "skills")],
+  ]);
+  const root = roots.get(clientId);
+
+  if (!root) {
+    throw new Error(`Неизвестный каталог навыков: ${clientId}`);
+  }
+
+  return join(root, "vk-ads-mcp");
+}
+
 export function codexSkillDirectory(home = homedir()) {
+  return clientSkillDirectory("codex", home);
+}
+
+export function legacyCodexSkillDirectory(home = homedir()) {
   return join(home, ".codex", "skills", "vk-ads-mcp");
 }
 
-export async function installCodexSkill(
-  installDirectory,
-  home = homedir(),
-) {
-  const source = join(installDirectory, "codex-skill");
-  const destination = codexSkillDirectory(home);
+async function installSkillDirectory(source, destination) {
   const parent = dirname(destination);
   await mkdir(parent, { recursive: true });
   const temporaryParent = await mkdtemp(
@@ -1141,6 +1168,7 @@ export async function installCodexSkill(
   const staged = join(temporaryParent, "vk-ads-mcp");
   const backup = `${destination}.previous-${randomBytes(8).toString("hex")}`;
   let previousMoved = false;
+  let replacementInstalled = false;
 
   try {
     await cp(source, staged, { recursive: true });
@@ -1151,12 +1179,15 @@ export async function installCodexSkill(
     }
 
     await rename(staged, destination);
+    replacementInstalled = true;
 
     if (previousMoved) {
       await rm(backup, { recursive: true, force: true });
     }
   } catch (error) {
-    await rm(destination, { recursive: true, force: true });
+    if (replacementInstalled) {
+      await rm(destination, { recursive: true, force: true });
+    }
 
     if (previousMoved && (await pathExists(backup))) {
       await rename(backup, destination);
@@ -1168,6 +1199,56 @@ export async function installCodexSkill(
   }
 
   return join(destination, "SKILL.md");
+}
+
+async function migrateLegacyCodexSkill(home) {
+  const legacyDirectory = legacyCodexSkillDirectory(home);
+
+  if (!(await pathExists(legacyDirectory))) {
+    return undefined;
+  }
+
+  const backupDirectory = join(home, ".codex", "skill-backups");
+  const timestamp = new Date().toISOString().replaceAll(":", "-");
+  const backupPath = join(
+    backupDirectory,
+    `vk-ads-mcp-${timestamp}-${randomBytes(4).toString("hex")}`,
+  );
+  await mkdir(backupDirectory, { recursive: true });
+  await rename(legacyDirectory, backupPath);
+  return backupPath;
+}
+
+export async function installClientSkill(
+  installDirectory,
+  clientId,
+  home = homedir(),
+  environment = process.env,
+) {
+  const source = join(installDirectory, "codex-skill");
+  const destination = clientSkillDirectory(
+    clientId,
+    home,
+    environment,
+  );
+  const skillPath = await installSkillDirectory(source, destination);
+  const migratedSkillBackup = clientId === "codex"
+    ? await migrateLegacyCodexSkill(home)
+    : undefined;
+
+  return { skillPath, migratedSkillBackup };
+}
+
+export async function installCodexSkill(
+  installDirectory,
+  home = homedir(),
+) {
+  const result = await installClientSkill(
+    installDirectory,
+    "codex",
+    home,
+  );
+  return result.skillPath;
 }
 
 export function mergeMcpServerConfig(
@@ -1330,7 +1411,6 @@ async function setupCodex(installDirectory) {
     throw new Error("Codex CLI не найден.");
   }
 
-  const skillPath = await installCodexSkill(installDirectory);
   tryRemove("codex", ["mcp", "remove", "vk-ads"]);
   run("codex", [
     "mcp",
@@ -1342,7 +1422,7 @@ async function setupCodex(installDirectory) {
   ]);
   run("codex", ["mcp", "get", "vk-ads"]);
 
-  return { detail: `навык: ${skillPath}` };
+  return {};
 }
 
 async function setupClaude(installDirectory) {
@@ -1475,11 +1555,22 @@ async function setupMcpClients(clientIds, installDirectory) {
     const client = MCP_CLIENTS.find((item) => item.id === id);
     try {
       const result = await setupById[id](installDirectory);
+      const skill = await installClientSkill(
+        installDirectory,
+        id,
+      );
+      const details = [
+        result.detail,
+        `навык: ${skill.skillPath}`,
+        skill.migratedSkillBackup
+          ? `старая копия Codex сохранена: ${skill.migratedSkillBackup}`
+          : undefined,
+      ].filter(Boolean);
       results.push({
         id,
         label: client.label,
         ok: true,
-        ...result,
+        detail: details.join(", "),
       });
     } catch (error) {
       results.push({

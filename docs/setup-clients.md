@@ -1,55 +1,225 @@
 # Подключение к MCP-клиентам
 
-Сначала установите сервер по [основной инструкции](../README.md#быстрый-старт). Установщик найдёт поддерживаемые клиенты и предложит выбрать, куда подключить сервер.
+> [!TIP]
+> Рекомендуемый способ — запустить единый установщик. Он найдёт поддерживаемые MCP-клиенты, подключит сервер `vk-ads`, проверит регистрацию и установит навык `vk-ads-mcp` для каждого выбранного клиента.
 
-Поддерживаются:
+## Автоматическая настройка
 
-- Codex CLI;
-- Claude Code;
-- Gemini CLI;
-- Qwen Code;
-- Kimi Code CLI;
-- Cursor.
+### 1. Запустите установщик
 
-Для выбора без интерактивного вопроса передайте идентификаторы через запятую:
+Установите сервер по [основной инструкции](../README.md#быстрый-старт) или сразу выполните:
+
+```bash
+npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one
+```
+
+### 2. Выберите клиенты
+
+В интерактивном режиме установщик покажет найденные клиенты. Нажмите Enter, чтобы подключить все найденные, укажите номера нужных клиентов или введите `0`, чтобы пропустить настройку.
+
+<table width="100%">
+  <thead>
+    <tr>
+      <th width="30%">Параметр</th>
+      <th width="70%">Результат</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>--clients codex,claude,cursor</code></td>
+      <td>Подключает только перечисленные клиенты</td>
+    </tr>
+    <tr>
+      <td><code>--all-detected</code></td>
+      <td>Подключает все найденные клиенты без вопроса</td>
+    </tr>
+    <tr>
+      <td><code>--no-register</code></td>
+      <td>Устанавливает сервер, но не меняет настройки MCP-клиентов и не устанавливает навык</td>
+    </tr>
+  </tbody>
+</table>
+
+Пример настройки всех поддерживаемых клиентов:
 
 ```bash
 npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --clients codex,claude,gemini,qwen,kimi,cursor
 ```
 
-`--all-detected` подключает все найденные клиенты. `--no-register` устанавливает только сервер. Если автоматическая настройка не подходит, используйте команды ниже. Полный каталог установки напечатает установщик.
+> [!NOTE]
+> Параметр `--no-register` нельзя использовать вместе с `--clients` или `--all-detected`.
 
-## Codex
+<details>
+<summary><strong>Что настраивается для каждого клиента</strong></summary>
 
-Выберите Codex во время установки. После завершения перезапустите Codex.
+<table width="100%">
+  <thead>
+    <tr>
+      <th width="22%">Клиент</th>
+      <th width="48%">Подключение MCP</th>
+      <th width="30%">Каталог навыка</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Codex CLI</td>
+      <td>Пользовательское подключение <code>vk-ads</code> через Codex CLI</td>
+      <td><code>~/.agents/skills/vk-ads-mcp/</code></td>
+    </tr>
+    <tr>
+      <td>Claude Code</td>
+      <td>Пользовательское подключение <code>vk-ads</code> через Claude Code CLI</td>
+      <td><code>~/.claude/skills/vk-ads-mcp/</code></td>
+    </tr>
+    <tr>
+      <td>Gemini CLI</td>
+      <td>Пользовательское подключение <code>vk-ads</code> через Gemini CLI</td>
+      <td><code>~/.gemini/skills/vk-ads-mcp/</code></td>
+    </tr>
+    <tr>
+      <td>Qwen Code</td>
+      <td>Пользовательское подключение <code>vk-ads</code> через Qwen Code CLI</td>
+      <td><code>~/.qwen/skills/vk-ads-mcp/</code></td>
+    </tr>
+    <tr>
+      <td>Kimi Code CLI</td>
+      <td><code>$KIMI_CODE_HOME/mcp.json</code> или <code>~/.kimi-code/mcp.json</code></td>
+      <td><code>$KIMI_CODE_HOME/skills/vk-ads-mcp/</code> или <code>~/.kimi-code/skills/vk-ads-mcp/</code></td>
+    </tr>
+    <tr>
+      <td>Cursor</td>
+      <td><code>~/.cursor/mcp.json</code></td>
+      <td><code>~/.cursor/skills/vk-ads-mcp/</code></td>
+    </tr>
+  </tbody>
+</table>
 
-## Claude Code
+При обновлении заменяется только каталог `vk-ads-mcp`; остальные навыки не изменяются. Старую копию Codex из `~/.codex/skills/vk-ads-mcp/` установщик переносит в `~/.codex/skill-backups/`. Перед изменением существующей конфигурации Kimi или Cursor установщик создаёт резервную копию с датой и временем в имени.
 
-```bash
-claude mcp add --transport stdio --scope user vk-ads -- node "/полный/путь/к/VK Ads MCP/dist/index.js"
+</details>
+
+### 3. Перезапустите клиент
+
+После установки полностью перезапустите выбранные клиенты и отправьте:
+
+```text
+Проверь подключение к VK Рекламе и покажи доступные кампании. Ничего не меняй.
 ```
 
-## Gemini CLI
+Установщик проверяет регистрацию сразу после подключения. При необходимости её можно проверить вручную:
+
+<table width="100%">
+  <thead>
+    <tr>
+      <th width="30%">Клиент</th>
+      <th width="70%">Проверка</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Codex CLI</td>
+      <td><code>codex mcp get vk-ads</code></td>
+    </tr>
+    <tr>
+      <td>Claude Code</td>
+      <td><code>claude mcp get vk-ads</code></td>
+    </tr>
+    <tr>
+      <td>Gemini CLI</td>
+      <td><code>gemini mcp list</code></td>
+    </tr>
+    <tr>
+      <td>Qwen Code</td>
+      <td><code>qwen mcp list</code></td>
+    </tr>
+    <tr>
+      <td>Kimi Code CLI</td>
+      <td>Команда <code>/mcp</code> в Kimi Code CLI</td>
+    </tr>
+    <tr>
+      <td>Cursor</td>
+      <td>Раздел MCP в настройках Cursor</td>
+    </tr>
+  </tbody>
+</table>
+
+## Ручная настройка
+
+> [!NOTE]
+> Используйте ручную настройку, только если автоматическое подключение не подходит. Команды должны содержать абсолютные пути к Node.js и `dist/index.js`: это позволяет клиенту запускать сервер независимо от переменной `PATH`.
+
+Узнайте абсолютный путь к Node.js:
 
 ```bash
-gemini mcp add --scope user vk-ads node "/полный/путь/к/VK Ads MCP/dist/index.js"
+node -p "process.execPath"
 ```
 
-## Qwen Code
+Полный каталог VK Ads MCP выводится в конце установки. В примерах ниже замените `/полный/путь/к/node` и `/полный/путь/к/VK Ads MCP` своими значениями.
+
+Чтобы добавить навык вручную, скопируйте весь каталог `codex-skill` из каталога установки сервера в каталог нужного клиента из таблицы выше и переименуйте его в `vk-ads-mcp`.
+
+<details>
+<summary><strong>Codex CLI</strong></summary>
 
 ```bash
-qwen mcp add --scope user vk-ads node "/полный/путь/к/VK Ads MCP/dist/index.js"
+codex mcp remove vk-ads
+codex mcp add vk-ads -- "/полный/путь/к/node" "/полный/путь/к/VK Ads MCP/dist/index.js"
+codex mcp get vk-ads
 ```
 
-## Kimi Code CLI
+Подробности: [настройка Codex](setup-codex.md) и [официальная документация Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
-Добавьте в `~/.kimi-code/mcp.json`:
+</details>
+
+<details>
+<summary><strong>Claude Code</strong></summary>
+
+```bash
+claude mcp remove --scope user vk-ads
+claude mcp add --scope user vk-ads -- "/полный/путь/к/node" "/полный/путь/к/VK Ads MCP/dist/index.js"
+claude mcp get vk-ads
+```
+
+[Официальная документация Claude Code MCP](https://code.claude.com/docs/en/mcp)
+
+</details>
+
+<details>
+<summary><strong>Gemini CLI</strong></summary>
+
+```bash
+gemini mcp remove --scope user vk-ads
+gemini mcp add --scope user vk-ads "/полный/путь/к/node" "/полный/путь/к/VK Ads MCP/dist/index.js"
+gemini mcp list
+```
+
+[Официальная документация Gemini CLI](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/cli-reference.md#manage-mcp-servers)
+
+</details>
+
+<details>
+<summary><strong>Qwen Code</strong></summary>
+
+```bash
+qwen mcp remove --scope user vk-ads
+qwen mcp add --scope user vk-ads "/полный/путь/к/node" "/полный/путь/к/VK Ads MCP/dist/index.js"
+qwen mcp list
+```
+
+[Официальная документация Qwen Code MCP](https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/)
+
+</details>
+
+<details>
+<summary><strong>Kimi Code CLI</strong></summary>
+
+Добавьте сервер в `$KIMI_CODE_HOME/mcp.json` или `~/.kimi-code/mcp.json`, сохранив другие записи в `mcpServers`:
 
 ```json
 {
   "mcpServers": {
     "vk-ads": {
-      "command": "node",
+      "command": "/полный/путь/к/node",
       "args": ["/полный/путь/к/VK Ads MCP/dist/index.js"],
       "enabled": true
     }
@@ -57,34 +227,46 @@ qwen mcp add --scope user vk-ads node "/полный/путь/к/VK Ads MCP/dist
 }
 ```
 
-## Cursor
+После перезапуска проверьте подключение командой `/mcp`.
 
-Добавьте в `~/.cursor/mcp.json`:
+[Официальная документация Kimi Code MCP](https://moonshotai.github.io/kimi-code/en/customization/mcp.html)
+
+</details>
+
+<details>
+<summary><strong>Cursor</strong></summary>
+
+Добавьте сервер в `~/.cursor/mcp.json`, сохранив другие записи в `mcpServers`:
 
 ```json
 {
   "mcpServers": {
     "vk-ads": {
-      "command": "node",
+      "command": "/полный/путь/к/node",
       "args": ["/полный/путь/к/VK Ads MCP/dist/index.js"]
     }
   }
 }
 ```
 
-Если конфигурация Kimi или Cursor уже существует, установщик создаёт резервную копию с датой и временем в имени.
+После перезапуска откройте раздел MCP в настройках Cursor.
 
-## Универсальная конфигурация
+[Официальная документация Cursor MCP](https://docs.cursor.com/context/model-context-protocol)
 
-Клиент должен запускать один локальный процесс:
+</details>
+
+<details>
+<summary><strong>Другой MCP-клиент</strong></summary>
+
+Клиент должен запускать один локальный процесс по протоколу `stdio`:
 
 ```json
 {
-  "command": "node",
+  "command": "/полный/путь/к/node",
   "args": ["/полный/путь/к/VK Ads MCP/dist/index.js"]
 }
 ```
 
-Переменные окружения в конфигурации MCP не нужны: сервер читает локальный `auth.env` рядом с установкой.
+Переменные окружения в конфигурации MCP не нужны. Сервер читает локальный `auth.env` из каталога установки.
 
-После подключения перезапустите клиент и вызовите `vk_ads_connection_check`.
+</details>
