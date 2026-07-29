@@ -53,6 +53,7 @@ import {
   type VkAdsBannerRemoderationResult,
   type VkAdsCurrentUser,
   type VkAdsReferenceCollectionResource,
+  type VkAdsReferenceCollectionInput,
   type VkAdsReferenceCollectionResult,
   type VkAdsReferenceMapResource,
   type VkAdsContentUploadResult,
@@ -330,7 +331,7 @@ type VkAdsMcpClient = {
   getCurrentUser(): Promise<VkAdsCurrentUser>;
   listReferenceData?(
     resource: VkAdsReferenceCollectionResource,
-    input?: { limit?: number; offset?: number },
+    input?: VkAdsReferenceCollectionInput,
   ): Promise<VkAdsReferenceCollectionResult>;
   getReferenceMap?(
     resource: VkAdsReferenceMapResource,
@@ -9973,7 +9974,7 @@ export function createVkAdsMcpServer(
     {
       title: "Получить рекламные справочники VK Рекламы",
       description:
-        "Возвращает страницу полей баннера, шаблонов баннера, пакетов, площадок пакетов или деревьев площадок.",
+        "Возвращает страницу полей баннера, шаблонов баннера, пакетов, площадок пакетов или деревьев площадок. Для resource=packages параметр ids адресно возвращает пакет вместе с options, даже если VK не включает его в общий список.",
       inputSchema: {
         resource: z.enum([
           "banner_fields",
@@ -9982,6 +9983,11 @@ export function createVkAdsMcpServer(
           "packages_pads",
           "pads_trees",
         ]),
+        ids: z
+          .array(z.number().int().positive())
+          .min(1)
+          .max(200)
+          .optional(),
         ...referencePaginationInputSchema,
       },
       outputSchema: referenceCollectionOutputSchema,
@@ -9992,7 +9998,7 @@ export function createVkAdsMcpServer(
         openWorldHint: true,
       },
     },
-    async ({ resource, limit, offset }) => {
+    async ({ resource, ids, limit, offset }) => {
       if (vkAdsClient.listReferenceData === undefined) {
         throw new VkAdsApiError(
           "Reference-data client is unavailable.",
@@ -10001,6 +10007,7 @@ export function createVkAdsMcpServer(
       }
 
       const result = await vkAdsClient.listReferenceData(resource, {
+        ...(ids === undefined ? {} : { ids }),
         limit,
         offset,
       });

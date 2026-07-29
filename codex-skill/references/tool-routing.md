@@ -93,7 +93,10 @@ by MCP before filling provider-specific fields.
 
 ## Supporting data
 
-- Ad references: `vk_ads_ad_reference_list`
+- Ad references: `vk_ads_ad_reference_list`. When a group has a `packageId`,
+  request that package directly with `resource=packages` and
+  `ids=[packageId]`. Do not rely on the unfiltered package list: VK can omit
+  packages that remain assigned to existing groups.
 - Mobile references: `vk_ads_mobile_reference_list`
 - Regions: `vk_ads_regions_list`
 - Targeting tree: `vk_ads_targetings_tree_get`
