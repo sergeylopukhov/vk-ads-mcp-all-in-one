@@ -30,19 +30,32 @@ test("default recommendation and review thresholds are 45 and 30", () => {
   assert.equal(DEFAULT_REVIEW_SCORE, 30);
 });
 
-test("one-call research analyzes every metadata-qualified community", async () => {
+test("one-call research analyzes every provider candidate by default", async () => {
   const communities: VkCommunity[] = Array.from(
     { length: 143 },
-    (_, index) => ({
-      id: index + 1,
-      name: `Церковное пение ${index + 1}`,
-      description: "Сообщество о церковном пении",
-      screen_name: `church_music_${index + 1}`,
-      type: "group",
-      members_count: 10_000 - index,
-      is_closed: 0,
-    }),
+    (_, index) =>
+      index === 0
+        ? {
+            id: 1,
+            name: "Военный ансамбль",
+            description: "Музыкальное сообщество",
+            screen_name: "military_music",
+            type: "group",
+            members_count: 10_000,
+            is_closed: 0,
+          }
+        : {
+            id: index + 1,
+            name: `Церковное пение ${index + 1}`,
+            description: "Сообщество о церковном пении",
+            screen_name: `church_music_${index + 1}`,
+            type: "group",
+            members_count: 10_000 - index,
+            is_closed: 0,
+          },
   );
+  const analyzedIds = new Set<number>();
+  const observedCountryIds = new Set<number | undefined>();
   const registrations = new Map<string, unknown>();
   const server = {
     registerTool(name: string, _definition: unknown, handler: unknown) {
@@ -54,7 +67,9 @@ test("one-call research analyzes every metadata-qualified community", async () =
       _query: string,
       offset: number,
       count: number,
+      countryId?: number,
     ) {
+      observedCountryIds.add(countryId);
       return {
         count: communities.length,
         offset,
@@ -65,7 +80,8 @@ test("one-call research analyzes every metadata-qualified community", async () =
       const selected = new Set(ids);
       return communities.filter((item) => selected.has(item.id));
     },
-    async wall() {
+    async wall(id: number) {
+      analyzedIds.add(id);
       return [];
     },
   } as unknown as VkCommunityClient;
@@ -83,10 +99,34 @@ test("one-call research analyzes every metadata-qualified community", async () =
   }>;
   const input = z.object(researchInputSchema).parse({
     keywords: ["церковное пение"],
+    exclude_terms: ["военн"],
     limit: 100,
   });
 
   const response = await handler(input);
 
   assert.equal(response.structuredContent.items.length, 143);
+  assert.equal(analyzedIds.size, 143);
+  assert.deepEqual([...observedCountryIds], [undefined]);
+  const softExcluded = response.structuredContent.items.find(
+    (item) =>
+      typeof item === "object" &&
+      item !== null &&
+      "id" in item &&
+      item.id === 1,
+  ) as { risk_flags: string[] } | undefined;
+  assert.ok(softExcluded);
+  assert.ok(softExcluded.risk_flags.includes("exclude_term_in_metadata"));
+
+  analyzedIds.clear();
+  const hardResponse = await handler(
+    z.object(researchInputSchema).parse({
+      keywords: ["церковное пение"],
+      exclude_terms: ["военн"],
+      exclude_policy: "hard",
+    }),
+  );
+
+  assert.equal(hardResponse.structuredContent.items.length, 142);
+  assert.equal(analyzedIds.size, 142);
 });

@@ -115,6 +115,12 @@ descriptions, and posts; do not rely only on full phrases. All values in
 `weights`, including fields whose names end in `_penalty`, are nonnegative
 magnitudes. The server applies the subtraction.
 
+Represent important word forms and real synonyms as separate positive scoring
+terms. A conservative shared stem may be used when it is at least four letters
+and has one clear meaning in the task. These variants affect score only; they
+must never become a hidden eligibility gate or an automatically hardened
+minus-term.
+
 Prefer the server's default scoring scale unless custom weights are needed. If
 you customize weights, add the positive score caps and set explicit
 `min_score` and `review_min_score` values that are attainable on that scale;
@@ -133,10 +139,10 @@ categories. With the default `exclude_match_mode=word_prefix`, a stem can match
 normal word forms without matching arbitrary text inside another word. Use
 `substring` only when the broader behavior is intentional.
 
-Metadata exclusions are hard filters. The same exclusions found only in public
-posts are soft penalties and remain visible in reasons and risk flags. Avoid an
-exclusion that could remove a valid audience merely because one word is
-ambiguous.
+Metadata exclusions are soft by default. They add a risk flag and score penalty,
+but the community still receives post analysis and remains in the result. Use
+`exclude_policy=hard` only when the user explicitly asks to remove every
+metadata match. Exclusions found in public posts also remain soft.
 
 Never replace a requested exclusion with a broader everyday synonym. Each
 minus-term must be at least as specific as the unwanted meaning. For example,
@@ -149,6 +155,10 @@ justify excluding every community that contains the general word `поставщ
 The default search is broad: inspect up to ten pages and 1,000 provider
 results for every keyword, even if the requested final count is reached
 earlier. Merge all keyword results and deduplicate them before analysis.
+Do not infer geography from the user's language, website, timezone, or current
+location. Omit `country_id` and `city_id` by default so the search is worldwide.
+Set either field only when the user explicitly requests or confirms that
+geography.
 
 Reduce `search_budget` only when the user asks for a quick or inexpensive
 validation:
@@ -161,9 +171,11 @@ Use the default `search_sort=members` so discovery starts with the largest
 communities. Switch to `search_sort=relevance` only when the user explicitly
 prefers provider relevance over audience size. Preserve descending
 `members_count` order in discovery; final researched lists are still ranked by
-advertising score. Analyze every community that survives the metadata filters.
-A requested final count controls reporting, not how many candidates receive
-post analysis and scoring.
+advertising score. Analyze every community returned by VK that survives only
+explicit type and member-count bounds. Positive terms and synonyms affect
+scoring, but their absence from the name or description never removes a
+provider result. A requested final count controls reporting, not how many
+candidates receive post analysis and scoring.
 
 Do not present provider-reported totals as the number of communities actually
 inspected. Use `source_matches` for unique observed IDs and
@@ -202,7 +214,11 @@ search found too little. After every run, report:
 - requested and returned candidate counts;
 - counts by `recommended`, `review`, and `rejected`;
 - the active `min_score` and `review_min_score`;
-- whether discovery, hard filters, or scoring caused the shortage.
+- counts for structural exclusions, soft metadata flags, hard metadata
+  exclusions, missing metadata, and candidates without a positive metadata
+  match;
+- whether discovery, explicit structural bounds, explicit hard exclusions, or
+  scoring caused the shortage.
 
 If the current tool response does not prove the limiting stage, say that it is
 unknown. Use a saved background run or a separate discovery step before
