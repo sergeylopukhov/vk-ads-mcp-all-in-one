@@ -10,7 +10,7 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-stdio-1f6feb" alt="MCP stdio"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b8f60" alt="Лицензия MIT"></a>
-  <img src="https://img.shields.io/badge/version-0.0.5-6b7280" alt="Версия 0.0.5">
+  <img src="https://img.shields.io/badge/version-0.6.0-6b7280" alt="Версия 0.6.0">
 </p>
 
 Сервер подключает MCP-клиент к VK Рекламе: читает кампании, группы и объявления, получает статистику, работает с аудиториями, креативами, лид-формами, опросами, подписками, прайс-листами и справочниками. Отдельный блок Core VK API ищет и анализирует публичные сообщества.
@@ -104,11 +104,11 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one
   <tbody>
     <tr>
       <td>Обновить</td>
-      <td>Сервер и навыки выбранных клиентов будут обновлены. <code>auth.env</code>, токены и локальный аудит сохранятся</td>
+      <td>Сервер и навыки ранее выбранных клиентов будут обновлены без повторного выбора. <code>auth.env</code>, токены и локальный аудит сохранятся</td>
     </tr>
     <tr>
       <td>Установить заново</td>
-      <td>Установщик повторно запросит <code>client_id</code> и <code>client_secret</code>, а сохранённые токены будут удалены</td>
+      <td>Установщик снова предложит выбрать клиенты, запросит <code>client_id</code> и <code>client_secret</code>, а сохранённые токены будут удалены</td>
     </tr>
   </tbody>
 </table>

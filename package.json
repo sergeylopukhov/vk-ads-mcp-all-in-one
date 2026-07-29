@@ -1,6 +1,6 @@
 {
   "name": "vk-ads-mcp",
-  "version": "0.0.5",
+  "version": "0.6.0",
   "private": true,
   "description": "MCP server for the VK Ads API",
   "license": "MIT",

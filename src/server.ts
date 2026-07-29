@@ -125,7 +125,7 @@ import { CommunityResearchStore } from "./community/research-store.js";
 
 export const SERVER_INFO = {
   name: "vk-ads-mcp",
-  version: "0.3.0",
+  version: "0.6.0",
 } as const;
 
 export const CONNECTION_CHECK_TOOL = "vk_ads_connection_check";
