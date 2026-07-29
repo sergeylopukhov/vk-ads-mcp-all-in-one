@@ -16,6 +16,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
+import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 
 const REPOSITORY = "sergeylopukhov/vk-ads-mcp-all-in-one";
@@ -352,7 +353,7 @@ export function parseClientSelection(
   }
 
   if (["0", "none", "нет"].includes(value)) {
-    return [];
+    throw new Error("Выберите хотя бы один MCP-клиент.");
   }
 
   const selected = [];
@@ -373,6 +374,10 @@ export function parseClientSelection(
     if (!selected.includes(id)) {
       selected.push(id);
     }
+  }
+
+  if (selected.length === 0) {
+    throw new Error("Выберите хотя бы один MCP-клиент.");
   }
 
   return selected;
@@ -599,6 +604,292 @@ async function installedVersion(installDirectory) {
   }
 }
 
+function supportsInteractiveMenu(
+  input = process.stdin,
+  output = process.stdout,
+) {
+  return Boolean(
+    input.isTTY &&
+      output.isTTY &&
+      typeof input.setRawMode === "function",
+  );
+}
+
+async function runInteractiveMenu(
+  render,
+  handleKey,
+  input = process.stdin,
+  output = process.stdout,
+) {
+  const wasRaw = input.isRaw === true;
+  const wasPaused =
+    typeof input.isPaused === "function" ? input.isPaused() : true;
+
+  emitKeypressEvents(input);
+  input.setRawMode(true);
+  input.resume();
+
+  try {
+    render(output);
+    return await new Promise((resolvePromise, rejectPromise) => {
+      const finish = (error, value) => {
+        input.off("keypress", onKeypress);
+        input.off("error", onError);
+        input.off("end", onEnd);
+
+        if (error) {
+          rejectPromise(error);
+        } else {
+          resolvePromise(value);
+        }
+      };
+      const onError = (error) => finish(error);
+      const onEnd = () =>
+        finish(
+          new Error(
+            "Выбор прерван. Повторите установку в обычном терминале.",
+          ),
+        );
+      const onKeypress = (character, key = {}) => {
+        if (key.ctrl && key.name === "c") {
+          finish(new Error("Установка отменена."));
+          return;
+        }
+
+        const result = handleKey(character, key, output);
+        if (result?.done) {
+          finish(undefined, result.value);
+        }
+      };
+
+      input.on("keypress", onKeypress);
+      input.once("error", onError);
+      input.once("end", onEnd);
+    });
+  } finally {
+    input.setRawMode(wasRaw);
+    if (wasPaused) {
+      input.pause();
+    }
+  }
+}
+
+function createMenuRenderer(linesFactory) {
+  let renderedLineCount = 0;
+
+  return (output) => {
+    const lines = linesFactory();
+    if (renderedLineCount > 0) {
+      output.write(`\u001b[${renderedLineCount}A\r\u001b[0J`);
+    }
+    output.write(`${lines.join("\n")}\n`);
+    renderedLineCount = lines.length;
+  };
+}
+
+export async function promptSingleChoice(
+  question,
+  choices,
+  defaultValue,
+  {
+    input = process.stdin,
+    output = process.stdout,
+  } = {},
+) {
+  if (choices.length === 0) {
+    throw new Error("Для выбора нужен хотя бы один вариант.");
+  }
+
+  let selectedIndex = Math.max(
+    0,
+    choices.findIndex((choice) => choice.value === defaultValue),
+  );
+
+  if (!supportsInteractiveMenu(input, output)) {
+    const readline = createInterface({ input, output });
+    try {
+      output.write(`${question}\n`);
+      choices.forEach((choice, index) => {
+        output.write(`  ${index + 1}. ${choice.label}\n`);
+      });
+      while (true) {
+        const answer = await ask(
+          readline,
+          "Выберите вариант",
+          String(selectedIndex + 1),
+        );
+        const index = Number(answer) - 1;
+        if (Number.isInteger(index) && choices[index]) {
+          return choices[index].value;
+        }
+        output.write(`Введите число от 1 до ${choices.length}.\n`);
+      }
+    } finally {
+      readline.close();
+    }
+  }
+
+  const render = createMenuRenderer(() => [
+    question,
+    "↑/↓ — выбрать, Enter — продолжить",
+    ...choices.map(
+      (choice, index) =>
+        `${index === selectedIndex ? "›" : " "} ${
+          index === selectedIndex ? "●" : "○"
+        } ${choice.label}`,
+    ),
+  ]);
+
+  return runInteractiveMenu(
+    render,
+    (_character, key, outputStream) => {
+      if (key.name === "up") {
+        selectedIndex =
+          (selectedIndex - 1 + choices.length) % choices.length;
+        render(outputStream);
+      } else if (key.name === "down") {
+        selectedIndex = (selectedIndex + 1) % choices.length;
+        render(outputStream);
+      } else if (key.name === "return" || key.name === "enter") {
+        return { done: true, value: choices[selectedIndex].value };
+      }
+      return undefined;
+    },
+    input,
+    output,
+  );
+}
+
+export async function promptMultipleChoices(
+  question,
+  choices,
+  {
+    minSelected = 1,
+    input = process.stdin,
+    output = process.stdout,
+  } = {},
+) {
+  if (choices.length < minSelected) {
+    throw new Error(
+      `Нужно не меньше ${minSelected} доступных вариантов.`,
+    );
+  }
+
+  const requirement =
+    minSelected === 1
+      ? "Нужно выбрать хотя бы один вариант"
+      : `Нужно выбрать не меньше ${minSelected} вариантов`;
+  let cursorIndex = 0;
+  const selectedValues = new Set(
+    choices.filter((choice) => choice.selected).map((choice) => choice.value),
+  );
+  let status = "";
+
+  if (selectedValues.size < minSelected) {
+    choices.slice(0, minSelected).forEach((choice) => {
+      selectedValues.add(choice.value);
+    });
+  }
+
+  if (!supportsInteractiveMenu(input, output)) {
+    const readline = createInterface({ input, output });
+    try {
+      output.write(`${question}\n`);
+      choices.forEach((choice, index) => {
+        output.write(`  ${index + 1}. ${choice.label}\n`);
+      });
+      while (true) {
+        const answer = await ask(
+          readline,
+          "Укажите номера через запятую",
+          choices
+            .map((choice, index) =>
+              selectedValues.has(choice.value) ? index + 1 : undefined,
+            )
+            .filter(Boolean)
+            .join(","),
+        );
+        const indexes = [
+          ...new Set(
+            answer
+              .split(/[\s,;]+/u)
+              .filter(Boolean)
+              .map((token) => Number(token) - 1),
+          ),
+        ];
+        if (
+          indexes.length >= minSelected &&
+          indexes.every(
+            (index) => Number.isInteger(index) && choices[index],
+          )
+        ) {
+          return indexes.map((index) => choices[index].value);
+        }
+        output.write(`${requirement} из списка.\n`);
+      }
+    } finally {
+      readline.close();
+    }
+  }
+
+  const render = createMenuRenderer(() => [
+    question,
+    status ||
+      "Пробел — отметить, ↑/↓ — перейти, Enter — продолжить",
+    ...choices.map(
+      (choice, index) =>
+        `${index === cursorIndex ? "›" : " "} ${
+          selectedValues.has(choice.value) ? "☑" : "☐"
+        } ${choice.label}`,
+    ),
+  ]);
+
+  return runInteractiveMenu(
+    render,
+    (character, key, outputStream) => {
+      if (key.name === "up") {
+        cursorIndex =
+          (cursorIndex - 1 + choices.length) % choices.length;
+        status = "";
+        render(outputStream);
+      } else if (key.name === "down") {
+        cursorIndex = (cursorIndex + 1) % choices.length;
+        status = "";
+        render(outputStream);
+      } else if (key.name === "space" || character === " ") {
+        const value = choices[cursorIndex].value;
+        if (selectedValues.has(value)) {
+          if (selectedValues.size === minSelected) {
+            status = requirement;
+          } else {
+            selectedValues.delete(value);
+            status = "";
+          }
+        } else {
+          selectedValues.add(value);
+          status = "";
+        }
+        render(outputStream);
+      } else if (key.name === "return" || key.name === "enter") {
+        if (selectedValues.size < minSelected) {
+          status = requirement;
+          render(outputStream);
+          return undefined;
+        }
+        return {
+          done: true,
+          value: choices
+            .filter((choice) => selectedValues.has(choice.value))
+            .map((choice) => choice.value),
+        };
+      }
+      return undefined;
+    },
+    input,
+    output,
+  );
+}
+
 async function chooseInstallMode(installed, available, hasAuth) {
   if (
     !process.stdin.isTTY ||
@@ -608,36 +899,23 @@ async function chooseInstallMode(installed, available, hasAuth) {
     return "update";
   }
 
-  const readline = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  try {
-    console.log(
-      `Установлена версия: ${installed || "неизвестна"}. Доступна версия: ${available}.`,
-    );
-
-    while (true) {
-      const answer = await ask(
-        readline,
-        "Действие: 1 — обновить без изменения настроек, 2 — установить заново",
-        "1",
-      );
-
-      if (answer === "1") {
-        return "update";
-      }
-
-      if (answer === "2") {
-        return "reinstall";
-      }
-
-      console.log("Введите 1 или 2.");
-    }
-  } finally {
-    readline.close();
-  }
+  console.log(
+    `Установлена версия: ${installed || "неизвестна"}. Доступна версия: ${available}.`,
+  );
+  return promptSingleChoice(
+    "Что сделать?",
+    [
+      {
+        label: "Обновить без изменения настроек",
+        value: "update",
+      },
+      {
+        label: "Установить заново",
+        value: "reinstall",
+      },
+    ],
+    "update",
+  );
 }
 
 async function deployServer(
@@ -781,17 +1059,6 @@ async function ask(readline, question, defaultValue = "") {
   return answer || defaultValue;
 }
 
-async function askBoolean(readline, question, defaultValue = false) {
-  while (true) {
-    const answer = (
-      await ask(readline, question, defaultValue ? "да" : "нет")
-    ).toLocaleLowerCase("ru-RU");
-    if (["д", "да", "y", "yes"].includes(answer)) return true;
-    if (["н", "нет", "n", "no"].includes(answer)) return false;
-    console.log("Введите «да» или «нет».");
-  }
-}
-
 async function promptVisible(question) {
   const readline = createInterface({
     input: process.stdin,
@@ -804,22 +1071,54 @@ async function promptVisible(question) {
   }
 }
 
+async function promptAnswer(question, defaultValue = "") {
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    return await ask(readline, question, defaultValue);
+  } finally {
+    readline.close();
+  }
+}
+
+async function promptBoolean(
+  question,
+  defaultValue,
+  trueLabel,
+  falseLabel,
+) {
+  return promptSingleChoice(
+    question,
+    [
+      { label: trueLabel, value: true },
+      { label: falseLabel, value: false },
+    ],
+    defaultValue,
+  );
+}
+
 const COMMUNITY_REDIRECT_URI = "https://vk.ru/blank.html";
 const COMMUNITY_LEGACY_REDIRECT_URI =
   "https://oauth.vk.ru/blank.html";
 export const DEFAULT_COMMUNITY_LEGACY_CLIENT_ID = "6270012";
 
-async function askCommunityTokenType(readline, defaultValue = "legacy") {
-  while (true) {
-    const value = await ask(
-      readline,
-      "Токен сообществ: 1 — legacy OAuth, 2 — VK ID OAuth",
-      defaultValue === "vk_id" ? "2" : "1",
-    );
-    if (value === "1") return "legacy";
-    if (value === "2") return "vk_id";
-    console.log("Введите 1 или 2.");
-  }
+async function askCommunityTokenType(defaultValue = "legacy") {
+  return promptSingleChoice(
+    "Как авторизовать поиск сообществ?",
+    [
+      {
+        label: "Legacy OAuth — встроенное приложение",
+        value: "legacy",
+      },
+      {
+        label: "VK ID OAuth — своё приложение",
+        value: "vk_id",
+      },
+    ],
+    defaultValue,
+  );
 }
 
 function openBrowser(url) {
@@ -1011,11 +1310,6 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
     return;
   }
 
-  const readline = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
   console.log(
     "\nНастройка VK Ads MCP. Нажмите Enter, чтобы принять значение в скобках.\n",
   );
@@ -1032,54 +1326,49 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
       ? DEFAULT_COMMUNITY_LEGACY_CLIENT_ID
       : "");
 
-  try {
-    clientId = await ask(
-      readline,
-      "VK Ads client_id",
-      current.VK_ADS_CLIENT_ID || "",
+  clientId = await promptAnswer(
+    "VK Ads client_id",
+    current.VK_ADS_CLIENT_ID || "",
+  );
+  enableCommunityTools = await promptBoolean(
+    "Подключить поиск и анализ публичных сообществ VK?",
+    Boolean(current.VK_API_TOKEN),
+    "Подключить",
+    "Не подключать",
+  );
+  authorizeCommunities =
+    enableCommunityTools &&
+    (!current.VK_API_TOKEN ||
+      (await promptBoolean(
+        "Что сделать с текущим токеном сообществ?",
+        false,
+        "Авторизовать заново",
+        "Сохранить текущий токен",
+      )));
+  if (authorizeCommunities) {
+    communityTokenType = await askCommunityTokenType(
+      communityTokenType,
     );
-    enableCommunityTools = await askBoolean(
-      readline,
-      "Включить поиск и анализ публичных сообществ VK?",
-      Boolean(current.VK_API_TOKEN),
-    );
-    authorizeCommunities =
-      enableCommunityTools &&
-      (!current.VK_API_TOKEN ||
-        (await askBoolean(
-          readline,
-          "Авторизовать токен сообществ заново?",
-          false,
-        )));
-    if (authorizeCommunities) {
-      communityTokenType = await askCommunityTokenType(
-        readline,
-        communityTokenType,
-      );
-      if (
-        communityTokenType === "legacy" &&
-        current.VK_API_TOKEN_TYPE !== "legacy"
-      ) {
-        communityClientId = DEFAULT_COMMUNITY_LEGACY_CLIENT_ID;
-      }
-      if (communityTokenType === "vk_id") {
-        console.log(
-          `Создайте приложение VK ID и добавьте redirect URL ${COMMUNITY_REDIRECT_URI}.`,
-        );
-      }
-      communityClientId = await ask(
-        readline,
-        communityTokenType === "legacy"
-          ? "VK client_id приложения (Enter — встроенное)"
-          : "VK ID client_id приложения",
-        communityClientId ||
-          (communityTokenType === "legacy"
-            ? DEFAULT_COMMUNITY_LEGACY_CLIENT_ID
-            : ""),
+    if (
+      communityTokenType === "legacy" &&
+      current.VK_API_TOKEN_TYPE !== "legacy"
+    ) {
+      communityClientId = DEFAULT_COMMUNITY_LEGACY_CLIENT_ID;
+    }
+    if (communityTokenType === "vk_id") {
+      console.log(
+        `Создайте приложение VK ID и добавьте redirect URL ${COMMUNITY_REDIRECT_URI}.`,
       );
     }
-  } finally {
-    readline.close();
+    communityClientId = await promptAnswer(
+      communityTokenType === "legacy"
+        ? "VK client_id приложения (Enter — встроенное)"
+        : "VK ID client_id приложения",
+      communityClientId ||
+        (communityTokenType === "legacy"
+          ? DEFAULT_COMMUNITY_LEGACY_CLIENT_ID
+          : ""),
+    );
   }
 
   const clientSecret = await promptHidden(
@@ -1491,8 +1780,9 @@ async function chooseMcpClients(detected, options) {
 
   const detectedIds = detected.map((client) => client.id);
   if (detectedIds.length === 0) {
-    console.log("Поддерживаемые MCP-клиенты не найдены.");
-    return [];
+    throw new Error(
+      "Не найден ни один поддерживаемый MCP-клиент. Установите клиент или повторите команду с --no-register.",
+    );
   }
 
   if (
@@ -1504,31 +1794,15 @@ async function chooseMcpClients(detected, options) {
   }
 
   console.log("\nНайдены MCP-клиенты:");
-  detected.forEach((client, index) => {
-    console.log(`  ${index + 1}. ${client.label}`);
-  });
-  console.log("Enter — настроить все найденные, 0 — пропустить.");
-
-  const readline = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  try {
-    while (true) {
-      const answer = await ask(
-        readline,
-        "Для каких клиентов подключить VK Ads MCP",
-      );
-      try {
-        return parseClientSelection(answer, detectedIds);
-      } catch (error) {
-        console.log(error.message);
-      }
-    }
-  } finally {
-    readline.close();
-  }
+  return promptMultipleChoices(
+    "К каким клиентам подключить VK Ads MCP?",
+    detected.map((client) => ({
+      label: client.label,
+      value: client.id,
+      selected: true,
+    })),
+    { minSelected: 1 },
+  );
 }
 
 function tryRemove(command, args) {
