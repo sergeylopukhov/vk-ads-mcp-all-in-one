@@ -44,9 +44,15 @@ phrases such as "these campaigns" beyond the visible selection.
    evidence.
 3. Do not repeat the same write or cycle through alternative creatives after a
    rejected request.
-4. If VK omits field details, inspect the applicable package, banner pattern,
-   and reference data before proposing another payload.
-5. Retry only after changing the identified invalid field. For an earlier
+4. If VK omits field details, read the exact group and take its `packageId`.
+   Call `vk_ads_ad_reference_list` with `resource=packages` and
+   `ids=[packageId]`, then inspect `options.settings` and the `pads` entry in
+   `options.targetings`, including its defaults, values, and pattern groups.
+   Do not search for the package only in the unfiltered collection because VK
+   can omit packages that remain assigned to existing groups.
+5. Inspect the applicable banner pattern and placement references only after
+   the exact package contract is known.
+6. Retry only after changing the identified invalid field. For an earlier
    ambiguous write, first reread provider state to exclude a duplicate.
 
 ## Community research

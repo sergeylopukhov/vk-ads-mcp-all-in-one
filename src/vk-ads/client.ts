@@ -803,6 +803,11 @@ export interface VkAdsReferenceCollectionResult {
   items: Array<Record<string, unknown>>;
 }
 
+export interface VkAdsReferenceCollectionInput
+  extends VkAdsPaginationInput {
+  ids?: number[];
+}
+
 export interface VkAdsUrl {
   id: number;
   url: string;
@@ -2290,7 +2295,7 @@ export class VkAdsApiClient {
 
   async listReferenceData(
     resource: VkAdsReferenceCollectionResource,
-    input: VkAdsPaginationInput = {},
+    input: VkAdsReferenceCollectionInput = {},
   ): Promise<VkAdsReferenceCollectionResult> {
     const endpoints: Record<
       VkAdsReferenceCollectionResource,
@@ -2316,8 +2321,15 @@ export class VkAdsApiClient {
     };
     const url = new URL(endpoints[resource]);
 
+    if (input.ids !== undefined) {
+      url.searchParams.set("_id__in", input.ids.join(","));
+    }
+
     if (resource === "packages") {
-      url.searchParams.set("fields", "options");
+      url.searchParams.set(
+        "fields",
+        input.ids === undefined ? "options" : "id,name,options",
+      );
     }
 
     const parsed = await this.requestValidated(
