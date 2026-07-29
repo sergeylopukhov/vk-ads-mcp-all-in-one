@@ -161,12 +161,9 @@ Use the default `search_sort=members` so discovery starts with the largest
 communities. Switch to `search_sort=relevance` only when the user explicitly
 prefers provider relevance over audience size. Preserve descending
 `members_count` order in discovery; final researched lists are still ranked by
-advertising score. Never imply that `limit` alone guarantees that many suitable
-communities.
-
-For a small foreground search, set the response `limit` to the requested
-number of final candidates. Do not return a large report merely to rank one
-candidate; widen `search_budget` instead.
+advertising score. Analyze every community that survives the metadata filters.
+A requested final count controls reporting, not how many candidates receive
+post analysis and scoring.
 
 Do not present provider-reported totals as the number of communities actually
 inspected. Use `source_matches` for unique observed IDs and
@@ -189,8 +186,8 @@ unresolved choice could materially change the audience.
 
 Use `vk_find_community_candidates` for a small bounded search. Use
 `vk_start_community_research` for broad work, then poll progress and read the
-saved run. Report incomplete reasons caused by provider, search-budget, or
-result limits.
+saved run. Report incomplete reasons caused by provider or search-budget
+limits.
 
 After completion, return ranked candidates with score reasons, exclusion
 matches, risks, and clusters. Recommend narrower terms, new exclusions, or a
@@ -205,8 +202,7 @@ search found too little. After every run, report:
 - requested and returned candidate counts;
 - counts by `recommended`, `review`, and `rejected`;
 - the active `min_score` and `review_min_score`;
-- whether discovery, hard filters, scoring, or result limits caused the
-  shortage.
+- whether discovery, hard filters, or scoring caused the shortage.
 
 If the current tool response does not prove the limiting stage, say that it is
 unknown. Use a saved background run or a separate discovery step before
@@ -215,8 +211,8 @@ attributing the shortage to filters, scoring, or VK coverage.
 If the result has no suitable candidates or fewer than requested, offer a
 short choice with concrete values:
 
-> Найдено 2 из 10 подходящих сообществ. Сейчас рекомендация начинается с 60
-> баллов, ручная проверка — с 45. Можно расширить поиск, снизить пороги,
+> Найдено 2 из 10 подходящих сообществ. Сейчас рекомендация начинается с 45
+> баллов, ручная проверка — с 30. Можно расширить поиск, снизить пороги,
 > уточнить запросы или изменить конкретный фильтр. Что выбрать?
 
 Do not say that nothing was found when candidates exist but all were scored as
@@ -258,6 +254,11 @@ step, normally 10 points lower or higher for both thresholds while keeping
 `review_min_score <= min_score`. Treat weight changes as an advanced option:
 name the affected signal and show the old and new value. Recalculate attainable
 thresholds whenever positive weights change.
+
+When the user gives an exact recommendation threshold without a review
+threshold, set `min_score` to the requested value and keep the review threshold
+15 points lower, but never below zero. For example, a recommendation threshold
+of 45 uses `min_score=45` and `review_min_score=30`.
 
 Do not silently remove exclusions, lower minimum audience size, broaden
 geography, or relabel an old `rejected` result. Execute the chosen change,

@@ -62,7 +62,6 @@ type ResearchInput = {
   community_types?: CommunityType[] | undefined;
   min_members?: number | undefined;
   max_members?: number | undefined;
-  limit?: number | undefined;
   posts_limit: number;
   scoring_rules?: Record<string, unknown> | undefined;
   clusters: Array<Record<string, unknown>>;
@@ -112,6 +111,8 @@ const DEFAULT_SCORING_WEIGHTS = {
   activity_low_penalty: 20,
   exclude_term_penalty: 15,
 } as const;
+export const DEFAULT_RECOMMENDATION_SCORE = 45;
+export const DEFAULT_REVIEW_SCORE = 30;
 const scoreSchema = z.object({
   id: z.number().int().positive(),
   score: z.number().min(0).max(100),
@@ -215,7 +216,8 @@ const scoringRulesSchema = z
       (rules.weights?.thematic_post_share ??
         DEFAULT_SCORING_WEIGHTS.thematic_post_share) +
       (rules.weights?.members_range ?? 0);
-    const minimumScore = rules.min_score ?? 60;
+    const minimumScore =
+      rules.min_score ?? DEFAULT_RECOMMENDATION_SCORE;
     if (maximumPositiveScore < minimumScore) {
       context.addIssue({
         code: "custom",
@@ -224,7 +226,8 @@ const scoringRulesSchema = z
           "min_score недостижим при заданных положительных весах.",
       });
     }
-    const reviewMinimum = rules.review_min_score ?? 45;
+    const reviewMinimum =
+      rules.review_min_score ?? DEFAULT_REVIEW_SCORE;
     if (reviewMinimum > minimumScore) {
       context.addIssue({
         code: "custom",
@@ -255,7 +258,7 @@ const clusterSchema = z
       .default([]),
   })
   .strict();
-const researchInputSchema = {
+export const researchInputSchema = {
   keywords: z
     .array(z.string().trim().min(1).max(120))
     .min(1)
@@ -294,7 +297,6 @@ const researchInputSchema = {
   community_types: z.array(communityTypeSchema).max(3).optional(),
   min_members: z.number().int().nonnegative().optional(),
   max_members: z.number().int().nonnegative().optional(),
-  limit: z.number().int().min(1).max(50_000).optional(),
   posts_limit: z.number().int().min(1).max(100).default(30),
   scoring_rules: scoringRulesSchema.optional(),
   clusters: z.array(clusterSchema).max(50).default([]),
@@ -372,7 +374,6 @@ export function registerVkCommunityTools(
       | "community_types"
       | "min_members"
       | "max_members"
-      | "limit"
     >,
   ): Promise<{
     items: Candidate[];
@@ -567,8 +568,8 @@ export function registerVkCommunityTools(
       activity_fresh_days: 30,
       min_posts_per_week: 1,
       min_thematic_post_share: 0.5,
-      min_score: 60,
-      review_min_score: 45,
+      min_score: DEFAULT_RECOMMENDATION_SCORE,
+      review_min_score: DEFAULT_REVIEW_SCORE,
     };
     if (overrides === undefined) return base;
     return {
@@ -635,9 +636,6 @@ export function registerVkCommunityTools(
     const incompleteReasons = [
       ...(discovery.providerLimited ? ["provider_search_limit"] : []),
       ...(discovery.budgetLimited ? ["search_budget_limit"] : []),
-      ...(discovery.items.length > selected.length
-        ? ["requested_result_limit"]
-        : []),
     ];
     return {
       run_id: randomUUID(),
@@ -723,8 +721,7 @@ export function registerVkCommunityTools(
     });
     return {
       discovery,
-      selected:
-        input.limit === undefined ? ordered : ordered.slice(0, input.limit),
+      selected: ordered,
       rules,
       terms,
       excludes,
@@ -1133,10 +1130,7 @@ export function registerVkCommunityTools(
       annotations: { ...readOnly, idempotentHint: true },
     },
     async (input) => {
-      const run = await runSynchronously(
-        { ...input, limit: input.limit ?? 100 },
-        false,
-      );
+      const run = await runSynchronously(input, false);
       return result(
         {
           items: [
