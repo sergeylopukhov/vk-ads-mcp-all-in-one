@@ -1,6 +1,6 @@
 {
   "name": "vk-ads-mcp",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "MCP server for the VK Ads API",
   "license": "MIT",
@@ -10,13 +10,14 @@
     "url": "git+https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one.git"
   },
   "homepage": "https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one#readme",
+  "bin": {
+    "vk-ads-mcp": "install.mjs"
+  },
   "files": [
     "dist/",
     "codex-skill/",
     "docs/",
-    "install.mjs",
-    "install.ps1",
-    "install.sh"
+    "install.mjs"
   ],
   "type": "module",
   "engines": {

@@ -10,7 +10,7 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-stdio-1f6feb" alt="MCP stdio"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b8f60" alt="Лицензия MIT"></a>
-  <img src="https://img.shields.io/badge/version-0.0.1-6b7280" alt="Версия 0.0.1">
+  <img src="https://img.shields.io/badge/version-0.0.2-6b7280" alt="Версия 0.0.2">
 </p>
 
 Сервер подключает MCP-клиент к VK Рекламе: читает кампании, группы и объявления, получает статистику, работает с аудиториями, креативами, лид-формами, опросами, подписками, прайс-листами и справочниками. Отдельный блок Core VK API ищет и анализирует публичные сообщества.
@@ -24,21 +24,11 @@
 
 Нужны:
 
-- Node.js 22 или новее;
+- Node.js 22 или новее с npm;
 - `client_id` и `client_secret` приложения VK Ads.
 
-### macOS и Linux
-
 ```bash
-curl -fsSL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.sh | sh
-```
-
-### Windows
-
-Откройте PowerShell:
-
-```powershell
-irm https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.ps1 | iex
+npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one
 ```
 
 Установщик:
@@ -76,13 +66,13 @@ irm https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/down
 Для другой папки или ветки:
 
 ```bash
-node install.mjs --install-dir "/полный/путь" --ref main
+npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --install-dir "/полный/путь" --ref main
 ```
 
 Все параметры:
 
 ```bash
-node install.mjs --help
+npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --help
 ```
 
 ## Как создаётся и хранится токен
