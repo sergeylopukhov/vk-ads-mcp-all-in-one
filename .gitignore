@@ -1,0 +1,24 @@
+# Internal development files
+.github/
+tests/
+tsconfig.test.json
+scripts/
+CONTRIBUTING.md
+
+# Secrets and local state
+.env
+.env.*
+*.env
+auth.env.*
+.vk-ads-audit.jsonl
+.vk-ads-audit.jsonl.*
+.vk-community-research.json
+.vk-community-research.json.*
+
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+
+# Local files
+.DS_Store
