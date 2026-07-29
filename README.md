@@ -10,7 +10,7 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-stdio-1f6feb" alt="MCP stdio"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b8f60" alt="Лицензия MIT"></a>
-  <img src="https://img.shields.io/badge/version-0.0.1-6b7280" alt="Версия 0.0.1">
+  <img src="https://img.shields.io/badge/version-0.0.2-6b7280" alt="Версия 0.0.2">
 </p>
 
 Сервер подключает MCP-клиент к VK Рекламе: читает кампании, группы и объявления, получает статистику, работает с аудиториями, креативами, лид-формами, опросами, подписками, прайс-листами и справочниками. Отдельный блок Core VK API ищет и анализирует публичные сообщества.
@@ -39,12 +39,13 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one
 4. запросит `client_secret` со скрытым вводом;
 5. предложит подключить поиск сообществ через отдельный OAuth VK;
 6. сохранит учётные данные и токены в локальном `auth.env`;
-7. подключит сервер к Codex под именем `vk-ads`;
-8. установит навык Codex для безопасной работы с доступными инструментами.
+7. найдёт установленные MCP-клиенты;
+8. предложит выбрать клиенты и подключит сервер под именем `vk-ads`;
+9. установит навык Codex, если выбран Codex.
 
 Навык включается автоматически для задач о VK Ads и сообществах VK. Он выбирает подходящие инструменты MCP, помогает восстанавливать токены, проверять подключение, анализировать статистику и сообщества, управлять кампаниями, аудиториями, лидами и опросами. Для анализа по умолчанию используется подробный отчёт. Инструменты записи вызываются только по явному запросу пользователя. Навык и его справочники обновляются вместе с сервером.
 
-После установки перезапустите Codex и отправьте:
+Поддерживаются Codex CLI, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor. После установки перезапустите выбранные клиенты. В Codex можно отправить:
 
 ```text
 Проверь подключение к VK Рекламе и покажи доступные кампании. Ничего не меняй.
@@ -54,7 +55,7 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one
 
 Повторно выполните команду установки. Установщик покажет установленную и доступную версии:
 
-- «обновить» заменит сервер и навык Codex, но сохранит `auth.env`, токены и локальный аудит;
+- «обновить» заменит сервер, а при выборе Codex также обновит навык; `auth.env`, токены и локальный аудит сохранятся;
 - «установить заново» повторно запросит `client_id` и `client_secret`, а сохранённые токены очистит.
 
 Каталог установки по умолчанию:
@@ -68,6 +69,14 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one
 ```bash
 npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --install-dir "/полный/путь" --ref main
 ```
+
+Для установки без интерактивного выбора:
+
+```bash
+npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --clients codex,claude,cursor
+```
+
+Параметр `--all-detected` подключает все найденные клиенты, а `--no-register` пропускает их настройку.
 
 Все параметры:
 
@@ -127,7 +136,7 @@ VK_COMMUNITY_RESEARCH_TTL_DAYS=30
 
 ## MCP-клиенты
 
-Установщик автоматически настраивает Codex. Для Claude Code, Gemini CLI, Qwen Code и Kimi Code CLI используйте [инструкции по подключению](docs/setup-clients.md).
+Установщик находит Codex CLI, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor, затем предлагает выбрать нужные клиенты. Ручные команды и пути к конфигурациям приведены в [инструкции по подключению](docs/setup-clients.md).
 
 - [Подключение Codex](docs/setup-codex.md)
 - [Подключение других MCP-клиентов](docs/setup-clients.md)

@@ -40,6 +40,54 @@ const MANAGED_ENTRIES = [
   "codex-skill",
   "docs",
 ];
+export const MCP_CLIENTS = [
+  {
+    id: "codex",
+    label: "Codex CLI (OpenAI)",
+    commands: ["codex"],
+    markers: [".codex"],
+  },
+  {
+    id: "claude",
+    label: "Claude Code",
+    commands: ["claude"],
+    markers: [".claude"],
+  },
+  {
+    id: "gemini",
+    label: "Gemini CLI",
+    commands: ["gemini"],
+    markers: [".gemini"],
+  },
+  {
+    id: "qwen",
+    label: "Qwen Code",
+    commands: ["qwen"],
+    markers: [".qwen"],
+  },
+  {
+    id: "kimi",
+    label: "Kimi Code CLI",
+    commands: ["kimi"],
+    markers: [".kimi-code"],
+    configurableWithoutCli: true,
+  },
+  {
+    id: "cursor",
+    label: "Cursor",
+    commands: ["cursor-agent", "cursor"],
+    markers: [".cursor"],
+    configurableWithoutCli: true,
+  },
+];
+const MCP_CLIENT_ALIASES = new Map([
+  ["chatgpt", "codex"],
+  ["openai", "codex"],
+  ["claude-code", "claude"],
+  ["gemini-cli", "gemini"],
+  ["qwen-code", "qwen"],
+  ["kimi-code", "kimi"],
+]);
 
 let cachedGitHubToken;
 
@@ -159,6 +207,8 @@ function parseArguments(argv) {
     ref: undefined,
     installDirectory: undefined,
     register: true,
+    clients: undefined,
+    allDetected: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -166,6 +216,12 @@ function parseArguments(argv) {
 
     if (argument === "--no-register") {
       options.register = false;
+    } else if (argument === "--clients") {
+      options.clients = argv[++index];
+    } else if (argument.startsWith("--clients=")) {
+      options.clients = argument.slice(10);
+    } else if (argument === "--all-detected") {
+      options.allDetected = true;
     } else if (argument === "--ref") {
       options.ref = argv[++index];
     } else if (argument.startsWith("--ref=")) {
@@ -181,6 +237,12 @@ function parseArguments(argv) {
     }
   }
 
+  if (!options.register && (options.clients || options.allDetected)) {
+    throw new Error(
+      "--no-register нельзя использовать вместе с --clients или --all-detected.",
+    );
+  }
+
   return options;
 }
 
@@ -190,7 +252,9 @@ function printHelp() {
 Использование: npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one [параметры]
   --ref <tag|branch>       установить указанный тег или ветку
   --install-dir <path>     изменить каталог установки
-  --no-register            не настраивать Codex
+  --clients <список>       настроить указанные клиенты через запятую
+  --all-detected           настроить все найденные клиенты без вопроса
+  --no-register            не настраивать MCP-клиенты
   -h, --help               показать справку`);
 }
 
@@ -201,6 +265,127 @@ function commandAvailable(command) {
   });
 
   return !result.error && result.status === 0;
+}
+
+export async function detectMcpClients({
+  platform = process.platform,
+  home = homedir(),
+  environment = process.env,
+  hasCommand = commandAvailable,
+  exists = pathExists,
+} = {}) {
+  const detected = [];
+
+  for (const client of MCP_CLIENTS) {
+    const commands = client.commands.filter((command) =>
+      hasCommand(command),
+    );
+    const markerPaths = client.markers.map((marker) =>
+      client.id === "kimi" && environment.KIMI_CODE_HOME
+        ? resolve(environment.KIMI_CODE_HOME)
+        : join(home, marker),
+    );
+
+    if (client.id === "cursor") {
+      if (platform === "darwin") {
+        markerPaths.push(
+          "/Applications/Cursor.app",
+          join(home, "Applications", "Cursor.app"),
+        );
+      } else if (platform === "win32") {
+        for (const parent of [
+          environment.LOCALAPPDATA,
+          environment.ProgramFiles,
+        ]) {
+          if (parent) {
+            markerPaths.push(join(parent, "Programs", "Cursor"));
+          }
+        }
+      }
+    }
+
+    const existingMarkers = [];
+    for (const markerPath of markerPaths) {
+      if (await exists(markerPath)) {
+        existingMarkers.push(markerPath);
+      }
+    }
+
+    if (
+      commands.length > 0 ||
+      (client.configurableWithoutCli && existingMarkers.length > 0)
+    ) {
+      detected.push({
+        ...client,
+        command: commands[0],
+        markers: existingMarkers,
+      });
+    }
+  }
+
+  return detected;
+}
+
+export function parseClientSelection(
+  answer,
+  detectedIds,
+  knownIds = MCP_CLIENTS.map((client) => client.id),
+) {
+  const value = answer.trim().toLocaleLowerCase("ru-RU");
+
+  if (!value || value === "all" || value === "все") {
+    return [...detectedIds];
+  }
+
+  if (["0", "none", "нет"].includes(value)) {
+    return [];
+  }
+
+  const selected = [];
+  for (const token of value.split(/[\s,;]+/u).filter(Boolean)) {
+    const number = Number(token);
+    const id = Number.isInteger(number) && number > 0
+      ? detectedIds[number - 1]
+      : MCP_CLIENT_ALIASES.get(token) || token;
+
+    if (!id || !knownIds.includes(id)) {
+      throw new Error(`Неизвестный MCP-клиент: ${token}`);
+    }
+
+    if (!detectedIds.includes(id)) {
+      throw new Error(`MCP-клиент не найден: ${id}`);
+    }
+
+    if (!selected.includes(id)) {
+      selected.push(id);
+    }
+  }
+
+  return selected;
+}
+
+export function parseRequestedClients(value) {
+  const knownIds = MCP_CLIENTS.map((client) => client.id);
+  const selected = [];
+
+  for (const token of value.split(/[\s,;]+/u).filter(Boolean)) {
+    const normalized = token.toLocaleLowerCase("en-US");
+    const id = MCP_CLIENT_ALIASES.get(normalized) || normalized;
+
+    if (!knownIds.includes(id)) {
+      throw new Error(`Неизвестный MCP-клиент: ${token}`);
+    }
+
+    if (!selected.includes(id)) {
+      selected.push(id);
+    }
+  }
+
+  if (selected.length === 0) {
+    throw new Error("--clients требует хотя бы один MCP-клиент.");
+  }
+
+  return selected;
 }
 
 function resolveGitHubToken() {
@@ -985,20 +1170,168 @@ export async function installCodexSkill(
   return join(destination, "SKILL.md");
 }
 
-async function setupCodex(installDirectory) {
-  const skillPath = await installCodexSkill(installDirectory);
+export function mergeMcpServerConfig(
+  content,
+  serverName,
+  command,
+  args,
+  extra = {},
+) {
+  let configuration = {};
 
-  if (!commandAvailable("codex")) {
-    console.log(
-      "Codex CLI не найден. Навык установлен, но MCP-сервер не подключён.",
-    );
-    return { registered: false, skillPath };
+  if (content.trim()) {
+    try {
+      configuration = JSON.parse(content);
+    } catch {
+      throw new Error(
+        "Конфигурация MCP содержит некорректный JSON.",
+      );
+    }
   }
 
-  spawnSync("codex", ["mcp", "remove", "vk-ads"], {
+  if (
+    !configuration ||
+    Array.isArray(configuration) ||
+    typeof configuration !== "object"
+  ) {
+    throw new Error("Корень конфигурации MCP должен быть объектом.");
+  }
+
+  if (
+    configuration.mcpServers !== undefined &&
+    (!configuration.mcpServers ||
+      Array.isArray(configuration.mcpServers) ||
+      typeof configuration.mcpServers !== "object")
+  ) {
+    throw new Error("Поле mcpServers должно быть объектом.");
+  }
+
+  configuration.mcpServers = {
+    ...(configuration.mcpServers || {}),
+    [serverName]: {
+      command,
+      args,
+      ...extra,
+    },
+  };
+
+  return `${JSON.stringify(configuration, null, 2)}\n`;
+}
+
+export async function updateMcpJsonConfig(
+  configPath,
+  command,
+  args,
+  extra = {},
+) {
+  await mkdir(dirname(configPath), { recursive: true });
+  const exists = await pathExists(configPath);
+  const content = exists ? await readFile(configPath, "utf8") : "";
+  const updated = mergeMcpServerConfig(
+    content,
+    "vk-ads",
+    command,
+    args,
+    extra,
+  );
+  let backupPath;
+
+  if (exists) {
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[:.]/gu, "-");
+    backupPath = `${configPath}.backup-${timestamp}`;
+    await cp(configPath, backupPath);
+  }
+
+  const temporaryPath = `${configPath}.tmp-${randomBytes(8).toString("hex")}`;
+  try {
+    await writeFile(temporaryPath, updated, { mode: 0o600 });
+    await rename(temporaryPath, configPath);
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
+
+  const verified = JSON.parse(await readFile(configPath, "utf8"));
+  const server = verified?.mcpServers?.["vk-ads"];
+  if (
+    server?.command !== command ||
+    JSON.stringify(server?.args) !== JSON.stringify(args)
+  ) {
+    throw new Error(`Не удалось проверить конфигурацию ${configPath}.`);
+  }
+
+  return { configPath, backupPath };
+}
+
+async function chooseMcpClients(detected, options) {
+  if (!options.register) {
+    return [];
+  }
+
+  if (options.clients !== undefined) {
+    if (!options.clients) {
+      throw new Error("--clients требует список MCP-клиентов.");
+    }
+    return parseRequestedClients(options.clients);
+  }
+
+  const detectedIds = detected.map((client) => client.id);
+  if (detectedIds.length === 0) {
+    console.log("Поддерживаемые MCP-клиенты не найдены.");
+    return [];
+  }
+
+  if (
+    options.allDetected ||
+    !process.stdin.isTTY ||
+    !process.stdout.isTTY
+  ) {
+    return detectedIds;
+  }
+
+  console.log("\nНайдены MCP-клиенты:");
+  detected.forEach((client, index) => {
+    console.log(`  ${index + 1}. ${client.label}`);
+  });
+  console.log("Enter — настроить все найденные, 0 — пропустить.");
+
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  try {
+    while (true) {
+      const answer = await ask(
+        readline,
+        "Для каких клиентов подключить VK Ads MCP",
+      );
+      try {
+        return parseClientSelection(answer, detectedIds);
+      } catch (error) {
+        console.log(error.message);
+      }
+    }
+  } finally {
+    readline.close();
+  }
+}
+
+function tryRemove(command, args) {
+  spawnSync(command, args, {
     stdio: "ignore",
     shell: false,
   });
+}
+
+async function setupCodex(installDirectory) {
+  if (!commandAvailable("codex")) {
+    throw new Error("Codex CLI не найден.");
+  }
+
+  const skillPath = await installCodexSkill(installDirectory);
+  tryRemove("codex", ["mcp", "remove", "vk-ads"]);
   run("codex", [
     "mcp",
     "add",
@@ -1007,8 +1340,158 @@ async function setupCodex(installDirectory) {
     process.execPath,
     join(installDirectory, "dist", "index.js"),
   ]);
+  run("codex", ["mcp", "get", "vk-ads"]);
 
-  return { registered: true, skillPath };
+  return { detail: `навык: ${skillPath}` };
+}
+
+async function setupClaude(installDirectory) {
+  if (!commandAvailable("claude")) {
+    throw new Error("Claude Code CLI не найден.");
+  }
+
+  tryRemove("claude", [
+    "mcp",
+    "remove",
+    "--scope",
+    "user",
+    "vk-ads",
+  ]);
+  run("claude", [
+    "mcp",
+    "add",
+    "--scope",
+    "user",
+    "vk-ads",
+    "--",
+    process.execPath,
+    join(installDirectory, "dist", "index.js"),
+  ]);
+  run("claude", ["mcp", "get", "vk-ads"]);
+  return {};
+}
+
+async function setupGemini(installDirectory) {
+  if (!commandAvailable("gemini")) {
+    throw new Error("Gemini CLI не найден.");
+  }
+
+  tryRemove("gemini", [
+    "mcp",
+    "remove",
+    "--scope",
+    "user",
+    "vk-ads",
+  ]);
+  run("gemini", [
+    "mcp",
+    "add",
+    "--scope",
+    "user",
+    "vk-ads",
+    process.execPath,
+    join(installDirectory, "dist", "index.js"),
+  ]);
+  run("gemini", ["mcp", "list"]);
+  return {};
+}
+
+async function setupQwen(installDirectory) {
+  if (!commandAvailable("qwen")) {
+    throw new Error("Qwen Code CLI не найден.");
+  }
+
+  tryRemove("qwen", [
+    "mcp",
+    "remove",
+    "--scope",
+    "user",
+    "vk-ads",
+  ]);
+  run("qwen", [
+    "mcp",
+    "add",
+    "--scope",
+    "user",
+    "vk-ads",
+    process.execPath,
+    join(installDirectory, "dist", "index.js"),
+  ]);
+  run("qwen", ["mcp", "list"]);
+  return {};
+}
+
+async function setupKimi(
+  installDirectory,
+  home = homedir(),
+  environment = process.env,
+) {
+  const configPath = join(
+    environment.KIMI_CODE_HOME || join(home, ".kimi-code"),
+    "mcp.json",
+  );
+  const result = await updateMcpJsonConfig(
+    configPath,
+    process.execPath,
+    [join(installDirectory, "dist", "index.js")],
+    { enabled: true },
+  );
+  return {
+    detail: result.backupPath
+      ? `конфиг: ${configPath}, резервная копия: ${result.backupPath}`
+      : `конфиг: ${configPath}`,
+  };
+}
+
+async function setupCursor(
+  installDirectory,
+  home = homedir(),
+) {
+  const configPath = join(home, ".cursor", "mcp.json");
+  const result = await updateMcpJsonConfig(
+    configPath,
+    process.execPath,
+    [join(installDirectory, "dist", "index.js")],
+  );
+  return {
+    detail: result.backupPath
+      ? `конфиг: ${configPath}, резервная копия: ${result.backupPath}`
+      : `конфиг: ${configPath}`,
+  };
+}
+
+async function setupMcpClients(clientIds, installDirectory) {
+  const setupById = {
+    codex: setupCodex,
+    claude: setupClaude,
+    gemini: setupGemini,
+    qwen: setupQwen,
+    kimi: setupKimi,
+    cursor: setupCursor,
+  };
+  const results = [];
+
+  for (const id of clientIds) {
+    const client = MCP_CLIENTS.find((item) => item.id === id);
+    try {
+      const result = await setupById[id](installDirectory);
+      results.push({
+        id,
+        label: client.label,
+        ok: true,
+        ...result,
+      });
+    } catch (error) {
+      results.push({
+        id,
+        label: client.label,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return results;
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -1032,6 +1515,13 @@ export async function main(argv = process.argv.slice(2)) {
     ref,
     await pathExists(join(installDirectory, "auth.env")),
   );
+  const detectedClients = options.register
+    ? await detectMcpClients()
+    : [];
+  const selectedClients = await chooseMcpClients(
+    detectedClients,
+    options,
+  );
   const temporaryRoot = await mkdtemp(
     join(tmpdir(), "vk-ads-mcp-"),
   );
@@ -1050,24 +1540,29 @@ export async function main(argv = process.argv.slice(2)) {
       installDirectory,
       installMode === "reinstall",
     );
-    const codex = options.register
-      ? await setupCodex(installDirectory)
-      : undefined;
+    const clientResults = await setupMcpClients(
+      selectedClients,
+      installDirectory,
+    );
 
     console.log(`\nVK Ads MCP установлен: ${installDirectory}`);
     console.log(
       `Версия источника: ${ref} (${commitSha.slice(0, 12)})`,
     );
 
-    if (codex) {
-      console.log(`Навык Codex установлен: ${codex.skillPath}`);
-
-      if (codex.registered) {
+    for (const result of clientResults) {
+      if (result.ok) {
         console.log(
-          "Codex: подключение vk-ads установлено. Перезапустите Codex.",
+          `${result.label}: подключение vk-ads установлено${
+            result.detail ? ` (${result.detail})` : ""
+          }.`,
         );
+      } else {
+        console.error(`${result.label}: ${result.error}`);
       }
-    } else {
+    }
+
+    if (selectedClients.length === 0) {
       console.log(
         `Команда сервера: ${process.execPath} ${join(
           installDirectory,
@@ -1075,6 +1570,19 @@ export async function main(argv = process.argv.slice(2)) {
           "index.js",
         )}`,
       );
+    }
+
+    const failed = clientResults.filter((result) => !result.ok);
+    if (failed.length > 0) {
+      throw new Error(
+        `Не удалось настроить MCP-клиенты: ${failed
+          .map((result) => result.label)
+          .join(", ")}.`,
+      );
+    }
+
+    if (clientResults.length > 0) {
+      console.log("Перезапустите настроенные MCP-клиенты.");
     }
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });

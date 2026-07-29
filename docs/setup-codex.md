@@ -8,7 +8,13 @@
 npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one
 ```
 
-Установщик запросит `client_id`, скроет ввод `client_secret`, соберёт сервер и зарегистрирует MCP-подключение `vk-ads`. Одновременно он установит навык Codex в `~/.codex/skills/vk-ads-mcp/`.
+Установщик запросит `client_id`, скроет ввод `client_secret`, соберёт сервер и покажет найденные MCP-клиенты. Выберите Codex, чтобы зарегистрировать подключение `vk-ads` и установить навык в `~/.codex/skills/vk-ads-mcp/`.
+
+Чтобы выбрать Codex без интерактивного вопроса:
+
+```bash
+npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --clients codex
+```
 
 Перезапустите Codex и отправьте:
 

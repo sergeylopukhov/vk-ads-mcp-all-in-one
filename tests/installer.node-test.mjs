@@ -17,13 +17,19 @@ import {
   codexSkillDirectory,
   DEFAULT_AUTH_ENV_TEMPLATE,
   DEFAULT_COMMUNITY_LEGACY_CLIENT_ID,
+  detectMcpClients,
   defaultInstallDirectory,
   installCodexSkill,
+  MCP_CLIENTS,
+  mergeMcpServerConfig,
   parseEnvValues,
+  parseClientSelection,
   parseInstalledVersion,
+  parseRequestedClients,
   requiresConfiguration,
   resolveRef,
   selectServerFiles,
+  updateMcpJsonConfig,
 } from "../install.mjs";
 
 const repositoryRoot = join(
@@ -246,6 +252,134 @@ test("defaultInstallDirectory is platform aware", () => {
     defaultInstallDirectory("linux", "/home/test", {}),
     "/home/test/.local/share/vk-ads-mcp",
   );
+});
+
+test("detectMcpClients uses CLI commands and standard directories", async () => {
+  const existingPaths = new Set([
+    "/home/test/.kimi-code",
+    "/home/test/.cursor",
+  ]);
+  const detected = await detectMcpClients({
+    platform: "linux",
+    home: "/home/test",
+    environment: {},
+    hasCommand: (command) =>
+      new Set(["codex", "claude", "qwen"]).has(command),
+    exists: async (path) => existingPaths.has(path),
+  });
+
+  assert.deepEqual(
+    detected.map((client) => client.id),
+    ["codex", "claude", "qwen", "kimi", "cursor"],
+  );
+  assert.equal(
+    detected.find((client) => client.id === "codex").command,
+    "codex",
+  );
+});
+
+test("MCP client selection accepts numbers, ids, and aliases", () => {
+  const detected = ["codex", "claude", "cursor"];
+
+  assert.deepEqual(parseClientSelection("", detected), detected);
+  assert.deepEqual(
+    parseClientSelection("1, cursor", detected),
+    ["codex", "cursor"],
+  );
+  assert.deepEqual(
+    parseClientSelection("chatgpt claude-code", detected),
+    ["codex", "claude"],
+  );
+  assert.deepEqual(parseClientSelection("0", detected), []);
+  assert.throws(
+    () => parseClientSelection("gemini", detected),
+    /не найден/u,
+  );
+});
+
+test("--clients parser validates ids and removes duplicates", () => {
+  assert.deepEqual(
+    parseRequestedClients("chatgpt,claude,cursor,cursor"),
+    ["codex", "claude", "cursor"],
+  );
+  assert.throws(
+    () => parseRequestedClients("glm"),
+    /Неизвестный MCP-клиент/u,
+  );
+  assert.deepEqual(
+    MCP_CLIENTS.map((client) => client.id),
+    ["codex", "claude", "gemini", "qwen", "kimi", "cursor"],
+  );
+});
+
+test("mergeMcpServerConfig preserves unrelated configuration", () => {
+  const result = JSON.parse(
+    mergeMcpServerConfig(
+      JSON.stringify({
+        theme: "dark",
+        mcpServers: {
+          existing: {
+            command: "python",
+            args: ["server.py"],
+          },
+        },
+      }),
+      "vk-ads",
+      "/usr/bin/node",
+      ["/opt/vk-ads/dist/index.js"],
+      { enabled: true },
+    ),
+  );
+
+  assert.equal(result.theme, "dark");
+  assert.equal(result.mcpServers.existing.command, "python");
+  assert.deepEqual(result.mcpServers["vk-ads"], {
+    command: "/usr/bin/node",
+    args: ["/opt/vk-ads/dist/index.js"],
+    enabled: true,
+  });
+  assert.throws(
+    () => mergeMcpServerConfig("{broken", "vk-ads", "node", []),
+    /некорректный JSON/u,
+  );
+});
+
+test("updateMcpJsonConfig writes and backs up global configuration", async () => {
+  const root = await mkdtemp(
+    join(tmpdir(), "vk-ads-mcp-config-test-"),
+  );
+  const configPath = join(root, ".cursor", "mcp.json");
+
+  try {
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        mcpServers: {
+          existing: {
+            command: "existing",
+            args: [],
+          },
+        },
+      })}\n`,
+    );
+
+    const result = await updateMcpJsonConfig(
+      configPath,
+      "/usr/bin/node",
+      ["/opt/vk-ads/dist/index.js"],
+    );
+    const written = JSON.parse(await readFile(configPath, "utf8"));
+    const backup = JSON.parse(
+      await readFile(result.backupPath, "utf8"),
+    );
+
+    assert.equal(written.mcpServers["vk-ads"].command, "/usr/bin/node");
+    assert.equal(backup.mcpServers.existing.command, "existing");
+    assert.equal(backup.mcpServers["vk-ads"], undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("resolveRef prefers a release and supports an explicit source", async () => {
