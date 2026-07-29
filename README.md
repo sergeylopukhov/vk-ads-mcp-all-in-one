@@ -10,7 +10,7 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-stdio-1f6feb" alt="MCP stdio"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b8f60" alt="Лицензия MIT"></a>
-  <img src="https://img.shields.io/badge/version-0.1.2-2563eb" alt="Версия 0.1.2">
+  <img src="https://img.shields.io/badge/version-0.1.3-2563eb" alt="Версия 0.1.3">
 </p>
 
 `VK Ads MCP All in One` можно подключить к любому ИИ-агенту с поддержкой MCP. В диалоге с агентом можно анализировать эффективность рекламы, получать рекомендации по её улучшению, искать и создавать аудитории, загружать креативы, создавать кампании, группы и объявления и управлять ими на основе актуальных данных кабинета.
