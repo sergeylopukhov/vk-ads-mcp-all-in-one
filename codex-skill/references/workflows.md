@@ -38,15 +38,18 @@ phrases such as "these campaigns" beyond the visible selection.
 
 ## Community research
 
-1. Convert the user's goal into search queries, filters, risk exclusions,
-   scoring weights, and optional clusters.
+1. Read `community-research.md`, collect the missing brief in chat or through
+   the optional questionnaire flow, and prepare the domain-neutral search
+   configuration.
 2. For a small bounded request, prefer `vk_find_community_candidates`.
 3. For broad research, start `vk_start_community_research`, then poll
    `vk_get_community_research_progress` and read the final snapshot with
    `vk_get_community_research_run`.
 4. Use discovery, analysis, and scoring tools separately when the user needs
    control over an intermediate stage.
-5. Use `vk_rescore_community_research_run` when only weights or clusters change.
+5. Use `vk_rescore_community_research_run` when weights, clusters, or a subset
+   of the already analyzed terms changes. A new term requires another provider
+   analysis and is reported as incomplete without it.
 6. Rank candidates, explain reasons and risks, group them into useful clusters,
    and propose next actions.
 7. Do not export by default. Prepare export only when requested.

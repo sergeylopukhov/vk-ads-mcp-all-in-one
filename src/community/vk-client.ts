@@ -73,7 +73,7 @@ export class VkCommunityClient {
       q: query,
       offset,
       count,
-      sort: sort === "members" ? 1 : 0,
+      sort: sort === "members" ? 6 : 0,
       ...(countryId === undefined ? {} : { country_id: countryId }),
       ...(cityId === undefined ? {} : { city_id: cityId }),
       ...(type === undefined ? {} : { type }),
