@@ -1,0 +1,17 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.env
+!.env.example
+auth.env.*
+.vk-ads-audit.jsonl
+.vk-ads-audit.jsonl.*
+
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+
+# Local editor and OS files
+.DS_Store
