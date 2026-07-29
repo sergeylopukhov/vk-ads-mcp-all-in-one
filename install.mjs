@@ -1820,6 +1820,10 @@ export async function chooseMcpClients(
   detected,
   options,
   savedClients,
+  {
+    input = process.stdin,
+    output = process.stdout,
+  } = {},
 ) {
   if (!options.register) {
     return [];
@@ -1836,37 +1840,21 @@ export async function chooseMcpClients(
     return detected.map((client) => client.id);
   }
 
-  if (savedClients !== undefined) {
-    if (savedClients.length === 0) {
-      console.log(
-        "Сохранённый режим: без подключения к MCP-клиентам.",
-      );
-    } else {
-      console.log(
-        `Сохранённые MCP-клиенты: ${savedClients
-          .map(
-            (id) =>
-              MCP_CLIENTS.find((client) => client.id === id)?.label ||
-              id,
-          )
-          .join(", ")}.`,
-      );
-    }
-    return savedClients;
-  }
-
   const detectedIds = detected.map((client) => client.id);
   if (detectedIds.length === 0) {
+    if (savedClients !== undefined) {
+      return savedClients;
+    }
     throw new Error(
       "Не найден ни один поддерживаемый MCP-клиент. Установите клиент или повторите команду с --no-register.",
     );
   }
 
   if (
-    !process.stdin.isTTY ||
-    !process.stdout.isTTY
+    !input.isTTY ||
+    !output.isTTY
   ) {
-    return detectedIds;
+    return savedClients ?? detectedIds;
   }
 
   console.log("\nНайдены MCP-клиенты:");
@@ -1875,9 +1863,11 @@ export async function chooseMcpClients(
     detected.map((client) => ({
       label: client.label,
       value: client.id,
-      selected: true,
+      selected:
+        savedClients === undefined ||
+        savedClients.includes(client.id),
     })),
-    { minSelected: 1 },
+    { minSelected: 1, input, output },
   );
 }
 
