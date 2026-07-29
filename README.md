@@ -25,23 +25,20 @@
 Нужны:
 
 - Node.js 22 или новее;
-- `client_id` и `client_secret` приложения VK Ads;
-- авторизованный GitHub CLI, пока репозиторий остаётся приватным.
+- `client_id` и `client_secret` приложения VK Ads.
 
-### macOS и Linux — приватный репозиторий
+### macOS и Linux
 
 ```bash
-gh auth login
-gh api -H "Accept: application/vnd.github.raw+json" repos/sergeylopukhov/vk-ads-mcp-all-in-one/contents/install.sh | sh
+curl -fsSL https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.sh | sh
 ```
 
-### Windows — приватный репозиторий
+### Windows
 
 Откройте PowerShell:
 
 ```powershell
-gh auth login
-gh api -H "Accept: application/vnd.github.raw+json" repos/sergeylopukhov/vk-ads-mcp-all-in-one/contents/install.ps1 | Out-String | Invoke-Expression
+irm https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one/releases/latest/download/install.ps1 | iex
 ```
 
 Установщик:
