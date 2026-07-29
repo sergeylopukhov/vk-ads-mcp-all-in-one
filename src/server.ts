@@ -116,6 +116,12 @@ import {
   type UpdateVkAdsRemarketingCounterGoalInput,
 } from "./vk-ads/client.js";
 import { VkAdsApiError } from "./vk-ads/errors.js";
+import {
+  registerVkCommunityTools,
+  type VkCommunityToolDependencies,
+} from "./community/tools.js";
+import { VkCommunityClient } from "./community/vk-client.js";
+import { CommunityResearchStore } from "./community/research-store.js";
 
 export const SERVER_INFO = {
   name: "vk-ads-mcp",
@@ -1211,6 +1217,7 @@ export function createVkAdsMcpServer(
   auditLog: VkAdsAuditSink = new JsonLinesVkAdsAuditLog(),
   oauthOperations: VkAdsOAuthOperations =
     createDefaultVkAdsOAuthOperations(),
+  communityDependencies?: VkCommunityToolDependencies,
 ): McpServer {
   const server = new McpServer(SERVER_INFO);
 
@@ -11937,6 +11944,25 @@ export function createVkAdsMcpServer(
           id,
         },
       };
+    },
+  );
+
+  registerVkCommunityTools(
+    server,
+    communityDependencies ?? {
+      client: new VkCommunityClient({
+        tokenProvider: () => process.env.VK_API_TOKEN?.trim() ?? "",
+        tokenType:
+          process.env.VK_API_TOKEN_TYPE === "legacy"
+            ? "legacy"
+            : "vk_id",
+        timeoutMs: 30_000,
+      }),
+      store: new CommunityResearchStore(
+        process.env.VK_COMMUNITY_RESEARCH_FILE?.trim() ||
+          ".vk-community-research.json",
+        30 * 24 * 60 * 60 * 1_000,
+      ),
     },
   );
 

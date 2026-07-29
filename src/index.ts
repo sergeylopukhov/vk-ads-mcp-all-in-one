@@ -1,8 +1,16 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { createVkAdsMcpServer } from "./server.js";
+import { createDefaultVkCommunityRuntime } from "./community/runtime.js";
 
-const server = createVkAdsMcpServer();
+const communityRuntime = await createDefaultVkCommunityRuntime();
+await communityRuntime.renewOnStartup();
+const server = createVkAdsMcpServer(
+  undefined,
+  undefined,
+  undefined,
+  communityRuntime,
+);
 let isShuttingDown = false;
 
 async function shutdown(): Promise<void> {

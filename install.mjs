@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { randomBytes } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import { spawn, spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import {
   chmod,
@@ -569,6 +569,198 @@ async function ask(readline, question, defaultValue = "") {
   return answer || defaultValue;
 }
 
+async function askBoolean(readline, question, defaultValue = false) {
+  while (true) {
+    const answer = (
+      await ask(readline, question, defaultValue ? "да" : "нет")
+    ).toLocaleLowerCase("ru-RU");
+    if (["д", "да", "y", "yes"].includes(answer)) return true;
+    if (["н", "нет", "n", "no"].includes(answer)) return false;
+    console.log("Введите «да» или «нет».");
+  }
+}
+
+async function promptVisible(question) {
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    return (await readline.question(question)).trim();
+  } finally {
+    readline.close();
+  }
+}
+
+const COMMUNITY_REDIRECT_URI = "https://vk.ru/blank.html";
+const COMMUNITY_LEGACY_REDIRECT_URI =
+  "https://oauth.vk.ru/blank.html";
+const DEFAULT_COMMUNITY_LEGACY_CLIENT_ID = "6270012";
+
+async function askCommunityTokenType(readline, defaultValue = "legacy") {
+  while (true) {
+    const value = await ask(
+      readline,
+      "Токен сообществ: 1 — legacy OAuth, 2 — VK ID OAuth",
+      defaultValue === "vk_id" ? "2" : "1",
+    );
+    if (value === "1") return "legacy";
+    if (value === "2") return "vk_id";
+    console.log("Введите 1 или 2.");
+  }
+}
+
+function openBrowser(url) {
+  const command =
+    process.platform === "darwin"
+      ? "open"
+      : process.platform === "win32"
+        ? "cmd"
+        : "xdg-open";
+  const args =
+    process.platform === "win32"
+      ? ["/c", "start", "", url]
+      : [url];
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+}
+
+async function authorizeCommunityLegacy(clientId) {
+  if (!/^\d+$/u.test(clientId)) {
+    throw new Error("VK client_id должен состоять из цифр.");
+  }
+  const authorizationUrl = new URL("https://oauth.vk.com/authorize");
+  authorizationUrl.search = new URLSearchParams({
+    client_id: clientId,
+    scope: "335876",
+    redirect_uri: COMMUNITY_LEGACY_REDIRECT_URI,
+    display: "page",
+    response_type: "token",
+    revoke: "1",
+  }).toString();
+  console.log(
+    "Открываю OAuth VK. После входа скопируйте полный URL страницы oauth.vk.ru/blank.html.",
+  );
+  openBrowser(authorizationUrl.toString());
+  const callbackUrl = await promptVisible(
+    "URL страницы oauth.vk.ru/blank.html: ",
+  );
+  let callback;
+  try {
+    callback = new URL(callbackUrl);
+  } catch {
+    throw new Error(
+      "Нужен полный URL страницы oauth.vk.ru/blank.html.",
+    );
+  }
+  if (
+    !new Set(["https://oauth.vk.com", "https://oauth.vk.ru"]).has(
+      callback.origin,
+    ) ||
+    callback.pathname !== "/blank.html"
+  ) {
+    throw new Error(
+      "Нужен URL страницы oauth.vk.ru/blank.html после авторизации.",
+    );
+  }
+  const accessToken = new URLSearchParams(callback.hash.slice(1)).get(
+    "access_token",
+  );
+  if (!accessToken) {
+    throw new Error("OAuth не вернул access_token.");
+  }
+  return { accessToken, tokenType: "legacy" };
+}
+
+async function authorizeCommunityVkId(clientId) {
+  if (!/^\d+$/u.test(clientId)) {
+    throw new Error("VK ID client_id должен состоять из цифр.");
+  }
+  const state = randomBytes(32).toString("base64url");
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256")
+    .update(verifier)
+    .digest("base64url");
+  const authorizationUrl = new URL("https://id.vk.ru/authorize");
+  authorizationUrl.search = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    scope: "groups wall",
+    redirect_uri: COMMUNITY_REDIRECT_URI,
+    state,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  }).toString();
+  console.log(
+    "Открываю VK ID. После входа скопируйте полный URL страницы vk.ru/blank.html.",
+  );
+  openBrowser(authorizationUrl.toString());
+  const callbackUrl = await promptVisible(
+    "URL страницы vk.ru/blank.html: ",
+  );
+  let callback;
+  try {
+    callback = new URL(callbackUrl);
+  } catch {
+    throw new Error("Нужен полный URL страницы vk.ru/blank.html.");
+  }
+  const code = callback.searchParams.get("code");
+  const returnedState = callback.searchParams.get("state");
+  const deviceId = callback.searchParams.get("device_id");
+  if (
+    callback.origin !== "https://vk.ru" ||
+    callback.pathname !== "/blank.html" ||
+    !code ||
+    !deviceId ||
+    returnedState !== state
+  ) {
+    throw new Error("VK ID вернул неподтверждённый callback.");
+  }
+  const response = await fetch("https://id.vk.ru/oauth2/auth", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: new URLSearchParams({
+      client_id: clientId,
+      grant_type: "authorization_code",
+      code_verifier: verifier,
+      device_id: deviceId,
+      code,
+      redirect_uri: COMMUNITY_REDIRECT_URI,
+    }),
+    signal: AbortSignal.timeout(30_000),
+    redirect: "error",
+  });
+  const payload = await response.json().catch(() => undefined);
+  if (
+    !response.ok ||
+    typeof payload?.access_token !== "string" ||
+    typeof payload?.refresh_token !== "string"
+  ) {
+    throw new Error(
+      "VK ID не выдал access_token и refresh_token. Проверьте права groups и wall.",
+    );
+  }
+  return {
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token,
+    expiresIn: Number(payload.expires_in),
+    deviceId,
+    tokenType: "vk_id",
+  };
+}
+
+async function authorizeCommunity(clientId, tokenType) {
+  return tokenType === "legacy"
+    ? authorizeCommunityLegacy(clientId)
+    : authorizeCommunityVkId(clientId);
+}
+
 async function ensureConfiguration(installDirectory, reinstall = false) {
   const authPath = join(installDirectory, "auth.env");
   const authExists = await pathExists(authPath);
@@ -615,6 +807,16 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
   );
 
   let clientId;
+  let enableCommunityTools = false;
+  let authorizeCommunities = false;
+  let communityTokenType =
+    current.VK_API_TOKEN_TYPE ||
+    (current.VK_API_REFRESH_TOKEN ? "vk_id" : "legacy");
+  let communityClientId =
+    current.VK_API_CLIENT_ID ||
+    (communityTokenType === "legacy"
+      ? DEFAULT_COMMUNITY_LEGACY_CLIENT_ID
+      : "");
 
   try {
     clientId = await ask(
@@ -622,6 +824,40 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
       "VK Ads client_id",
       current.VK_ADS_CLIENT_ID || "",
     );
+    enableCommunityTools = await askBoolean(
+      readline,
+      "Включить поиск и анализ публичных сообществ VK?",
+      Boolean(current.VK_API_TOKEN),
+    );
+    authorizeCommunities =
+      enableCommunityTools &&
+      (!current.VK_API_TOKEN ||
+        (await askBoolean(
+          readline,
+          "Авторизовать токен сообществ заново?",
+          false,
+        )));
+    if (authorizeCommunities) {
+      communityTokenType = await askCommunityTokenType(
+        readline,
+        communityTokenType,
+      );
+      if (communityTokenType === "vk_id") {
+        console.log(
+          `Создайте приложение VK ID и добавьте redirect URL ${COMMUNITY_REDIRECT_URI}.`,
+        );
+      }
+      communityClientId = await ask(
+        readline,
+        communityTokenType === "legacy"
+          ? "VK client_id приложения"
+          : "VK ID client_id приложения",
+        communityClientId ||
+          (communityTokenType === "legacy"
+            ? DEFAULT_COMMUNITY_LEGACY_CLIENT_ID
+            : ""),
+      );
+    }
   } finally {
     readline.close();
   }
@@ -635,6 +871,9 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
       "client_id и client_secret не могут быть пустыми.",
     );
   }
+  const communityAuth = authorizeCommunities
+    ? await authorizeCommunity(communityClientId, communityTokenType)
+    : undefined;
 
   const template = await readFile(
     join(stagingTemplateDirectory, ".env.example"),
@@ -646,6 +885,35 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
     VK_ADS_TOKEN: "",
     VK_ADS_REFRESH_TOKEN: "",
     VK_ADS_TOKEN_EXPIRES_AT: "",
+    VK_API_TOKEN: enableCommunityTools
+      ? communityAuth?.accessToken || current.VK_API_TOKEN || ""
+      : "",
+    VK_API_TOKEN_TYPE: enableCommunityTools
+      ? communityAuth?.tokenType || communityTokenType
+      : "",
+    VK_API_CLIENT_ID: enableCommunityTools
+      ? communityAuth
+        ? communityClientId
+        : current.VK_API_CLIENT_ID || ""
+      : "",
+    VK_API_DEVICE_ID: enableCommunityTools
+      ? communityAuth?.deviceId || current.VK_API_DEVICE_ID || ""
+      : "",
+    VK_API_REFRESH_TOKEN: enableCommunityTools
+      ? communityAuth?.refreshToken ||
+        (communityTokenType === "vk_id"
+          ? current.VK_API_REFRESH_TOKEN || ""
+          : "")
+      : "",
+    VK_API_TOKEN_EXPIRES_AT: enableCommunityTools
+      ? communityAuth &&
+        Number.isInteger(communityAuth.expiresIn) &&
+        communityAuth.expiresIn > 0
+        ? new Date(
+            Date.now() + communityAuth.expiresIn * 1_000,
+          ).toISOString()
+        : current.VK_API_TOKEN_EXPIRES_AT || ""
+      : "",
   });
 
   await writeFile(authPath, content, { mode: 0o600 });

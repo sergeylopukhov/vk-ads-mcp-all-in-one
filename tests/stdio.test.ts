@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { COMMUNITY_TOOL_NAMES } from "../src/community/tools.js";
 import {
   AD_GROUP_CREATE_TOOL,
   AD_GROUP_DELETE_TOOL,
@@ -1211,6 +1212,7 @@ describe("VK Ads MCP stdio server", () => {
               openWorldHint: true,
             },
           },
+          ...COMMUNITY_TOOL_NAMES.map((name) => ({ name })),
         ],
       });
       expect(stderr).toBe("");
