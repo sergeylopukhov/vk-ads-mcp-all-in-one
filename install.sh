@@ -14,7 +14,7 @@ temporary_directory=$(mktemp -d "${TMPDIR:-/tmp}/vk-ads-mcp.XXXXXX")
 installer_file="$temporary_directory/install.mjs"
 trap 'rm -rf "$temporary_directory"' EXIT HUP INT TERM
 
-if ! curl -fsSL "$INSTALLER_URL" -o "$installer_file"; then
+if ! curl -fsSL "$INSTALLER_URL" -o "$installer_file" 2>/dev/null; then
   if ! command -v gh >/dev/null 2>&1; then
     echo "Ошибка: приватный релиз требует авторизованный GitHub CLI: gh auth login" >&2
     exit 1
