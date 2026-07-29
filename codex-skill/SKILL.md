@@ -27,7 +27,7 @@ tool names, provider fields, object IDs, or results.
 
 ## Live status
 
-Treat the installed release's `tools.md` as the status authority. Local tests
+Treat the installed release's `docs/tools.md` as the status authority. Local tests
 and code presence do not prove live operation.
 
 - A `✅` tool may be used normally within the rules above.

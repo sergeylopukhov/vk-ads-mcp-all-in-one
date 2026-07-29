@@ -104,7 +104,7 @@ by MCP before filling provider-specific fields.
 
 ## Current `⛔️` tools
 
-The installed `tools.md` remains authoritative if this list differs.
+The installed `docs/tools.md` remains authoritative if this list differs.
 
 Read tools that may be attempted with explicit status disclosure:
 

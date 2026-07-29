@@ -26,6 +26,7 @@ const MANAGED_ENTRIES = [
   "package.json",
   "package-lock.json",
   "codex-skill",
+  "docs",
 ];
 
 let cachedGitHubToken;
@@ -72,7 +73,8 @@ export function selectServerFiles(tree) {
         path === "package-lock.json" ||
         path === "tsconfig.json" ||
         path.startsWith("src/") ||
-        path.startsWith("codex-skill/"),
+        path.startsWith("codex-skill/") ||
+        path.startsWith("docs/"),
     );
 }
 
@@ -306,6 +308,7 @@ async function downloadServer(ref, destination) {
     "package-lock.json",
     "tsconfig.json",
     "codex-skill/SKILL.md",
+    "docs/tools.md",
   ];
 
   for (const path of required) {

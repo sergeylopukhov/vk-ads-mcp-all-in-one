@@ -128,7 +128,7 @@ VK_COMMUNITY_RESEARCH_TTL_DAYS=30
 | Кабинет | Профиль, язык, приложения и безопасные статусы ОРД. |
 | Сообщества VK | Поиск, фильтрация, анализ публичных записей, скоринг, фоновые исследования, снимки и экспорт. |
 
-Полный перечень, тип доступа и статусы: [tools.md](tools.md).
+Полный перечень, тип доступа и статусы: [docs/tools.md](docs/tools.md).
 
 ## Безопасность записи
 
@@ -140,16 +140,16 @@ VK_COMMUNITY_RESEARCH_TTL_DAYS=30
 
 ## MCP-клиенты
 
-Установщик автоматически настраивает Codex. Для Claude Code, Gemini CLI, Qwen Code и Kimi Code CLI используйте [инструкции по подключению](readme/setup-clients.md).
+Установщик автоматически настраивает Codex. Для Claude Code, Gemini CLI, Qwen Code и Kimi Code CLI используйте [инструкции по подключению](docs/setup-clients.md).
 
-- [Подключение Codex](readme/setup-codex.md)
-- [Подключение других MCP-клиентов](readme/setup-clients.md)
+- [Подключение Codex](docs/setup-codex.md)
+- [Подключение других MCP-клиентов](docs/setup-clients.md)
 
 ## Документация
 
-- [Каталог инструментов](tools.md)
-- [Подключение Codex](readme/setup-codex.md)
-- [Подключение MCP-клиентов](readme/setup-clients.md)
-- [Политика безопасности](SECURITY.md)
-- [История изменений](CHANGELOG.md)
+- [Каталог инструментов](docs/tools.md)
+- [Подключение Codex](docs/setup-codex.md)
+- [Подключение MCP-клиентов](docs/setup-clients.md)
+- [Политика безопасности](docs/SECURITY.md)
+- [История изменений](docs/CHANGELOG.md)
 - [Лицензия MIT](LICENSE)

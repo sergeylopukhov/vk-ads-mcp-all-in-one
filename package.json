@@ -14,14 +14,10 @@
     "dist/",
     "assets/",
     "codex-skill/",
-    "readme/",
+    "docs/",
     "install.mjs",
     "install.ps1",
-    "install.sh",
-    "tools.md",
-    "SECURITY.md",
-    "CHANGELOG.md",
-    "NOTICE.md"
+    "install.sh"
   ],
   "type": "module",
   "engines": {
