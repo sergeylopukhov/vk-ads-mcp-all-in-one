@@ -18,12 +18,18 @@ tool names, provider fields, object IDs, or results.
 3. For analysis, establish the object hierarchy and reporting period before
    interpreting metrics. Prefer complete periods and disclose partial data.
 4. Call write tools only when the user explicitly requests that exact change.
-   A write call executes immediately; there is no preview layer.
-5. Before a write, read the target and verify its ID, status, and parent. Use
-   one narrow write call, then reread the result when supported.
-6. Never expose tokens, client secrets, identifier-file contents, lead
+5. Before every supported write, call `vk_ads_action_prepare` with the intended
+   action and the exact input. Read `ActionReadiness`; do not infer missing
+   provider requirements from a failed write.
+6. If `ready=false`, report the concrete missing or incompatible condition.
+   Apply a `suggestedPatch` to a related object only after separate user
+   confirmation when `requiresConfirmation=true`.
+7. When `ready=true`, use one narrow write call with the same input. Never
+   cycle through creatives or repeat a write based on a guess. Reread the
+   result when supported.
+8. Never expose tokens, client secrets, identifier-file contents, lead
    contacts, respondent answers, or raw private provider payloads.
-7. Respond in Russian unless the user requests another language.
+9. Respond in Russian unless the user requests another language.
 
 ## Live status
 
@@ -79,10 +85,11 @@ report by default.
 ## Authentication recovery
 
 - Normal expiry and the first provider HTTP `401` are handled automatically.
-- On an explicit refresh request, call `vk_ads_oauth_token_refresh` and state
-  that its current release status is `⛔️`.
+- On an explicit refresh request, first prepare `oauth.tokens_refresh`, then
+  call `vk_ads_oauth_token_refresh` with
+  `REFRESH_CURRENT_VK_ADS_TOKENS`.
 - If the pair was revoked or replaced elsewhere, explain that
   `vk_ads_oauth_current_tokens_delete` revokes every token for the configured
-  VK Ads account. Call it only after explicit consent using
-  `DELETE_ALL_CURRENT_VK_ADS_TOKENS`, then run
+  VK Ads account. After explicit consent, prepare `oauth.tokens_delete`, call
+  the tool using `DELETE_ALL_CURRENT_VK_ADS_TOKENS`, then run
   `vk_ads_connection_check`.

@@ -6,6 +6,12 @@ by MCP before filling provider-specific fields.
 ## Status and authentication
 
 - Connection: `vk_ads_connection_check`
+- Read-only preparation before a supported write:
+  `vk_ads_action_prepare`
+  Inspect its current `action` enum instead of inventing an action name.
+  Values use stable resource operations such as `banner.create`,
+  `lead_form.archive`, `pricelist.batch_create`, and
+  `user.language_update`.
 - Safe account profile: `vk_ads_user_profile_get`
 - Forced token refresh: `vk_ads_oauth_token_refresh`
 - Revoke all current-account tokens and reauthenticate:
@@ -121,8 +127,6 @@ Read tools that may be attempted with explicit status disclosure:
 
 Write tools that are not routine operations:
 
-- `vk_ads_oauth_current_tokens_delete`
-- `vk_ads_oauth_token_refresh`
 - `vk_ads_banners_remoderate`
 - `vk_ads_remarketing_counter_create`
 - `vk_ads_remarketing_counter_update`

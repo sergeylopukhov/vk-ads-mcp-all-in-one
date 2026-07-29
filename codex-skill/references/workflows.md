@@ -27,11 +27,15 @@
 
 1. Run the connection check and resolve the current hierarchy.
 2. Infer safe IDs from an exact unique match; otherwise ask the user.
-3. Read the target immediately before changing it.
-4. Verify the requested operation, payload scope, status, and parent links.
-5. Call one narrow create, update, delete, or mass-action tool.
-6. Reread the object or collection and compare requested fields.
-7. Report confirmed, partially confirmed, or failed outcomes truthfully.
+3. Call `vk_ads_action_prepare` with the exact action and planned input.
+4. Read `missingFields`, `incompatibleFields`, `warnings`,
+   `allowedValues`, `suggestedPatch`, and `requiresConfirmation`.
+5. Resolve blocking conditions. Ask separately before applying a suggested
+   change to a parent or related object.
+6. When `ready=true`, call one narrow create, update, delete, or mass-action
+   tool with the same input.
+7. Reread the object or collection and compare requested fields.
+8. Report confirmed, partially confirmed, or failed outcomes truthfully.
 
 For mass actions, enumerate the resolved targets before execution. Do not widen
 phrases such as "these campaigns" beyond the visible selection.
@@ -80,11 +84,13 @@ All community tools carry `✅`.
 1. If ordinary reads work, do nothing.
 2. On an expired token or first HTTP `401`, allow the server's automatic refresh.
 3. If the user explicitly asks for a refresh, call
-   `vk_ads_oauth_token_refresh`, disclose its `⛔️` status, then run
+   `vk_ads_action_prepare` with `oauth.tokens_refresh` and the exact
+   confirmation, then call `vk_ads_oauth_token_refresh` and run
    `vk_ads_connection_check`.
 4. If refresh fails because the pair was revoked or replaced elsewhere, explain
    that the reset affects every token for the configured account.
-5. After explicit consent, call `vk_ads_oauth_current_tokens_delete` with
+5. After explicit consent, prepare `oauth.tokens_delete`, then call
+   `vk_ads_oauth_current_tokens_delete` with
    `DELETE_ALL_CURRENT_VK_ADS_TOKENS`.
 6. Run `vk_ads_connection_check` after reauthentication.
 7. Never print, request in chat, or copy token values.
@@ -97,19 +103,33 @@ All community tools carry `✅`.
 3. Prefer existing verified list and segment tools.
 4. Treat current counter-goal write tools as unverified and do not use them as
    routine operations.
-5. After a write, reread the object, relations, or collection and verify exact
+5. Prepare the exact audience action before a write. Do not submit source
+   credentials, file contents, or sharing keys in chat.
+6. After a write, reread the object, relations, or collection and verify exact
    requested fields.
-6. Never expose uploaded identifiers or source credentials.
+7. Never expose uploaded identifiers or source credentials.
 
 ## Leads and surveys
 
 1. Resolve the exact form or survey and inspect its current status.
 2. Return only sanitized metadata through MCP.
-3. Create, update, copy, archive, or restore only on explicit request.
+3. Prepare the exact create, update, copy, archive, restore, test-lead, or
+   export action before writing.
 4. Treat local CSV/XLSX export as a write: require explicit intent and never
    overwrite an existing file.
 5. Do not expose contacts or respondent answers in chat.
 6. Reread statuses after archive or restore operations.
+
+## Price lists and account settings
+
+1. Prepare the exact price-list, local-geo, URL, mobile-app, language, ОРД, or
+   SKAdNetwork action before writing.
+2. For a price list, choose one source branch and provide only its required
+   fields. Keep marketplace credentials out of chat.
+3. Treat batch item IDs as unique and wait for the provider task to finish
+   before reporting success.
+4. Require the exact confirmation literal for OAuth and ОРД operations.
+5. Keep ОРД personal values and SKAdNetwork recipients out of reports.
 
 ## Safe cleanup
 
