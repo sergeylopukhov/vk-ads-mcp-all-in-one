@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import {
   applyEnvValues,
   codexSkillDirectory,
+  DEFAULT_COMMUNITY_LEGACY_CLIENT_ID,
   defaultInstallDirectory,
   installCodexSkill,
   parseEnvValues,
@@ -185,6 +186,19 @@ test("parseEnvValues reads active values and quoted strings", () => {
       VK_ADS_CLIENT_ID: "123",
       VK_ADS_CLIENT_SECRET: "secret value",
     },
+  );
+});
+
+test("community search defaults to the built-in VK application", async () => {
+  const defaults = parseEnvValues(
+    await readFile(join(repositoryRoot, ".env.example"), "utf8"),
+  );
+
+  assert.equal(DEFAULT_COMMUNITY_LEGACY_CLIENT_ID, "6270012");
+  assert.equal(defaults.VK_API_TOKEN_TYPE, "legacy");
+  assert.equal(
+    defaults.VK_API_CLIENT_ID,
+    DEFAULT_COMMUNITY_LEGACY_CLIENT_ID,
   );
 });
 

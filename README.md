@@ -10,7 +10,7 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-stdio-1f6feb" alt="MCP stdio"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b8f60" alt="Лицензия MIT"></a>
-  <img src="https://img.shields.io/badge/version-0.4.0-6b7280" alt="Версия 0.4.0">
+  <img src="https://img.shields.io/badge/version-0.4.1-6b7280" alt="Версия 0.4.1">
 </p>
 
 Сервер подключает MCP-клиент к VK Рекламе: читает кампании, группы и объявления, получает статистику, работает с аудиториями, креативами, лид-формами, опросами, подписками, прайс-листами и справочниками. Отдельный блок Core VK API ищет и анализирует публичные сообщества.
@@ -133,7 +133,7 @@ VK_COMMUNITY_RESEARCH_TTL_DAYS=30
 
 Истекающий token обновляется автоматически. После HTTP `401` сервер один раз обновляет отклонённую пару и повторяет запрос. Для ручного обновления используется `vk_ads_oauth_token_refresh`. Если пара была полностью отозвана на другом компьютере и refresh невозможен, `vk_ads_oauth_current_tokens_delete` удаляет все токены настроенного аккаунта без предварительной проверки старого access token, очищает локальные значения и запрашивает новую пару.
 
-Инструменты сообществ используют только отдельный `VK_API_TOKEN`. Для VK ID можно также сохранить `VK_API_CLIENT_ID`, `VK_API_DEVICE_ID`, `VK_API_REFRESH_TOKEN` и срок действия — сервер обновит Core VK token при старте. Значение `VK_API_TOKEN_TYPE=legacy` включает совместимый legacy OAuth; по умолчанию используется VK ID.
+Инструменты сообществ используют только отдельный `VK_API_TOKEN`. По умолчанию установщик предлагает совместимый legacy OAuth через встроенное приложение VK с `client_id=6270012`; достаточно нажать Enter. При выборе VK ID нужно указать своё приложение, а также можно сохранить `VK_API_CLIENT_ID`, `VK_API_DEVICE_ID`, `VK_API_REFRESH_TOKEN` и срок действия — сервер обновит Core VK token при старте.
 
 `auth.env` исключён из Git и npm-пакета. На macOS и Linux установщик создаёт его с правами `0600`. Токены, `client_secret` и полные приватные ответы VK Ads не выводятся через MCP.
 

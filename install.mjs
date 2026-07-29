@@ -595,7 +595,7 @@ async function promptVisible(question) {
 const COMMUNITY_REDIRECT_URI = "https://vk.ru/blank.html";
 const COMMUNITY_LEGACY_REDIRECT_URI =
   "https://oauth.vk.ru/blank.html";
-const DEFAULT_COMMUNITY_LEGACY_CLIENT_ID = "6270012";
+export const DEFAULT_COMMUNITY_LEGACY_CLIENT_ID = "6270012";
 
 async function askCommunityTokenType(readline, defaultValue = "legacy") {
   while (true) {
@@ -842,6 +842,12 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
         readline,
         communityTokenType,
       );
+      if (
+        communityTokenType === "legacy" &&
+        current.VK_API_TOKEN_TYPE !== "legacy"
+      ) {
+        communityClientId = DEFAULT_COMMUNITY_LEGACY_CLIENT_ID;
+      }
       if (communityTokenType === "vk_id") {
         console.log(
           `Создайте приложение VK ID и добавьте redirect URL ${COMMUNITY_REDIRECT_URI}.`,
@@ -850,7 +856,7 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
       communityClientId = await ask(
         readline,
         communityTokenType === "legacy"
-          ? "VK client_id приложения"
+          ? "VK client_id приложения (Enter — встроенное)"
           : "VK ID client_id приложения",
         communityClientId ||
           (communityTokenType === "legacy"
