@@ -51,8 +51,9 @@ phrases such as "these campaigns" beyond the visible selection.
    and propose next actions.
 7. Do not export by default. Prepare export only when requested.
 
-All community tools currently carry `⛔️`. State that before attempting them and
-do not describe them as available.
+The synchronous discovery, analysis, scoring, combined-research, and in-memory
+export tools carry `✅`. Background-run, progress, snapshot, and rescore tools
+carry `⛔️` and must not be described as available.
 
 ## Token recovery
 
