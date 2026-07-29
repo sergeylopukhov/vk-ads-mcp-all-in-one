@@ -123,10 +123,55 @@ import {
 } from "./community/tools.js";
 import { VkCommunityClient } from "./community/vk-client.js";
 import { CommunityResearchStore } from "./community/research-store.js";
+import {
+  createBannerCreateActionContract,
+} from "./preflight/banner-create.js";
+import { createCampaignActionContracts } from "./preflight/campaigns.js";
+import { createCoreWriteActionContracts } from "./preflight/core-writes.js";
+import { createContentActionContracts } from "./preflight/content.js";
+import { createUsersListActionContracts } from "./preflight/users-lists.js";
+import { createOfflineGoalActionContracts } from "./preflight/offline-goals.js";
+import { createSegmentActionContracts } from "./preflight/segments.js";
+import { createSharingKeyActionContracts } from "./preflight/sharing-keys.js";
+import { createRemarketingActionContracts } from "./preflight/remarketing.js";
+import {
+  createLeadFormActionContracts,
+  leadFormCreateInputShape,
+  leadFormUpdateInputShape,
+} from "./preflight/lead-forms.js";
+import {
+  createSurveyActionContracts,
+  surveyChangesShape,
+  surveyCreateInputShape,
+} from "./preflight/surveys.js";
+import {
+  createSubscriptionActionContracts,
+  subscriptionResourceSchema,
+} from "./preflight/subscriptions.js";
+import {
+  createPricelistActionContracts,
+  pricelistBatchSchema,
+  pricelistCreateSchema,
+} from "./preflight/pricelists.js";
+import {
+  createInfrastructureActionContracts,
+  localGeoRegionSchema,
+} from "./preflight/infrastructure.js";
+import {
+  createAccountSecurityActionContracts,
+  oauthTokenRefreshSchema,
+  oauthTokensDeleteSchema,
+  ordUserUpdateSchema,
+} from "./preflight/account-security.js";
+import {
+  ActionContractRegistry,
+  ActionPreflightEngine,
+} from "./preflight/engine.js";
+import { actionReadinessSchema } from "./preflight/types.js";
 
 export const SERVER_INFO = {
   name: "vk-ads-mcp",
-  version: "0.6.0",
+  version: "0.1.0",
 } as const;
 
 export const CONNECTION_CHECK_TOOL = "vk_ads_connection_check";
@@ -146,6 +191,7 @@ export const AD_GROUPS_MASS_ACTION_TOOL =
 export const BANNER_GET_TOOL = "vk_ads_banner_get";
 export const BANNERS_LIST_TOOL = "vk_ads_banners_list";
 export const BANNER_CREATE_TOOL = "vk_ads_banner_create";
+export const ACTION_PREPARE_TOOL = "vk_ads_action_prepare";
 export const BANNER_UPDATE_TOOL = "vk_ads_banner_update";
 export const BANNER_DELETE_TOOL = "vk_ads_banner_delete";
 export const BANNERS_MASS_ACTION_TOOL =
@@ -902,7 +948,12 @@ const segmentRelationInputSchema = z.object({
 });
 
 const sharingKeySourceInputSchema = z.object({
-  objectType: z.string().min(1),
+  objectType: z.enum([
+    "users_list",
+    "segment",
+    "counter",
+    "pricelist",
+  ]),
   objectId: z.number().int().positive(),
 });
 
@@ -993,6 +1044,8 @@ const leadFormOutputSchema = z.object({
   longDescription: z.string().optional(),
   companyTitle: z.string().optional(),
   logoId: z.string().nullable().optional(),
+  award: z.record(z.string(), z.unknown()).optional(),
+  gradient: z.number().int().optional(),
   contactFields: z.array(z.string()).optional(),
   resultInfo: z.record(z.string(), z.unknown()).optional(),
   agreement: z.record(z.string(), z.unknown()).optional(),
@@ -1000,27 +1053,11 @@ const leadFormOutputSchema = z.object({
     .array(z.record(z.string(), z.unknown()))
     .optional(),
   pages: z.array(z.record(z.string(), z.unknown())).optional(),
+  requiredAnswers: z.boolean().optional(),
+  mainColor: z.string().optional(),
+  mainImageId: z.string().nullable().optional(),
   leadsCount: z.number().int().nonnegative().optional(),
 });
-const leadFormCreateInputShape = {
-  name: z.string().min(1).max(255),
-  firstScreenType: z.enum(["compact", "long_text", "award"]),
-  title: z.string().min(1).max(50),
-  description: z.string().min(1).max(35).optional(),
-  longDescription: z.string().min(1).optional(),
-  companyTitle: z.string().min(1).max(30),
-  logoId: z.string().min(1),
-  contactFields: z.array(z.string().min(1)).min(1),
-  resultInfo: z.record(z.string(), z.unknown()),
-  agreement: z.record(z.string(), z.unknown()),
-  notifications: z
-    .array(z.record(z.string(), z.unknown()))
-    .optional(),
-  pages: z
-    .array(z.record(z.string(), z.unknown()))
-    .min(1)
-    .optional(),
-};
 const leadOutputSchema = z.object({
   id: z.string().min(1),
   formId: z.number().int().positive(),
@@ -1063,17 +1100,6 @@ const surveyOutputSchema = z.object({
   pages: z.array(z.record(z.string(), z.unknown())).optional(),
   respondentsCount: z.number().int().nonnegative().optional(),
 });
-const surveyCreateInputShape = {
-  name: z.string().min(1).max(255),
-  firstScreenType: z.string().min(1),
-  title: z.string().min(1),
-  description: z.string().optional(),
-  companyTitle: z.string().min(1),
-  resultInfo: z.record(z.string(), z.unknown()),
-  pages: z.array(z.record(z.string(), z.unknown())).min(1),
-  logoId: z.string().min(1),
-  gradient: z.number().int(),
-};
 const surveyIdsSchema = z
   .array(z.number().int().positive())
   .min(1)
@@ -1168,22 +1194,7 @@ const ordUserStatusOutputSchema = z.object({
   hasForeignInn: z.boolean(),
   hasSite: z.boolean(),
 });
-const ordUserUpdateInputSchema = z
-  .object({
-    name: z.string().min(1).max(255).optional(),
-    phone: z.string().min(1).max(64).optional(),
-    inn: z.string().min(1).max(64).optional(),
-    foreignEPaymentMethod: z.string().min(1).max(255).optional(),
-    foreignCountryCode: z.string().min(1).max(16).optional(),
-    foreignRegistrationNumber: z.string().min(1).max(255).optional(),
-    foreignInn: z.string().min(1).max(255).optional(),
-    site: z.string().url().optional(),
-  })
-  .refine(
-    (value) =>
-      Object.values(value).some((field) => field !== undefined),
-    "Укажите хотя бы одно поле ОРД.",
-  );
+const ordUserUpdateInputSchema = ordUserUpdateSchema;
 const userGeoOutputSchema = z.object({
   id: z.number().int(),
   name: z.string(),
@@ -1207,12 +1218,36 @@ const remarketingCounterGoalOutputSchema = z.object({
   condition: z.string().optional(),
   goalType: z.string().optional(),
 });
+const remarketingCounterConditionSchema = z.enum([
+  "uss",
+  "rss",
+  "jse",
+  "hd",
+  "ts",
+]);
+const remarketingCounterGoalTypeSchema = z.enum([
+  "content",
+  "search",
+  "basket",
+  "wishlist",
+  "checkout",
+  "payment_info",
+  "purchase",
+  "lead",
+  "registration",
+  "custom",
+]);
 const remarketingCounterGoalCreateInputSchema = z.object({
-  substr: z.string().min(1).optional(),
-  value: z.number().finite().optional(),
+  substr: z.string().min(1),
+  value: z
+    .number()
+    .int()
+    .min(-2_147_483_647)
+    .max(2_147_483_647)
+    .optional(),
   name: z.string().min(1),
-  condition: z.string().min(1).optional(),
-  goalType: z.string().min(1).optional(),
+  condition: remarketingCounterConditionSchema,
+  goalType: remarketingCounterGoalTypeSchema.optional(),
 });
 
 export function createVkAdsMcpServer(
@@ -1223,6 +1258,486 @@ export function createVkAdsMcpServer(
   communityDependencies?: VkCommunityToolDependencies,
 ): McpServer {
   const server = new McpServer(SERVER_INFO);
+  const actionContracts = new ActionContractRegistry();
+  actionContracts.register(
+    createBannerCreateActionContract({
+      getCurrentUser: () => vkAdsClient.getCurrentUser(),
+      getAdGroup: (id) => vkAdsClient.getAdGroup(id),
+      listReferenceData: (resource, input) => {
+        const listReferenceData =
+          vkAdsClient.listReferenceData;
+
+        if (listReferenceData === undefined) {
+          throw new VkAdsApiError(
+            "VK Ads reference client is unavailable.",
+            "reference_client_unavailable",
+          );
+        }
+
+        return listReferenceData.call(
+          vkAdsClient,
+          resource,
+          input,
+        );
+      },
+    }),
+  );
+  for (const contract of createCampaignActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    getAdPlan: (id) => vkAdsClient.getAdPlan(id),
+    getAdGroup: (id) => vkAdsClient.getAdGroup(id),
+    listReferenceData: (resource, input) => {
+      const listReferenceData =
+        vkAdsClient.listReferenceData;
+
+      if (listReferenceData === undefined) {
+        throw new VkAdsApiError(
+          "VK Ads reference client is unavailable.",
+          "reference_client_unavailable",
+        );
+      }
+
+      return listReferenceData.call(
+        vkAdsClient,
+        resource,
+        input,
+      );
+    },
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createCoreWriteActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    getAdPlan: (id) => vkAdsClient.getAdPlan(id),
+    getAdGroup: (id) => vkAdsClient.getAdGroup(id),
+    getBanner: (id) => vkAdsClient.getBanner(id),
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createContentActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createUsersListActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    getRemarketingUsersList: (id) => {
+      const getUsersList =
+        vkAdsClient.getRemarketingUsersList;
+
+      if (getUsersList === undefined) {
+        throw new VkAdsApiError(
+          "Remarketing users-list capability is unavailable.",
+          "remarketing_users_list_client_unavailable",
+        );
+      }
+
+      return getUsersList.call(vkAdsClient, id);
+    },
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createOfflineGoalActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    listRemarketingOfflineGoals: () => {
+      const listOfflineGoals =
+        vkAdsClient.listRemarketingOfflineGoals;
+
+      if (listOfflineGoals === undefined) {
+        throw new VkAdsApiError(
+          "Remarketing offline-goal capability is unavailable.",
+          "remarketing_offline_goal_client_unavailable",
+        );
+      }
+
+      return listOfflineGoals.call(vkAdsClient);
+    },
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createRemarketingActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    getCounter: (id) => {
+      const getCounter =
+        vkAdsClient.getRemarketingCounter;
+
+      if (getCounter === undefined) {
+        throw new VkAdsApiError(
+          "Remarketing counter capability is unavailable.",
+          "remarketing_counter_client_unavailable",
+        );
+      }
+
+      return getCounter.call(vkAdsClient, id);
+    },
+    async listCounters(id) {
+      return (
+        await vkAdsClient.listRemarketingCounters({
+          counterId: id,
+        })
+      ).items;
+    },
+    listCounterGoals: (id) => {
+      const listGoals =
+        vkAdsClient.listRemarketingCounterGoals;
+
+      if (listGoals === undefined) {
+        throw new VkAdsApiError(
+          "Counter-goal capability is unavailable.",
+          "remarketing_counter_goal_client_unavailable",
+        );
+      }
+
+      return listGoals.call(vkAdsClient, id);
+    },
+    async inAppEventExists(appId, trackerId, eventId) {
+      let offset = 0;
+      const limit = 50;
+
+      while (true) {
+        const page =
+          await vkAdsClient.listRemarketingInAppEvents({
+            limit,
+            offset,
+          });
+        const found = page.items
+          .find((source) => source.appId === appId)
+          ?.trackers.find(
+            (tracker) => tracker.id === trackerId,
+          )
+          ?.events.some((event) => event.id === eventId);
+
+        if (found) {
+          return true;
+        }
+        offset += page.items.length;
+
+        if (
+          page.items.length === 0 ||
+          offset >= page.count
+        ) {
+          return false;
+        }
+      }
+    },
+    async inAppCategoryExists(id) {
+      const listReferenceData =
+        vkAdsClient.listReferenceData;
+
+      if (listReferenceData === undefined) {
+        throw new VkAdsApiError(
+          "VK Ads reference client is unavailable.",
+          "reference_client_unavailable",
+        );
+      }
+
+      const result = await listReferenceData.call(
+        vkAdsClient,
+        "in_app_event_categories",
+        { ids: [id], limit: 1 },
+      );
+      return result.items.some((item) => item.id === id);
+    },
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createLeadFormActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    getLeadForm: (id) => {
+      const getLeadForm = vkAdsClient.getLeadForm;
+
+      if (getLeadForm === undefined) {
+        throw new VkAdsApiError(
+          "Lead-form capability is unavailable.",
+          "lead_form_client_unavailable",
+        );
+      }
+
+      return getLeadForm.call(vkAdsClient, id);
+    },
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createSurveyActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    getSurvey: (id) => {
+      const getSurvey = vkAdsClient.getSurvey;
+
+      if (getSurvey === undefined) {
+        throw new VkAdsApiError(
+          "Survey client is unavailable.",
+          "survey_client_unavailable",
+        );
+      }
+
+      return getSurvey.call(vkAdsClient, id);
+    },
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createSubscriptionActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    async listSubscriptions() {
+      const listSubscriptions = vkAdsClient.listSubscriptions;
+
+      if (listSubscriptions === undefined) {
+        throw new VkAdsApiError(
+          "Subscription client is unavailable.",
+          "subscription_client_unavailable",
+        );
+      }
+
+      const items: VkAdsSubscriptionsPage["items"] = [];
+      let offset = 0;
+
+      while (true) {
+        const page = await listSubscriptions.call(vkAdsClient, {
+          limit: 50,
+          offset,
+        });
+        items.push(...page.items);
+        offset += page.items.length;
+
+        if (
+          page.items.length === 0 ||
+          offset >= page.count
+        ) {
+          return items;
+        }
+      }
+    },
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createPricelistActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    async listPricelists() {
+      const items: VkAdsRemarketingPricelistsResult["items"] = [];
+      let offset = 0;
+
+      while (true) {
+        const page =
+          await vkAdsClient.listRemarketingPricelists({
+            limit: 50,
+            offset,
+          });
+        items.push(...page.items);
+        offset += page.items.length;
+
+        if (
+          page.items.length === 0 ||
+          offset >= page.count
+        ) {
+          return items;
+        }
+      }
+    },
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createInfrastructureActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    async listLocalGeos() {
+      return (await vkAdsClient.listLocalGeos()).items;
+    },
+    getMobileStoreApp(store, identifier) {
+      const getMobileStoreApp = vkAdsClient.getMobileStoreApp;
+      if (getMobileStoreApp === undefined) {
+        throw new VkAdsApiError(
+          "Mobile-store application client is unavailable.",
+          "mobile_store_app_client_unavailable",
+        );
+      }
+      return getMobileStoreApp.call(
+        vkAdsClient,
+        store,
+        identifier,
+      );
+    },
+    getUserProfile(version) {
+      const getUserProfile = vkAdsClient.getUserProfile;
+      if (getUserProfile === undefined) {
+        throw new VkAdsApiError(
+          "User-profile client is unavailable.",
+          "user_profile_client_unavailable",
+        );
+      }
+      return getUserProfile.call(vkAdsClient, version);
+    },
+    listMobileAppsForSkAd() {
+      const listMobileApps = vkAdsClient.listMobileAppsForSkAd;
+      if (listMobileApps === undefined) {
+        throw new VkAdsApiError(
+          "SKAdNetwork client is unavailable.",
+          "skad_network_client_unavailable",
+        );
+      }
+      return listMobileApps.call(vkAdsClient);
+    },
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createAccountSecurityActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    async getTokenState() {
+      if (oauthOperations.getCurrentTokenState === undefined) {
+        throw new VkAdsApiError(
+          "OAuth token-state inspection is unavailable.",
+          "oauth_token_state_unavailable",
+        );
+      }
+      return oauthOperations.getCurrentTokenState();
+    },
+    async getOrdUser() {
+      const getOrdUser = vkAdsClient.getOrdUser;
+      if (getOrdUser === undefined) {
+        throw new VkAdsApiError(
+          "ORD user client is unavailable.",
+          "ord_user_client_unavailable",
+        );
+      }
+      return getOrdUser.call(vkAdsClient);
+    },
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createSegmentActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    getSegment: (id) => {
+      const getSegment = vkAdsClient.getSegment;
+
+      if (getSegment === undefined) {
+        throw new VkAdsApiError(
+          "Segment capability is unavailable.",
+          "segment_client_unavailable",
+        );
+      }
+
+      return getSegment.call(vkAdsClient, id);
+    },
+    listSegmentRelations: (segmentId) => {
+      const listRelations =
+        vkAdsClient.listSegmentRelations;
+
+      if (listRelations === undefined) {
+        throw new VkAdsApiError(
+          "Segment-relation capability is unavailable.",
+          "segment_relation_client_unavailable",
+        );
+      }
+
+      return listRelations.call(vkAdsClient, segmentId);
+    },
+  })) {
+    actionContracts.register(contract);
+  }
+  for (const contract of createSharingKeyActionContracts({
+    getCurrentUser: () => vkAdsClient.getCurrentUser(),
+    sourceExists: async (type, id) => {
+      if (type === "segment") {
+        const getSegment = vkAdsClient.getSegment;
+
+        if (getSegment === undefined) {
+          throw new VkAdsApiError(
+            "Segment capability is unavailable.",
+            "segment_client_unavailable",
+          );
+        }
+        await getSegment.call(vkAdsClient, id);
+        return true;
+      }
+
+      if (type === "users_list") {
+        const getUsersList =
+          vkAdsClient.getRemarketingUsersList;
+
+        if (getUsersList === undefined) {
+          throw new VkAdsApiError(
+            "Remarketing users-list capability is unavailable.",
+            "remarketing_users_list_client_unavailable",
+          );
+        }
+        await getUsersList.call(vkAdsClient, id);
+        return true;
+      }
+
+      if (type === "counter") {
+        const getCounter =
+          vkAdsClient.getRemarketingCounter;
+
+        if (getCounter === undefined) {
+          throw new VkAdsApiError(
+            "Remarketing counter capability is unavailable.",
+            "remarketing_counter_client_unavailable",
+          );
+        }
+        await getCounter.call(vkAdsClient, id);
+        return true;
+      }
+
+      let offset = 0;
+      const limit = 250;
+
+      while (true) {
+        const page =
+          await vkAdsClient.listRemarketingPricelists({
+            limit,
+            offset,
+          });
+
+        if (page.items.some((item) => item.id === id)) {
+          return true;
+        }
+        offset += page.items.length;
+
+        if (
+          page.items.length === 0 ||
+          offset >= page.count
+        ) {
+          return false;
+        }
+      }
+    },
+    listSharingKeys: (key) => {
+      const listSharingKeys = vkAdsClient.listSharingKeys;
+
+      if (listSharingKeys === undefined) {
+        throw new VkAdsApiError(
+          "Sharing-key capability is unavailable.",
+          "sharing_key_client_unavailable",
+        );
+      }
+
+      return listSharingKeys.call(vkAdsClient, key);
+    },
+  })) {
+    actionContracts.register(contract);
+  }
+  const actionPreflight = new ActionPreflightEngine(
+    actionContracts,
+  );
+  const prepareWriteAction = async (
+    action: string,
+    input: Record<string, unknown>,
+    operation: string,
+  ) => {
+    const readiness = await actionPreflight.prepare(action, input);
+    const issueCodes = [
+      ...readiness.missingFields,
+      ...readiness.incompatibleFields,
+      ...readiness.warnings,
+    ].map((issue) => issue.code);
+
+    await auditLog.ensureReady();
+    await auditLog.record({
+      operation: `${operation}.preflight`,
+      outcome: readiness.ready ? "ready" : "blocked",
+      stage: readiness.stage,
+      issueCodes,
+    });
+
+    return readiness;
+  };
 
   server.registerTool(
     OAUTH_CODE_INFO_TOOL,
@@ -1269,15 +1784,12 @@ export function createVkAdsMcpServer(
       title: "Удалить все токены текущего аккаунта VK Рекламы",
       description:
         "Удаляет все OAuth-токены текущего настроенного аккаунта, атомарно очищает локальные токены и подтверждает восстановление авторизации новым токеном.",
-      inputSchema: {
-        confirmation: z.literal(
-          "DELETE_ALL_CURRENT_VK_ADS_TOKENS",
-        ),
-      },
+      inputSchema: oauthTokensDeleteSchema,
       outputSchema: {
-        deleted: z.literal(true),
-        reauthenticated: z.literal(true),
+        deleted: z.boolean(),
+        reauthenticated: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
       },
       annotations: {
         readOnlyHint: false,
@@ -1286,8 +1798,29 @@ export function createVkAdsMcpServer(
         openWorldHint: true,
       },
     },
-    async () => {
-      await auditLog.ensureReady();
+    async (input) => {
+      const readiness = await prepareWriteAction(
+        "oauth.tokens_delete",
+        input,
+        "oauth.current_tokens.delete",
+      );
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Удаление токенов заблокировано предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            deleted: false,
+            reauthenticated: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
 
       try {
         await oauthOperations.deleteCurrentUserTokens();
@@ -1325,6 +1858,7 @@ export function createVkAdsMcpServer(
           deleted: true as const,
           reauthenticated: true as const,
           auditRecorded: true,
+          readiness,
         },
       };
     },
@@ -1336,12 +1870,13 @@ export function createVkAdsMcpServer(
       title: "Обновить токен VK Рекламы",
       description:
         "По явному запросу обновляет текущую пару access/refresh token, сохраняет её атомарно и проверяет новую авторизацию. Если refresh token уже отозван, используйте vk_ads_oauth_current_tokens_delete.",
-      inputSchema: {},
+      inputSchema: oauthTokenRefreshSchema,
       outputSchema: {
-        refreshed: z.literal(true),
-        verified: z.literal(true),
-        expiresAt: z.string().datetime(),
+        refreshed: z.boolean(),
+        verified: z.boolean(),
+        expiresAt: z.string().datetime().optional(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
       },
       annotations: {
         readOnlyHint: false,
@@ -1350,7 +1885,7 @@ export function createVkAdsMcpServer(
         openWorldHint: true,
       },
     },
-    async () => {
+    async (input) => {
       if (oauthOperations.refreshCurrentTokens === undefined) {
         throw new VkAdsApiError(
           "OAuth token refresh is unavailable.",
@@ -1358,7 +1893,28 @@ export function createVkAdsMcpServer(
         );
       }
 
-      await auditLog.ensureReady();
+      const readiness = await prepareWriteAction(
+        "oauth.tokens_refresh",
+        input,
+        "oauth.current_tokens.refresh",
+      );
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Обновление токена заблокировано предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            refreshed: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
       let expiresAt: number;
 
       try {
@@ -1390,6 +1946,7 @@ export function createVkAdsMcpServer(
           verified: true as const,
           expiresAt: new Date(expiresAt).toISOString(),
           auditRecorded: true,
+          readiness,
         },
       };
     },
@@ -1525,9 +2082,10 @@ export function createVkAdsMcpServer(
         flags: z.array(z.string().min(1)).optional(),
       },
       outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
+        created: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         counter: z.object({
           id: z.number().int().positive(),
           counterId: z.number().int().positive(),
@@ -1540,7 +2098,7 @@ export function createVkAdsMcpServer(
           ]),
           working: z.boolean().nullable(),
           flags: z.array(z.string()),
-        }),
+        }).optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -1558,6 +2116,38 @@ export function createVkAdsMcpServer(
       counterId,
       flags,
     }) => {
+      const readiness = await prepareWriteAction(
+        "remarketing_counter.create",
+        {
+          mode,
+          name,
+          url,
+          email,
+          password,
+          counterId,
+          flags,
+        },
+        "remarketing.counters.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание счётчика остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const newModeValid =
         mode === "new" &&
         url !== undefined &&
@@ -1660,6 +2250,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           counter: reread,
         },
       };
@@ -1748,10 +2339,11 @@ export function createVkAdsMcpServer(
           ),
       },
       outputSchema: {
-        updated: z.literal(true),
-        verified: z.literal(true),
+        updated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        counter: remarketingCounterOutputSchema,
+        readiness: actionReadinessSchema,
+        counter: remarketingCounterOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -1761,6 +2353,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ counterId, changes }) => {
+      const readiness = await prepareWriteAction(
+        "remarketing_counter.update",
+        { counterId, changes },
+        "remarketing.counters.update",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Изменение счётчика остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const getCounter = vkAdsClient.getRemarketingCounter;
       const updateCounter = vkAdsClient.updateRemarketingCounter;
 
@@ -1825,6 +2441,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           counter,
         },
       };
@@ -1842,9 +2459,10 @@ export function createVkAdsMcpServer(
         version: z.enum(["v1", "v2"]).default("v2"),
       },
       outputSchema: {
-        deleted: z.literal(true),
-        verified: z.literal(true),
+        deleted: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         counterId: z.number().int().positive(),
         version: z.enum(["v1", "v2"]),
       },
@@ -1856,6 +2474,32 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ counterId, version }) => {
+      const readiness = await prepareWriteAction(
+        "remarketing_counter.delete",
+        { counterId, version },
+        `remarketing.counters.${version}.delete`,
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Удаление счётчика остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            deleted: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            counterId,
+            version,
+          },
+        };
+      }
+
       const getCounter = vkAdsClient.getRemarketingCounter;
       const deleteCounter = vkAdsClient.deleteRemarketingCounter;
 
@@ -1910,6 +2554,7 @@ export function createVkAdsMcpServer(
           deleted: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           counterId,
           version,
         },
@@ -1973,10 +2618,11 @@ export function createVkAdsMcpServer(
         goal: remarketingCounterGoalCreateInputSchema,
       },
       outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
+        created: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        goal: remarketingCounterGoalOutputSchema,
+        readiness: actionReadinessSchema,
+        goal: remarketingCounterGoalOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -1986,6 +2632,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ counterId, goal }) => {
+      const readiness = await prepareWriteAction(
+        "remarketing_counter_goal.create",
+        { counterId, goal },
+        "remarketing.counter_goals.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание цели счётчика остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const getCounter = vkAdsClient.getRemarketingCounter;
       const listGoals = vkAdsClient.listRemarketingCounterGoals;
       const createGoal = vkAdsClient.createRemarketingCounterGoal;
@@ -2072,6 +2742,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           goal: created,
         },
       };
@@ -2092,9 +2763,15 @@ export function createVkAdsMcpServer(
         ]),
         changes: z
           .object({
-            value: z.number().finite().optional(),
+            value: z
+              .number()
+              .int()
+              .min(-2_147_483_647)
+              .max(2_147_483_647)
+              .optional(),
             name: z.string().min(1).optional(),
-            goalType: z.string().min(1).optional(),
+            goalType:
+              remarketingCounterGoalTypeSchema.optional(),
           })
           .refine(
             (changes) =>
@@ -2105,10 +2782,11 @@ export function createVkAdsMcpServer(
           ),
       },
       outputSchema: {
-        updated: z.literal(true),
-        verified: z.literal(true),
+        updated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        goal: remarketingCounterGoalOutputSchema,
+        readiness: actionReadinessSchema,
+        goal: remarketingCounterGoalOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -2118,6 +2796,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ counterId, goalId, changes }) => {
+      const readiness = await prepareWriteAction(
+        "remarketing_counter_goal.update",
+        { counterId, goalId, changes },
+        "remarketing.counter_goals.update",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Изменение цели счётчика остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const getCounter = vkAdsClient.getRemarketingCounter;
       const listGoals = vkAdsClient.listRemarketingCounterGoals;
       const updateGoal = vkAdsClient.updateRemarketingCounterGoal;
@@ -2214,6 +2916,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           goal: updated,
         },
       };
@@ -2368,9 +3071,10 @@ export function createVkAdsMcpServer(
         categoryId: z.number().int().positive(),
       },
       outputSchema: {
-        updated: z.literal(true),
-        verified: z.literal(true),
+        updated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
       },
       annotations: {
         readOnlyHint: false,
@@ -2380,6 +3084,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ appId, trackerId, eventId, categoryId }) => {
+      const readiness = await prepareWriteAction(
+        "remarketing_in_app_event.update",
+        { appId, trackerId, eventId, categoryId },
+        "remarketing.in_app_events.update",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Изменение события остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const updateEvent =
         vkAdsClient.updateRemarketingInAppEventCategory;
 
@@ -2455,6 +3183,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
         },
       };
     },
@@ -2531,16 +3260,19 @@ export function createVkAdsMcpServer(
         attributionPeriod: z.number().int().positive(),
       },
       outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
+        created: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        offlineGoal: z.object({
-          id: z.number().int().positive(),
-          name: z.string(),
-          type: z.enum(["email", "phone"]),
-          attributionPeriod: z.number().int().positive(),
-          loadStatus: z.string().min(1).optional(),
-        }),
+        readiness: actionReadinessSchema,
+        offlineGoal: z
+          .object({
+            id: z.number().int().positive(),
+            name: z.string(),
+            type: z.enum(["email", "phone"]),
+            attributionPeriod: z.number().int().positive(),
+            loadStatus: z.string().min(1).optional(),
+          })
+          .optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -2555,6 +3287,30 @@ export function createVkAdsMcpServer(
       type,
       attributionPeriod,
     }) => {
+      const readiness = await prepareWriteAction(
+        "offline_goal.create",
+        { filePath, name, type, attributionPeriod },
+        "remarketing.offline_goals.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание офлайн-цели остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const fileInfo = await lstat(filePath);
 
       if (!fileInfo.isFile() || fileInfo.isSymbolicLink()) {
@@ -2646,6 +3402,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           offlineGoal: reread,
         },
       };
@@ -2671,16 +3428,19 @@ export function createVkAdsMcpServer(
           .optional(),
       },
       outputSchema: {
-        updated: z.literal(true),
-        verified: z.literal(true),
+        updated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        offlineGoal: z.object({
-          id: z.number().int().positive(),
-          name: z.string(),
-          type: z.enum(["email", "phone"]),
-          attributionPeriod: z.number().int().positive(),
-          loadStatus: z.string().min(1).optional(),
-        }),
+        readiness: actionReadinessSchema,
+        offlineGoal: z
+          .object({
+            id: z.number().int().positive(),
+            name: z.string(),
+            type: z.enum(["email", "phone"]),
+            attributionPeriod: z.number().int().positive(),
+            loadStatus: z.string().min(1).optional(),
+          })
+          .optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -2690,6 +3450,34 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id, name, filePath }) => {
+      const readiness = await prepareWriteAction(
+        "offline_goal.update",
+        {
+          id,
+          ...(name === undefined ? {} : { name }),
+          ...(filePath === undefined ? {} : { filePath }),
+        },
+        "remarketing.offline_goals.update",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Изменение офлайн-цели остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       if (name === undefined && filePath === undefined) {
         throw new VkAdsApiError(
           "Offline-goal update requires name or filePath.",
@@ -2794,6 +3582,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           offlineGoal: reread,
         },
       };
@@ -2810,9 +3599,10 @@ export function createVkAdsMcpServer(
         id: z.number().int().positive(),
       },
       outputSchema: {
-        deleted: z.literal(true),
-        verified: z.literal(true),
+        deleted: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
       },
       annotations: {
         readOnlyHint: false,
@@ -2822,6 +3612,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id }) => {
+      const readiness = await prepareWriteAction(
+        "offline_goal.delete",
+        { id },
+        "remarketing.offline_goals.delete",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Удаление офлайн-цели остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            deleted: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const listOfflineGoals =
         vkAdsClient.listRemarketingOfflineGoals;
       const deleteOfflineGoal =
@@ -2891,6 +3705,7 @@ export function createVkAdsMcpServer(
           deleted: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
         },
       };
     },
@@ -3034,10 +3849,11 @@ export function createVkAdsMcpServer(
           .optional(),
       },
       outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
+        created: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        usersList: remarketingUsersListOutputSchema,
+        readiness: actionReadinessSchema,
+        usersList: remarketingUsersListOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -3047,6 +3863,35 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ filePath, name, type, base }) => {
+      const readiness = await prepareWriteAction(
+        "users_list.create",
+        {
+          filePath,
+          name,
+          type,
+          ...(base === undefined ? {} : { base }),
+        },
+        "remarketing.users_lists.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание пользовательского списка остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const fileInfo = await lstat(filePath);
 
       if (
@@ -3140,6 +3985,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           usersList: reread,
         },
       };
@@ -3157,10 +4003,11 @@ export function createVkAdsMcpServer(
         name: z.string().min(1),
       },
       outputSchema: {
-        updated: z.literal(true),
-        verified: z.literal(true),
+        updated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        usersList: remarketingUsersListOutputSchema,
+        readiness: actionReadinessSchema,
+        usersList: remarketingUsersListOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -3170,6 +4017,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id, name }) => {
+      const readiness = await prepareWriteAction(
+        "users_list.update",
+        { id, name },
+        "remarketing.users_lists.update",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Изменение пользовательского списка остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const getUsersList =
         vkAdsClient.getRemarketingUsersList;
       const updateUsersList =
@@ -3235,6 +4106,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           usersList: reread,
         },
       };
@@ -3251,9 +4123,10 @@ export function createVkAdsMcpServer(
         id: z.number().int().positive(),
       },
       outputSchema: {
-        deleted: z.literal(true),
-        verified: z.literal(true),
+        deleted: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
       },
       annotations: {
         readOnlyHint: false,
@@ -3263,6 +4136,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id }) => {
+      const readiness = await prepareWriteAction(
+        "users_list.delete",
+        { id },
+        "remarketing.users_lists.delete",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Удаление пользовательского списка остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            deleted: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const listUsersLists =
         vkAdsClient.listRemarketingUsersLists;
       const deleteUsersList =
@@ -3331,6 +4228,7 @@ export function createVkAdsMcpServer(
           deleted: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
         },
       };
     },
@@ -3456,10 +4354,11 @@ export function createVkAdsMcpServer(
         relations: z.array(segmentRelationInputSchema).min(1),
       },
       outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
+        created: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        segment: segmentOutputSchema,
+        readiness: actionReadinessSchema,
+        segment: segmentOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -3469,6 +4368,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ name, passCondition, relations }) => {
+      const readiness = await prepareWriteAction(
+        "segment.create",
+        { name, passCondition, relations },
+        "remarketing.segments.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание сегмента остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       if (passCondition > relations.length) {
         throw new VkAdsApiError(
           "passCondition cannot exceed relations count.",
@@ -3551,6 +4474,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           segment: reread,
         },
       };
@@ -3569,10 +4493,11 @@ export function createVkAdsMcpServer(
         passCondition: z.number().int().positive().optional(),
       },
       outputSchema: {
-        updated: z.literal(true),
-        verified: z.literal(true),
+        updated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        segment: segmentOutputSchema,
+        readiness: actionReadinessSchema,
+        segment: segmentOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -3582,6 +4507,36 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id, name, passCondition }) => {
+      const readiness = await prepareWriteAction(
+        "segment.update",
+        {
+          id,
+          ...(name === undefined ? {} : { name }),
+          ...(passCondition === undefined
+            ? {}
+            : { passCondition }),
+        },
+        "remarketing.segments.update",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Изменение сегмента остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       if (name === undefined && passCondition === undefined) {
         throw new VkAdsApiError(
           "At least one segment field must be provided.",
@@ -3655,6 +4610,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           segment: reread,
         },
       };
@@ -3671,9 +4627,10 @@ export function createVkAdsMcpServer(
         id: z.number().int().positive(),
       },
       outputSchema: {
-        deleted: z.literal(true),
-        verified: z.literal(true),
+        deleted: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
       },
       annotations: {
         readOnlyHint: false,
@@ -3683,6 +4640,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id }) => {
+      const readiness = await prepareWriteAction(
+        "segment.delete",
+        { id },
+        "remarketing.segments.delete",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Удаление сегмента остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            deleted: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const getSegment = vkAdsClient.getSegment;
       const deleteSegment = vkAdsClient.deleteSegment;
       const listSegments = vkAdsClient.listSegments;
@@ -3741,6 +4722,7 @@ export function createVkAdsMcpServer(
           deleted: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
         },
       };
     },
@@ -3808,9 +4790,10 @@ export function createVkAdsMcpServer(
         items: z.array(segmentRelationInputSchema).min(1),
       },
       outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
+        created: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         items: z.array(segmentRelationOutputSchema),
       },
       annotations: {
@@ -3821,6 +4804,31 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ segmentId, items }) => {
+      const readiness = await prepareWriteAction(
+        "segment_relation.create",
+        { segmentId, items },
+        "remarketing.segment_relations.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание связей сегмента остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            items: [],
+          },
+        };
+      }
+
       const getSegment = vkAdsClient.getSegment;
       const createRelations =
         vkAdsClient.createSegmentRelations;
@@ -3920,6 +4928,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           items: newlyAdded,
         },
       };
@@ -3941,10 +4950,11 @@ export function createVkAdsMcpServer(
         ),
       },
       outputSchema: {
-        updated: z.literal(true),
-        verified: z.literal(true),
+        updated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        relation: segmentRelationOutputSchema,
+        readiness: actionReadinessSchema,
+        relation: segmentRelationOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -3954,6 +4964,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ segmentId, relationId, params }) => {
+      const readiness = await prepareWriteAction(
+        "segment_relation.update",
+        { segmentId, relationId, params },
+        "remarketing.segment_relations.update",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Изменение связи сегмента остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const getSegment = vkAdsClient.getSegment;
       const listRelations = vkAdsClient.listSegmentRelations;
       const updateRelation =
@@ -4034,6 +5068,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           relation: reread,
         },
       };
@@ -4051,9 +5086,10 @@ export function createVkAdsMcpServer(
         relationId: z.number().int().positive(),
       },
       outputSchema: {
-        deleted: z.literal(true),
-        verified: z.literal(true),
+        deleted: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
       },
       annotations: {
         readOnlyHint: false,
@@ -4063,6 +5099,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ segmentId, relationId }) => {
+      const readiness = await prepareWriteAction(
+        "segment_relation.delete",
+        { segmentId, relationId },
+        "remarketing.segment_relations.delete",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Удаление связи сегмента остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            deleted: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const getSegment = vkAdsClient.getSegment;
       const listRelations = vkAdsClient.listSegmentRelations;
       const deleteRelation =
@@ -4140,6 +5200,7 @@ export function createVkAdsMcpServer(
           deleted: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
         },
       };
     },
@@ -4208,14 +5269,18 @@ export function createVkAdsMcpServer(
           )
           .optional(),
         isMarketplace: z.boolean().optional(),
-        paymentType: z.string().min(1).optional(),
-        price: z.string().min(1).optional(),
+        paymentType: z.enum(["free", "fixed_cpm"]).optional(),
+        price: z
+          .string()
+          .regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/)
+          .optional(),
       },
       outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
+        created: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        sharingKey: sharingKeyOutputSchema,
+        readiness: actionReadinessSchema,
+        sharingKey: sharingKeyOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -4232,6 +5297,37 @@ export function createVkAdsMcpServer(
       paymentType,
       price,
     }) => {
+      const readiness = await prepareWriteAction(
+        "sharing_key.create",
+        {
+          sources,
+          sendEmail,
+          users,
+          isMarketplace,
+          paymentType,
+          price,
+        },
+        "sharing_keys.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание ключа доступа остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const createSharingKey = vkAdsClient.createSharingKey;
       const listSharingKeys = vkAdsClient.listSharingKeys;
 
@@ -4325,6 +5421,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           sharingKey: reread,
         },
       };
@@ -4342,9 +5439,10 @@ export function createVkAdsMcpServer(
         sources: z.array(sharingKeySourceInputSchema).min(1).optional(),
       },
       outputSchema: {
-        activated: z.literal(true),
-        verified: z.literal(true),
+        activated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         sources: z.array(sharingKeySourceOutputSchema),
       },
       annotations: {
@@ -4355,6 +5453,31 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ key, sources }) => {
+      const readiness = await prepareWriteAction(
+        "sharing_key.activate",
+        { key, sources },
+        "sharing_keys.activate",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Активация ключа доступа остановлена предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            activated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            sources: [],
+          },
+        };
+      }
+
       const activateSharingKey =
         vkAdsClient.activateSharingKey;
 
@@ -4406,6 +5529,7 @@ export function createVkAdsMcpServer(
           activated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           sources: activated.sources,
         },
       };
@@ -4422,9 +5546,10 @@ export function createVkAdsMcpServer(
         key: z.string().min(1).max(255),
       },
       outputSchema: {
-        deleted: z.literal(true),
-        verified: z.literal(true),
+        deleted: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
       },
       annotations: {
         readOnlyHint: false,
@@ -4434,6 +5559,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ key }) => {
+      const readiness = await prepareWriteAction(
+        "sharing_key.delete",
+        { key },
+        "sharing_keys.delete",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Удаление ключа доступа остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            deleted: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const listSharingKeys = vkAdsClient.listSharingKeys;
       const deleteSharingKey = vkAdsClient.deleteSharingKey;
 
@@ -4503,6 +5652,7 @@ export function createVkAdsMcpServer(
           deleted: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
         },
       };
     },
@@ -5223,11 +6373,12 @@ export function createVkAdsMcpServer(
           }),
       },
       outputSchema: {
-        uploaded: z.literal(true),
-        verified: z.literal(true),
+        uploaded: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        id: z.string().min(1),
-        variants: z.array(z.string().min(1)).min(1),
+        readiness: actionReadinessSchema,
+        id: z.string().min(1).optional(),
+        variants: z.array(z.string().min(1)).min(1).optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -5237,6 +6388,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ filePath }) => {
+      const readiness = await prepareWriteAction(
+        "lead_form.logo_upload",
+        { filePath },
+        "lead_forms.logo.upload",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Загрузка логотипа остановлена предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            uploaded: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const extension = extname(filePath).toLowerCase();
       const contentType =
         extension === ".png"
@@ -5309,6 +6484,7 @@ export function createVkAdsMcpServer(
           uploaded: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           id: uploaded.id,
           variants: uploaded.variants,
         },
@@ -5439,10 +6615,11 @@ export function createVkAdsMcpServer(
         "Создаёт лид-форму и подтверждает результат повторным чтением.",
       inputSchema: leadFormCreateInputShape,
       outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
+        created: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        form: leadFormOutputSchema,
+        readiness: actionReadinessSchema,
+        form: leadFormOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -5459,11 +6636,16 @@ export function createVkAdsMcpServer(
       longDescription,
       companyTitle,
       logoId,
+      award,
+      gradient,
       contactFields,
       resultInfo,
       agreement,
       notifications,
       pages,
+      requiredAnswers,
+      mainColor,
+      mainImageId,
     }) => {
       const createLeadForm = vkAdsClient.createLeadForm;
       const getLeadForm = vkAdsClient.getLeadForm;
@@ -5475,8 +6657,48 @@ export function createVkAdsMcpServer(
         );
       }
 
-      await auditLog.ensureReady();
-      await vkAdsClient.getCurrentUser();
+      const readiness = await prepareWriteAction(
+        "lead_form.create",
+        {
+          name,
+          firstScreenType,
+          title,
+          description,
+          longDescription,
+          companyTitle,
+          logoId,
+          award,
+          gradient,
+          contactFields,
+          resultInfo,
+          agreement,
+          notifications,
+          pages,
+          requiredAnswers,
+          mainColor,
+          mainImageId,
+        },
+        "lead_forms.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание лид-формы остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const providerInput: CreateVkAdsLeadFormInput = {
         name,
         first_screen_type: firstScreenType,
@@ -5486,12 +6708,23 @@ export function createVkAdsMcpServer(
         contact_fields: contactFields,
         result_info: resultInfo,
         agreement,
+        ...(award === undefined ? {} : { award }),
+        ...(gradient === undefined ? {} : { gradient }),
         ...(description === undefined ? {} : { description }),
         ...(longDescription === undefined
           ? {}
           : { long_description: longDescription }),
         ...(notifications === undefined ? {} : { notifications }),
         ...(pages === undefined ? {} : { pages }),
+        ...(requiredAnswers === undefined
+          ? {}
+          : { required_answers: requiredAnswers }),
+        ...(mainColor === undefined
+          ? {}
+          : { main_color: mainColor }),
+        ...(mainImageId === undefined
+          ? {}
+          : { main_image_id: mainImageId }),
       };
       let created: { id: number };
 
@@ -5540,6 +6773,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           form: reread,
         },
       };
@@ -5552,38 +6786,13 @@ export function createVkAdsMcpServer(
       title: "Изменить лид-форму VK Рекламы",
       description:
         "Частично изменяет лид-форму и проверяет сохранённое состояние.",
-      inputSchema: {
-        id: z.number().int().positive(),
-        name: z.string().min(1).max(255).optional(),
-        firstScreenType: z
-          .enum(["compact", "long_text", "award"])
-          .optional(),
-        title: z.string().min(1).max(50).optional(),
-        description: z.string().min(1).max(35).optional(),
-        longDescription: z.string().min(1).optional(),
-        companyTitle: z.string().min(1).max(30).optional(),
-        logoId: z.string().min(1).optional(),
-        contactFields: z
-          .array(z.string().min(1))
-          .min(1)
-          .optional(),
-        resultInfo: z
-          .record(z.string(), z.unknown())
-          .optional(),
-        agreement: z.record(z.string(), z.unknown()).optional(),
-        notifications: z
-          .array(z.record(z.string(), z.unknown()))
-          .optional(),
-        pages: z
-          .array(z.record(z.string(), z.unknown()))
-          .min(1)
-          .optional(),
-      },
+      inputSchema: leadFormUpdateInputShape,
       outputSchema: {
-        updated: z.literal(true),
-        verified: z.literal(true),
+        updated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        form: leadFormOutputSchema,
+        readiness: actionReadinessSchema,
+        form: leadFormOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -5601,11 +6810,16 @@ export function createVkAdsMcpServer(
       longDescription,
       companyTitle,
       logoId,
+      award,
+      gradient,
       contactFields,
       resultInfo,
       agreement,
       notifications,
       pages,
+      requiredAnswers,
+      mainColor,
+      mainImageId,
     }) => {
       const updateLeadForm = vkAdsClient.updateLeadForm;
       const getLeadForm = vkAdsClient.getLeadForm;
@@ -5617,11 +6831,16 @@ export function createVkAdsMcpServer(
         longDescription,
         companyTitle,
         logoId,
+        award,
+        gradient,
         contactFields,
         resultInfo,
         agreement,
         notifications,
         pages,
+        requiredAnswers,
+        mainColor,
+        mainImageId,
       };
 
       if (Object.values(fields).every((value) => value === undefined)) {
@@ -5638,8 +6857,30 @@ export function createVkAdsMcpServer(
         );
       }
 
-      await auditLog.ensureReady();
-      await getLeadForm.call(vkAdsClient, id);
+      const readiness = await prepareWriteAction(
+        "lead_form.update",
+        { id, ...fields },
+        "lead_forms.update",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Изменение лид-формы остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const providerInput: UpdateVkAdsLeadFormInput = {
         ...(name === undefined ? {} : { name }),
         ...(firstScreenType === undefined
@@ -5654,6 +6895,8 @@ export function createVkAdsMcpServer(
           ? {}
           : { company_title: companyTitle }),
         ...(logoId === undefined ? {} : { logo_id: logoId }),
+        ...(award === undefined ? {} : { award }),
+        ...(gradient === undefined ? {} : { gradient }),
         ...(contactFields === undefined
           ? {}
           : { contact_fields: contactFields }),
@@ -5663,6 +6906,15 @@ export function createVkAdsMcpServer(
         ...(agreement === undefined ? {} : { agreement }),
         ...(notifications === undefined ? {} : { notifications }),
         ...(pages === undefined ? {} : { pages }),
+        ...(requiredAnswers === undefined
+          ? {}
+          : { required_answers: requiredAnswers }),
+        ...(mainColor === undefined
+          ? {}
+          : { main_color: mainColor }),
+        ...(mainImageId === undefined
+          ? {}
+          : { main_image_id: mainImageId }),
       };
 
       try {
@@ -5688,6 +6940,9 @@ export function createVkAdsMcpServer(
         (companyTitle === undefined ||
           reread.companyTitle === companyTitle) &&
         (logoId === undefined || reread.logoId === logoId) &&
+        (award === undefined ||
+          JSON.stringify(reread.award) === JSON.stringify(award)) &&
+        (gradient === undefined || reread.gradient === gradient) &&
         (contactFields === undefined ||
           JSON.stringify(reread.contactFields) ===
             JSON.stringify(contactFields)) &&
@@ -5701,7 +6956,13 @@ export function createVkAdsMcpServer(
           JSON.stringify(reread.notifications) ===
             JSON.stringify(notifications)) &&
         (pages === undefined ||
-          JSON.stringify(reread.pages) === JSON.stringify(pages));
+          JSON.stringify(reread.pages) === JSON.stringify(pages)) &&
+        (requiredAnswers === undefined ||
+          reread.requiredAnswers === requiredAnswers) &&
+        (mainColor === undefined ||
+          reread.mainColor === mainColor) &&
+        (mainImageId === undefined ||
+          reread.mainImageId === mainImageId);
 
       if (!verified) {
         await auditLog.record({
@@ -5730,6 +6991,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           form: reread,
         },
       };
@@ -5747,10 +7009,11 @@ export function createVkAdsMcpServer(
         name: z.string().min(1).max(255).optional(),
       },
       outputSchema: {
-        copied: z.literal(true),
-        verified: z.literal(true),
+        copied: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        form: leadFormOutputSchema,
+        readiness: actionReadinessSchema,
+        form: leadFormOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -5770,8 +7033,30 @@ export function createVkAdsMcpServer(
         );
       }
 
-      await auditLog.ensureReady();
-      await getLeadForm.call(vkAdsClient, id);
+      const readiness = await prepareWriteAction(
+        "lead_form.copy",
+        { id, name },
+        "lead_forms.copy",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Копирование лид-формы остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            copied: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       let copied: VkAdsLeadForm;
 
       try {
@@ -5819,6 +7104,7 @@ export function createVkAdsMcpServer(
           copied: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           form: reread,
         },
       };
@@ -5843,10 +7129,11 @@ export function createVkAdsMcpServer(
           ids: statisticsIdListSchema,
         },
         outputSchema: {
-          updated: z.literal(true),
-          verified: z.literal(true),
+          updated: z.boolean(),
+          verified: z.boolean(),
           auditRecorded: z.boolean(),
-          forms: z.array(leadFormOutputSchema),
+          readiness: actionReadinessSchema,
+          forms: z.array(leadFormOutputSchema).optional(),
         },
         annotations: {
           readOnlyHint: false,
@@ -5870,10 +7157,35 @@ export function createVkAdsMcpServer(
           );
         }
 
-        await auditLog.ensureReady();
-        await Promise.all(
-          ids.map(async (id) => await getLeadForm.call(vkAdsClient, id)),
+        const readiness = await prepareWriteAction(
+          archived
+            ? "lead_form.archive"
+            : "lead_form.unarchive",
+          { ids },
+          archived
+            ? "lead_forms.archive"
+            : "lead_forms.unarchive",
         );
+
+        if (!readiness.ready) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: archived
+                  ? "Архивация лид-форм остановлена предварительной проверкой."
+                  : "Восстановление лид-форм остановлено предварительной проверкой.",
+              },
+            ],
+            structuredContent: {
+              updated: false,
+              verified: false,
+              auditRecorded: true,
+              readiness,
+            },
+          };
+        }
 
         try {
           await setLeadFormsArchived.call(
@@ -5931,6 +7243,7 @@ export function createVkAdsMcpServer(
             updated: true as const,
             verified: true as const,
             auditRecorded: true,
+            readiness,
             forms,
           },
         };
@@ -6045,11 +7358,12 @@ export function createVkAdsMcpServer(
         createdAtTo: leadDateTimeInputSchema.optional(),
       },
       outputSchema: {
-        saved: z.literal(true),
-        verified: z.literal(true),
+        saved: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         format: z.enum(["csv", "xlsx"]),
-        bytes: z.number().int().positive(),
+        bytes: z.number().int().positive().optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -6081,26 +7395,40 @@ export function createVkAdsMcpServer(
         );
       }
 
-      if (extname(outputPath).toLowerCase() !== `.${format}`) {
-        throw new VkAdsApiError(
-          "The output extension must match the export format.",
-          "invalid_lead_export_path",
-        );
+      const readiness = await prepareWriteAction(
+        "lead_form.leads_export",
+        {
+          formId,
+          format,
+          outputPath,
+          adPlanIds,
+          adGroupIds,
+          bannerIds,
+          createdAtFrom,
+          createdAtTo,
+        },
+        "lead_forms.leads.export",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Экспорт лидов остановлен предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            saved: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            format,
+          },
+        };
       }
 
-      if (
-        createdAtFrom !== undefined &&
-        createdAtTo !== undefined &&
-        Date.parse(createdAtTo) < Date.parse(createdAtFrom)
-      ) {
-        throw new VkAdsApiError(
-          "createdAtTo must not be earlier than createdAtFrom.",
-          "invalid_lead_date_range",
-        );
-      }
-
-      await auditLog.ensureReady();
-      await getLeadForm.call(vkAdsClient, formId);
       let exported: VkAdsLeadFormLeadsExport;
 
       try {
@@ -6168,6 +7496,7 @@ export function createVkAdsMcpServer(
           saved: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           format,
           bytes: exported.bytes.byteLength,
         },
@@ -6185,10 +7514,15 @@ export function createVkAdsMcpServer(
         formId: z.number().int().positive(),
       },
       outputSchema: {
-        sent: z.literal(true),
-        verified: z.literal(true),
+        sent: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        secondsBeforeNextSending: z.number().int().nonnegative(),
+        readiness: actionReadinessSchema,
+        secondsBeforeNextSending: z
+          .number()
+          .int()
+          .nonnegative()
+          .optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -6208,8 +7542,30 @@ export function createVkAdsMcpServer(
         );
       }
 
-      await auditLog.ensureReady();
-      await getLeadForm.call(vkAdsClient, formId);
+      const readiness = await prepareWriteAction(
+        "lead_form.test_lead_send",
+        { formId },
+        "lead_forms.test_lead.send",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Отправка тестового лида остановлена предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            sent: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       let result: VkAdsTestLeadResult;
 
       try {
@@ -6249,6 +7605,7 @@ export function createVkAdsMcpServer(
           sent: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           secondsBeforeNextSending: result.secondsBeforeNextSending,
         },
       };
@@ -6329,37 +7686,20 @@ export function createVkAdsMcpServer(
       title: "Создать прайс-лист VK Рекламы",
       description:
         "Создаёт прайс-лист для динамической рекламы из API, URL, Ozon или Wildberries, затем перечитывает список и проверяет объект. Credentials не возвращаются и не записываются в audit.",
-      inputSchema: {
-        name: z.string().min(1),
-        status: z
-          .enum(["active", "blocked"])
-          .default("active"),
-        sourceType: z.enum([
-          "api",
-          "url",
-          "ozon_api",
-          "wildberries",
-        ]),
-        exportUrl: z.url().optional(),
-        removeUtmTags: z.boolean().optional(),
-        refreshPeriod: z.number().int().min(1).optional(),
-        credentials: z
+      inputSchema: pricelistCreateSchema.shape,
+      outputSchema: {
+        created: z.boolean(),
+        verified: z.boolean(),
+        auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
+        pricelist: z
           .object({
-            clientId: z.string().min(1).optional(),
-            apiKey: z.string().min(1).optional(),
+            id: z.number().int().positive(),
+            name: z.string(),
+            status: z.string().min(1).optional(),
+            sourceType: z.string().min(1).optional(),
           })
           .optional(),
-      },
-      outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
-        auditRecorded: z.boolean(),
-        pricelist: z.object({
-          id: z.number().int().positive(),
-          name: z.string(),
-          status: z.string().min(1).optional(),
-          sourceType: z.string().min(1).optional(),
-        }),
       },
       annotations: {
         readOnlyHint: false,
@@ -6377,27 +7717,36 @@ export function createVkAdsMcpServer(
       refreshPeriod,
       credentials,
     }) => {
-      const requiresExportUrl = sourceType !== "api";
-      const requiresOzonCredentials =
-        sourceType === "ozon_api";
-      const requiresWildberriesCredentials =
-        sourceType === "wildberries";
-      const validCredentials =
-        (!requiresOzonCredentials ||
-          (credentials?.clientId !== undefined &&
-            credentials.apiKey !== undefined)) &&
-        (!requiresWildberriesCredentials ||
-          credentials?.apiKey !== undefined);
+      const readiness = await prepareWriteAction(
+        "pricelist.create",
+        {
+          name,
+          status,
+          sourceType,
+          exportUrl,
+          removeUtmTags,
+          refreshPeriod,
+          credentials,
+        },
+        "remarketing.pricelists.create",
+      );
 
-      if (
-        (requiresExportUrl && exportUrl === undefined) ||
-        (!requiresExportUrl && exportUrl !== undefined) ||
-        !validCredentials
-      ) {
-        throw new VkAdsApiError(
-          "Pricelist source fields do not match sourceType.",
-          "invalid_pricelist_source",
-        );
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание прайс-листа остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
       }
 
       const input: CreateVkAdsRemarketingPricelistInput = {
@@ -6427,8 +7776,6 @@ export function createVkAdsMcpServer(
           : {}),
       };
 
-      await auditLog.ensureReady();
-      await vkAdsClient.getCurrentUser();
       let created: { id: number };
 
       try {
@@ -6485,6 +7832,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           pricelist: reread,
         },
       };
@@ -6497,39 +7845,13 @@ export function createVkAdsMcpServer(
       title: "Обновить товары прайс-листа VK Рекламы",
       description:
         "Ставит NDJSON-задачу на полную замену, создание или удаление товаров в API-прайс-листе, затем перечитывает каждую созданную задачу. Возвращает только безопасные статусы и счётчики ошибок.",
-      inputSchema: {
-        pricelistId: z.number().int().positive(),
-        operations: z
-          .array(
-            z.discriminatedUnion("method", [
-              z.object({
-                method: z.literal("PUT"),
-                data: z
-                  .record(z.string(), z.unknown())
-                  .refine(
-                    (data) =>
-                      typeof data.id === "string" &&
-                      data.id.length > 0,
-                    "PUT data must contain a non-empty string id.",
-                  ),
-              }),
-              z.object({
-                method: z.literal("DELETE"),
-                data: z
-                  .object({
-                    id: z.string().min(1),
-                  })
-                  .strict(),
-              }),
-            ]),
-          )
-          .min(1),
-      },
+      inputSchema: pricelistBatchSchema.shape,
       outputSchema: {
-        accepted: z.literal(true),
-        verified: z.literal(true),
+        accepted: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        operationCount: z.number().int().positive(),
+        readiness: actionReadinessSchema,
+        operationCount: z.number().int().positive().optional(),
         tasks: z
           .array(
             z.object({
@@ -6541,7 +7863,8 @@ export function createVkAdsMcpServer(
               offerWarningCount: z.number().int().nonnegative(),
             }),
           )
-          .min(1),
+          .min(1)
+          .optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -6551,6 +7874,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ pricelistId, operations }) => {
+      const readiness = await prepareWriteAction(
+        "pricelist.batch_create",
+        { pricelistId, operations },
+        "remarketing.pricelists.batch.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Пакет товаров остановлен предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            accepted: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const ndjson = operations
         .map((operation) => JSON.stringify(operation))
         .join("\n");
@@ -6583,8 +7930,6 @@ export function createVkAdsMcpServer(
         },
       );
 
-      await auditLog.ensureReady();
-      await vkAdsClient.getCurrentUser();
       let offset = 0;
       let pricelist:
         | VkAdsRemarketingPricelistsResult["items"][number]
@@ -6720,6 +8065,7 @@ export function createVkAdsMcpServer(
           accepted: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           operationCount: operations.length,
           tasks,
         },
@@ -6841,36 +8187,21 @@ export function createVkAdsMcpServer(
       description:
         "Создаёт обычный список локальной географии, затем перечитывает коллекцию и проверяет созданный объект.",
       inputSchema: {
-        name: z.string().min(1),
-        regions: z
-          .array(
-            z.object({
-              lat: z.number().finite().min(-90).max(90),
-              lng: z.number().finite().min(-180).max(180),
-              radius: z.number().int().positive(),
-              label: z.string(),
-              address: z.string(),
-            }),
-          )
-          .min(1),
+        name: z.string().min(1).max(255),
+        regions: z.array(localGeoRegionSchema).min(1),
       },
       outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
+        created: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        localGeo: z.object({
-          id: z.number().int().positive(),
-          name: z.string(),
-          regions: z.array(
-            z.object({
-              lat: z.number().finite(),
-              lng: z.number().finite(),
-              radius: z.number().int().positive(),
-              label: z.string(),
-              address: z.string(),
-            }),
-          ),
-        }),
+        readiness: actionReadinessSchema,
+        localGeo: z
+          .object({
+            id: z.number().int().positive(),
+            name: z.string(),
+            regions: z.array(localGeoRegionSchema),
+          })
+          .optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -6880,8 +8211,30 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ name, regions }) => {
-      await auditLog.ensureReady();
-      await vkAdsClient.getCurrentUser();
+      const readiness = await prepareWriteAction(
+        "local_geo.create",
+        { name, regions },
+        "local_geo.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание локальной географии остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const input: CreateVkAdsLocalGeoInput = {
         name,
         regions,
@@ -6945,6 +8298,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           localGeo: reread,
         },
       };
@@ -6959,36 +8313,21 @@ export function createVkAdsMcpServer(
         "Изменяет название и регионы существующего списка локальной географии, затем перечитывает коллекцию и проверяет результат.",
       inputSchema: {
         id: z.number().int().positive(),
-        name: z.string().min(1),
-        regions: z
-          .array(
-            z.object({
-              lat: z.number().finite().min(-90).max(90),
-              lng: z.number().finite().min(-180).max(180),
-              radius: z.number().int().positive(),
-              label: z.string(),
-              address: z.string(),
-            }),
-          )
-          .min(1),
+        name: z.string().min(1).max(255),
+        regions: z.array(localGeoRegionSchema).min(1),
       },
       outputSchema: {
-        updated: z.literal(true),
-        verified: z.literal(true),
+        updated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        localGeo: z.object({
-          id: z.number().int().positive(),
-          name: z.string(),
-          regions: z.array(
-            z.object({
-              lat: z.number().finite(),
-              lng: z.number().finite(),
-              radius: z.number().int().positive(),
-              label: z.string(),
-              address: z.string(),
-            }),
-          ),
-        }),
+        readiness: actionReadinessSchema,
+        localGeo: z
+          .object({
+            id: z.number().int().positive(),
+            name: z.string(),
+            regions: z.array(localGeoRegionSchema),
+          })
+          .optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -6998,21 +8337,28 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id, name, regions }) => {
-      await auditLog.ensureReady();
-      await vkAdsClient.getCurrentUser();
-      const before = (
-        await vkAdsClient.listLocalGeos()
-      ).items.find((localGeo) => localGeo.id === id);
+      const readiness = await prepareWriteAction(
+        "local_geo.update",
+        { id, name, regions },
+        "local_geo.update",
+      );
 
-      if (before === undefined) {
-        await auditLog.record({
-          operation: "local_geo.update",
-          outcome: "failed",
-        });
-        throw new VkAdsApiError(
-          "Local geo was not found during update preflight.",
-          "local_geo_not_found",
-        );
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Изменение локальной географии остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
       }
 
       const input: UpdateVkAdsLocalGeoInput = {
@@ -7077,6 +8423,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           localGeo: reread,
         },
       };
@@ -7093,9 +8440,10 @@ export function createVkAdsMcpServer(
         id: z.number().int().positive(),
       },
       outputSchema: {
-        deleted: z.literal(true),
-        verified: z.literal(true),
+        deleted: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         id: z.number().int().positive(),
       },
       annotations: {
@@ -7106,21 +8454,29 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id }) => {
-      await auditLog.ensureReady();
-      await vkAdsClient.getCurrentUser();
-      const before = (await vkAdsClient.listLocalGeos()).items.find(
-        (localGeo) => localGeo.id === id,
+      const readiness = await prepareWriteAction(
+        "local_geo.delete",
+        { id },
+        "local_geo.delete",
       );
 
-      if (before === undefined) {
-        await auditLog.record({
-          operation: "local_geo.delete",
-          outcome: "failed",
-        });
-        throw new VkAdsApiError(
-          "Local geo was not found during delete preflight.",
-          "local_geo_not_found",
-        );
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Удаление локальной географии остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            deleted: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            id,
+          },
+        };
       }
 
       try {
@@ -7164,6 +8520,7 @@ export function createVkAdsMcpServer(
           deleted: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           id,
         },
       };
@@ -7599,6 +8956,109 @@ export function createVkAdsMcpServer(
   );
 
   server.registerTool(
+    ACTION_PREPARE_TOOL,
+    {
+      title: "Подготовить действие VK Рекламы",
+      description:
+        "Без записи проверяет свежий контекст VK, совместимость полей и возвращает безопасный черновик поддерживаемого действия.",
+      inputSchema: {
+        action: z.enum([
+          "banner.create",
+          "ad_plan.create",
+          "ad_plan.update",
+          "ad_group.create",
+          "ad_group.update",
+          "ad_plan.mass_action",
+          "ad_group.delete",
+          "ad_group.mass_action",
+          "banner.update",
+          "banner.delete",
+          "banner.mass_action",
+          "banner.remoderate",
+          "content.html5.upload",
+          "content.static.upload",
+          "content.video.upload",
+          "users_list.create",
+          "users_list.update",
+          "users_list.delete",
+          "offline_goal.create",
+          "offline_goal.update",
+          "offline_goal.delete",
+          "remarketing_counter.create",
+          "remarketing_counter.update",
+          "remarketing_counter.delete",
+          "remarketing_counter_goal.create",
+          "remarketing_counter_goal.update",
+          "remarketing_in_app_event.update",
+          "segment.create",
+          "segment.update",
+          "segment.delete",
+          "segment_relation.create",
+          "segment_relation.update",
+          "segment_relation.delete",
+          "sharing_key.create",
+          "sharing_key.activate",
+          "sharing_key.delete",
+          "lead_form.logo_upload",
+          "lead_form.create",
+          "lead_form.update",
+          "lead_form.copy",
+          "lead_form.archive",
+          "lead_form.unarchive",
+          "lead_form.leads_export",
+          "lead_form.test_lead_send",
+          "survey.create",
+          "survey.update",
+          "survey.copy",
+          "survey.archive",
+          "survey.unarchive",
+          "survey.respondents_export",
+          "subscription.create",
+          "subscription.delete",
+          "pricelist.create",
+          "pricelist.batch_create",
+          "local_geo.create",
+          "local_geo.update",
+          "local_geo.delete",
+          "url.create",
+          "mobile_store_app.refresh",
+          "skad_network_ids.transfer",
+          "user.language_update",
+          "oauth.tokens_refresh",
+          "oauth.tokens_delete",
+          "ord_user.update",
+        ]),
+        input: z.record(z.string(), z.unknown()),
+      },
+      outputSchema: actionReadinessSchema.shape,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ action, input }) => {
+      const readiness = await actionPreflight.prepare(
+        action,
+        input,
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: readiness.ready
+              ? "Действие подготовлено; запись не выполнялась."
+              : "Действие не готово; запись не выполнялась.",
+          },
+        ],
+        structuredContent: readiness,
+      };
+    },
+  );
+
+  server.registerTool(
     BANNER_CREATE_TOOL,
     {
       title: "Создать рекламное объявление VK Рекламы",
@@ -7607,6 +9067,7 @@ export function createVkAdsMcpServer(
       inputSchema: z
         .object({
           adGroupId: z.number().int().positive(),
+          patternId: z.number().int().positive().optional(),
           name: z.string().min(1).optional(),
           status: z
             .enum(["active", "blocked", "deleted"])
@@ -7616,7 +9077,11 @@ export function createVkAdsMcpServer(
           urls: bannerSectionSchema.optional(),
         })
         .refine(
-          ({ adGroupId: _adGroupId, ...banner }) =>
+          ({
+            adGroupId: _adGroupId,
+            patternId: _patternId,
+            ...banner
+          }) =>
             Object.values(banner).some(
               (value) => value !== undefined,
             ),
@@ -7626,10 +9091,11 @@ export function createVkAdsMcpServer(
           },
         ),
       outputSchema: {
-        created: z.literal(true),
+        created: z.boolean(),
         verified: z.boolean(),
         auditRecorded: z.boolean(),
-        id: z.number().int().positive(),
+        readiness: actionReadinessSchema,
+        id: z.number().int().positive().optional(),
         banner: z
           .object({
             id: z.number().int().positive(),
@@ -7651,7 +9117,35 @@ export function createVkAdsMcpServer(
         openWorldHint: true,
       },
     },
-    async ({ adGroupId, ...bannerInput }) => {
+    async ({ adGroupId, patternId, ...bannerInput }) => {
+      const readiness = await prepareWriteAction(
+        "banner.create",
+        {
+          adGroupId,
+          ...(patternId === undefined ? {} : { patternId }),
+          ...bannerInput,
+        },
+        "banners.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание объявления остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const request: CreateVkAdsBannerInput = {
         ...(bannerInput.name !== undefined
           ? { name: bannerInput.name }
@@ -7669,10 +9163,6 @@ export function createVkAdsMcpServer(
           ? { urls: bannerInput.urls }
           : {}),
       };
-
-      await auditLog.ensureReady();
-      await vkAdsClient.getCurrentUser();
-      await vkAdsClient.getAdGroup(adGroupId);
 
       let created: CreateVkAdsBannerResult;
 
@@ -7712,6 +9202,7 @@ export function createVkAdsMcpServer(
             verified: false,
             auditRecorded: true,
             id: created.id,
+            readiness,
           },
         };
       }
@@ -7757,6 +9248,7 @@ export function createVkAdsMcpServer(
             verified: false,
             auditRecorded: true,
             id: created.id,
+            readiness,
           },
         };
       }
@@ -7793,6 +9285,7 @@ export function createVkAdsMcpServer(
           auditRecorded: true,
           id: created.id,
           banner: safeBanner,
+          readiness,
         },
       };
     },
@@ -7826,9 +9319,10 @@ export function createVkAdsMcpServer(
           },
         ),
       outputSchema: {
-        updated: z.literal(true),
+        updated: z.boolean(),
         verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         id: z.number().int().positive(),
         banner: z
           .object({
@@ -7852,6 +9346,31 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id, ...changes }) => {
+      const readiness = await prepareWriteAction(
+        "banner.update",
+        { id, ...changes },
+        "banners.update",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Обновление объявления остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            id,
+          },
+        };
+      }
+
       const request: UpdateVkAdsBannerInput = {
         ...(changes.name !== undefined
           ? { name: changes.name }
@@ -7905,6 +9424,7 @@ export function createVkAdsMcpServer(
             updated: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             id,
           },
         };
@@ -7949,6 +9469,7 @@ export function createVkAdsMcpServer(
             updated: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             id,
           },
         };
@@ -7984,6 +9505,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true,
           auditRecorded: true,
+          readiness,
           id,
           banner: safeBanner,
         },
@@ -8001,9 +9523,10 @@ export function createVkAdsMcpServer(
         id: z.number().int().positive(),
       },
       outputSchema: {
-        deleted: z.literal(true),
+        deleted: z.boolean(),
         verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         id: z.number().int().positive(),
         banner: z
           .object({
@@ -8025,6 +9548,31 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id }) => {
+      const readiness = await prepareWriteAction(
+        "banner.delete",
+        { id },
+        "banners.delete",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Удаление объявления остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            deleted: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            id,
+          },
+        };
+      }
+
       await auditLog.ensureReady();
       await vkAdsClient.getBanner(id);
 
@@ -8060,6 +9608,7 @@ export function createVkAdsMcpServer(
             deleted: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             id,
           },
         };
@@ -8083,6 +9632,7 @@ export function createVkAdsMcpServer(
             deleted: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             id,
           },
         };
@@ -8116,6 +9666,7 @@ export function createVkAdsMcpServer(
           deleted: true as const,
           verified: true,
           auditRecorded: true,
+          readiness,
           id,
           banner: safeBanner,
         },
@@ -8156,9 +9707,10 @@ export function createVkAdsMcpServer(
           ),
       },
       outputSchema: {
-        updated: z.literal(true),
+        updated: z.boolean(),
         verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         requestedCount: z.number().int().positive().max(200),
         banners: z
           .array(
@@ -8182,6 +9734,31 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ changes }) => {
+      const readiness = await prepareWriteAction(
+        "banner.mass_action",
+        { changes },
+        "banners.mass_action",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Массовое изменение объявлений остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            requestedCount: changes.length,
+          },
+        };
+      }
+
       const ids = changes.map((change) => change.id);
       const request: MassUpdateVkAdsBannerInput[] =
         changes.map((change) => ({
@@ -8224,6 +9801,7 @@ export function createVkAdsMcpServer(
             updated: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             requestedCount: changes.length,
           },
         };
@@ -8255,6 +9833,7 @@ export function createVkAdsMcpServer(
             updated: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             requestedCount: changes.length,
           },
         };
@@ -8288,6 +9867,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true,
           auditRecorded: true,
+          readiness,
           requestedCount: changes.length,
           banners: safeBanners,
         },
@@ -8314,9 +9894,10 @@ export function createVkAdsMcpServer(
           ),
       },
       outputSchema: {
-        requested: z.literal(true),
+        requested: z.boolean(),
         verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         requestedCount: z.number().int().positive(),
         allRemoderated: z.boolean(),
         results: z
@@ -8349,6 +9930,32 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ ids }) => {
+      const readiness = await prepareWriteAction(
+        "banner.remoderate",
+        { ids },
+        "banners.remoderate",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Перемодерация остановлена предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            requested: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            requestedCount: ids.length,
+            allRemoderated: false,
+          },
+        };
+      }
+
       await auditLog.ensureReady();
       await readBannersInBatches(vkAdsClient, ids);
 
@@ -8389,6 +9996,7 @@ export function createVkAdsMcpServer(
             requested: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             requestedCount: ids.length,
             allRemoderated: false,
             results,
@@ -8418,6 +10026,7 @@ export function createVkAdsMcpServer(
             requested: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             requestedCount: ids.length,
             allRemoderated: results.every(
               (result) => result.remoderated,
@@ -8460,6 +10069,7 @@ export function createVkAdsMcpServer(
           requested: true as const,
           verified: true,
           auditRecorded: true,
+          readiness,
           requestedCount: ids.length,
           allRemoderated,
           results,
@@ -8508,10 +10118,11 @@ export function createVkAdsMcpServer(
           }),
       },
       outputSchema: {
-        uploaded: z.literal(true),
-        verified: z.literal(true),
+        uploaded: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        id: z.number().int().positive(),
+        readiness: actionReadinessSchema,
+        id: z.number().int().positive().optional(),
         variants: z.record(
           z.string(),
           z.object({
@@ -8529,6 +10140,31 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ filePath }) => {
+      const readiness = await prepareWriteAction(
+        "content.html5.upload",
+        { filePath },
+        "content.html5.upload",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Загрузка HTML5-креатива остановлена предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            uploaded: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            variants: {},
+          },
+        };
+      }
+
       if (extname(filePath).toLowerCase() !== ".zip") {
         throw new VkAdsApiError(
           "The HTML5 creative must be a ZIP archive.",
@@ -8581,6 +10217,7 @@ export function createVkAdsMcpServer(
           uploaded: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           id: uploaded.id,
           variants: uploaded.variants,
         },
@@ -8605,10 +10242,11 @@ export function createVkAdsMcpServer(
         height: z.number().int().positive(),
       },
       outputSchema: {
-        uploaded: z.literal(true),
-        verified: z.literal(true),
+        uploaded: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        id: z.number().int().positive(),
+        readiness: actionReadinessSchema,
+        id: z.number().int().positive().optional(),
         variants: z.record(
           z.string(),
           z.object({
@@ -8626,6 +10264,31 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ filePath, width, height }) => {
+      const readiness = await prepareWriteAction(
+        "content.static.upload",
+        { filePath, width, height },
+        "content.static.upload",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Загрузка изображения остановлена предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            uploaded: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            variants: {},
+          },
+        };
+      }
+
       const extension = extname(filePath).toLowerCase();
       const contentType =
         extension === ".png"
@@ -8688,6 +10351,7 @@ export function createVkAdsMcpServer(
           uploaded: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           id: uploaded.id,
           variants: uploaded.variants,
         },
@@ -8712,10 +10376,11 @@ export function createVkAdsMcpServer(
         height: z.number().int().positive(),
       },
       outputSchema: {
-        uploaded: z.literal(true),
-        verified: z.literal(true),
+        uploaded: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        id: z.number().int().positive(),
+        readiness: actionReadinessSchema,
+        id: z.number().int().positive().optional(),
         variants: z.record(
           z.string(),
           z.object({
@@ -8733,6 +10398,31 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ filePath, width, height }) => {
+      const readiness = await prepareWriteAction(
+        "content.video.upload",
+        { filePath, width, height },
+        "content.video.upload",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Загрузка видео остановлена предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            uploaded: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            variants: {},
+          },
+        };
+      }
+
       const extension = extname(filePath).toLowerCase();
       const contentType =
         extension === ".mp4"
@@ -8795,6 +10485,7 @@ export function createVkAdsMcpServer(
           uploaded: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           id: uploaded.id,
           variants: uploaded.variants,
         },
@@ -8875,10 +10566,11 @@ export function createVkAdsMcpServer(
           .optional(),
       },
       outputSchema: {
-        created: z.literal(true),
+        created: z.boolean(),
         verified: z.boolean(),
         auditRecorded: z.boolean(),
-        id: z.number().int().positive(),
+        readiness: actionReadinessSchema,
+        id: z.number().int().positive().optional(),
         bannerIds: z.array(z.number().int().positive()),
         group: z
           .object({
@@ -8899,6 +10591,31 @@ export function createVkAdsMcpServer(
       },
     },
     async (input) => {
+      const readiness = await prepareWriteAction(
+        "ad_group.create",
+        input,
+        "ad_groups.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание группы остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            bannerIds: [],
+          },
+        };
+      }
+
       const request: CreateVkAdsAdGroupInput = {
         ...(input.packageFields ?? {}),
         name: input.name,
@@ -8992,6 +10709,7 @@ export function createVkAdsMcpServer(
             created: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             id: created.id,
             bannerIds: created.bannerIds,
           },
@@ -9014,6 +10732,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true,
           auditRecorded: true,
+          readiness,
           id: created.id,
           bannerIds: created.bannerIds,
           group,
@@ -9111,9 +10830,10 @@ export function createVkAdsMcpServer(
           },
         ),
       outputSchema: {
-        updated: z.literal(true),
+        updated: z.boolean(),
         verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         id: z.number().int().positive(),
         group: z
           .object({
@@ -9134,6 +10854,37 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id, packageFields, ...input }) => {
+      const readiness = await prepareWriteAction(
+        "ad_group.update",
+        {
+          id,
+          ...(packageFields === undefined
+            ? {}
+            : { packageFields }),
+          ...input,
+        },
+        "ad_groups.update",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Обновление группы остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            id,
+          },
+        };
+      }
+
       const request: UpdateVkAdsAdGroupInput = {
         ...(packageFields ?? {}),
       };
@@ -9224,6 +10975,7 @@ export function createVkAdsMcpServer(
             updated: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             id,
           },
         };
@@ -9245,6 +10997,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true,
           auditRecorded: true,
+          readiness,
           id,
           group,
         },
@@ -9262,9 +11015,10 @@ export function createVkAdsMcpServer(
         id: z.number().int().positive(),
       },
       outputSchema: {
-        deleted: z.literal(true),
+        deleted: z.boolean(),
         verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         id: z.number().int().positive(),
         group: z
           .object({
@@ -9285,6 +11039,31 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id }) => {
+      const readiness = await prepareWriteAction(
+        "ad_group.delete",
+        { id },
+        "ad_groups.delete",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Удаление группы остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            deleted: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            id,
+          },
+        };
+      }
+
       await auditLog.ensureReady();
       await vkAdsClient.getAdGroup(id);
 
@@ -9320,6 +11099,7 @@ export function createVkAdsMcpServer(
             deleted: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             id,
           },
         };
@@ -9343,6 +11123,7 @@ export function createVkAdsMcpServer(
             deleted: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             id,
           },
         };
@@ -9364,6 +11145,7 @@ export function createVkAdsMcpServer(
           deleted: true as const,
           verified: true,
           auditRecorded: true,
+          readiness,
           id,
           group: {
             ...group,
@@ -9412,9 +11194,10 @@ export function createVkAdsMcpServer(
           ),
       },
       outputSchema: {
-        updated: z.literal(true),
+        updated: z.boolean(),
         verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         requestedCount: z.number().int().positive().max(200),
         groups: z
           .array(
@@ -9437,6 +11220,31 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ changes }) => {
+      const readiness = await prepareWriteAction(
+        "ad_group.mass_action",
+        { changes },
+        "ad_groups.mass_action",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Массовое изменение групп остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            requestedCount: changes.length,
+          },
+        };
+      }
+
       const ids = changes.map((change) => change.id);
       const request: MassUpdateVkAdsAdGroupInput[] =
         changes.map((change) => {
@@ -9490,6 +11298,7 @@ export function createVkAdsMcpServer(
             updated: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             requestedCount: changes.length,
           },
         };
@@ -9534,6 +11343,7 @@ export function createVkAdsMcpServer(
             updated: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             requestedCount: changes.length,
           },
         };
@@ -9555,6 +11365,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true,
           auditRecorded: true,
+          readiness,
           requestedCount: changes.length,
           groups,
         },
@@ -9587,10 +11398,11 @@ export function createVkAdsMcpServer(
         enable_utm: z.boolean().optional(),
       },
       outputSchema: {
-        created: z.literal(true),
+        created: z.boolean(),
         verified: z.boolean(),
         auditRecorded: z.boolean(),
-        id: z.number().int().positive(),
+        readiness: actionReadinessSchema,
+        id: z.number().int().positive().optional(),
         campaign: z
           .object({
             id: z.number().int().positive(),
@@ -9607,6 +11419,30 @@ export function createVkAdsMcpServer(
       },
     },
     async (input) => {
+      const readiness = await prepareWriteAction(
+        "ad_plan.create",
+        input,
+        "ad_plans.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание кампании остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       const request: CreateVkAdsAdPlanInput = {
         name: input.name,
         campaigns: input.campaigns,
@@ -9659,6 +11495,7 @@ export function createVkAdsMcpServer(
             created: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             id: created.id,
           },
         };
@@ -9680,6 +11517,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true,
           auditRecorded: true,
+          readiness,
           id: created.id,
           campaign,
         },
@@ -9708,9 +11546,10 @@ export function createVkAdsMcpServer(
           },
         ),
       outputSchema: {
-        updated: z.literal(true),
+        updated: z.boolean(),
         verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         id: z.number().int().positive(),
         campaign: z
           .object({
@@ -9728,6 +11567,31 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ id, ...input }) => {
+      const readiness = await prepareWriteAction(
+        "ad_plan.update",
+        { id, ...input },
+        "ad_plans.update",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Обновление кампании остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            id,
+          },
+        };
+      }
+
       const request: UpdateVkAdsAdPlanInput = {};
       const optionalKeys = [
         "name",
@@ -9789,6 +11653,7 @@ export function createVkAdsMcpServer(
             updated: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             id,
           },
         };
@@ -9810,6 +11675,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true,
           auditRecorded: true,
+          readiness,
           id,
           campaign,
         },
@@ -9859,9 +11725,10 @@ export function createVkAdsMcpServer(
           ),
       },
       outputSchema: {
-        updated: z.literal(true),
+        updated: z.boolean(),
         verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         requestedCount: z.number().int().positive().max(200),
         campaigns: z
           .array(
@@ -9881,6 +11748,31 @@ export function createVkAdsMcpServer(
       },
     },
     async ({ changes }) => {
+      const readiness = await prepareWriteAction(
+        "ad_plan.mass_action",
+        { changes },
+        "ad_plans.mass_action",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Массовое изменение кампаний остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            requestedCount: changes.length,
+          },
+        };
+      }
+
       const ids = changes.map((change) => change.id);
       const request = changes.map((change) => {
         const item: MassUpdateVkAdsAdPlanInput = {
@@ -9941,6 +11833,7 @@ export function createVkAdsMcpServer(
             updated: true as const,
             verified: false,
             auditRecorded: true,
+            readiness,
             requestedCount: changes.length,
           },
         };
@@ -9962,6 +11855,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true,
           auditRecorded: true,
+          readiness,
           requestedCount: changes.length,
           campaigns,
         },
@@ -10271,10 +12165,11 @@ export function createVkAdsMcpServer(
         url: advertisingUrlInputSchema,
       },
       outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
+        created: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        item: vkAdsUrlOutputSchema,
+        readiness: actionReadinessSchema,
+        item: vkAdsUrlOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -10294,8 +12189,30 @@ export function createVkAdsMcpServer(
         );
       }
 
-      await auditLog.ensureReady();
-      await vkAdsClient.getCurrentUser();
+      const readiness = await prepareWriteAction(
+        "url.create",
+        { url },
+        "urls.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание ссылки остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       let item: VkAdsUrl;
 
       try {
@@ -10332,6 +12249,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           item,
         },
       };
@@ -10492,10 +12410,11 @@ export function createVkAdsMcpServer(
         "Обновляет кэш приложения VK Рекламы и подтверждает результат отдельным чтением.",
       inputSchema: mobileStoreAppInputSchema,
       outputSchema: {
-        refreshed: z.literal(true),
-        verified: z.literal(true),
+        refreshed: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        app: mobileStoreAppOutputSchema,
+        readiness: actionReadinessSchema,
+        app: mobileStoreAppOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -10519,8 +12438,30 @@ export function createVkAdsMcpServer(
         );
       }
 
-      await auditLog.ensureReady();
-      await vkAdsClient.getCurrentUser();
+      const readiness = await prepareWriteAction(
+        "mobile_store_app.refresh",
+        { store, identifier },
+        `mobile_store_apps.${store}.refresh`,
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Обновление приложения остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            refreshed: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       let app: VkAdsMobileStoreApp;
 
       try {
@@ -10569,6 +12510,7 @@ export function createVkAdsMcpServer(
           refreshed: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           app,
         },
       };
@@ -10588,13 +12530,14 @@ export function createVkAdsMcpServer(
         username: z.string().min(1).max(255),
       },
       outputSchema: {
-        changed: z.literal(true),
-        verified: z.literal(true),
+        changed: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         action: z.enum(["share", "withdraw"]),
         count: z.number().int().positive(),
-        availableBefore: z.number().int().nonnegative(),
-        availableAfter: z.number().int().nonnegative(),
+        availableBefore: z.number().int().nonnegative().optional(),
+        availableAfter: z.number().int().nonnegative().optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -10618,7 +12561,32 @@ export function createVkAdsMcpServer(
         items.find(
           (item) => item.rb_mobile_app_id === appId,
         );
-      await auditLog.ensureReady();
+      const readiness = await prepareWriteAction(
+        "skad_network_ids.transfer",
+        { action, appId, count, username },
+        `skad_network_ids.${action}`,
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Передача SKAdNetwork ID остановлена предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            changed: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            action,
+            count,
+          },
+        };
+      }
+
       const beforeItems = await listMobileApps.call(vkAdsClient);
       const beforeApp = findApp(beforeItems);
       const availableBefore =
@@ -10697,6 +12665,7 @@ export function createVkAdsMcpServer(
           changed: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           action,
           count,
           availableBefore,
@@ -10763,10 +12732,11 @@ export function createVkAdsMcpServer(
         language: z.enum(["ru", "en"]),
       },
       outputSchema: {
-        updated: z.literal(true),
-        verified: z.literal(true),
+        updated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        profile: userProfileOutputSchema,
+        readiness: actionReadinessSchema,
+        profile: userProfileOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -10789,8 +12759,30 @@ export function createVkAdsMcpServer(
         );
       }
 
-      await auditLog.ensureReady();
-      await getUserProfile.call(vkAdsClient, version);
+      const readiness = await prepareWriteAction(
+        "user.language_update",
+        { version, language },
+        `user.${version}.language.update`,
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Изменение языка остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       let profile: VkAdsUserProfile;
 
       try {
@@ -10834,6 +12826,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           profile,
         },
       };
@@ -10891,10 +12884,11 @@ export function createVkAdsMcpServer(
         "Изменяет переданные поля ОРД, перечитывает их, но возвращает только флаги заполненности без персональных значений.",
       inputSchema: ordUserUpdateInputSchema,
       outputSchema: {
-        updated: z.literal(true),
-        verified: z.literal(true),
+        updated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        status: ordUserStatusOutputSchema,
+        readiness: actionReadinessSchema,
+        status: ordUserStatusOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -10914,6 +12908,28 @@ export function createVkAdsMcpServer(
         );
       }
 
+      const readiness = await prepareWriteAction(
+        "ord_user.update",
+        input,
+        "ord_user.update",
+      );
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Изменение данных ОРД заблокировано предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
       const request: VkAdsOrdUser = {
         ...(input.name === undefined ? {} : { name: input.name }),
         ...(input.phone === undefined ? {} : { phone: input.phone }),
@@ -10984,6 +13000,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           status: ordUserStatus(user),
         },
       };
@@ -11179,10 +13196,11 @@ export function createVkAdsMcpServer(
         "Создаёт опрос, перечитывает его и проверяет все переданные поля.",
       inputSchema: surveyCreateInputShape,
       outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
+        created: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        survey: surveyOutputSchema,
+        readiness: actionReadinessSchema,
+        survey: surveyOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -11215,8 +13233,30 @@ export function createVkAdsMcpServer(
         logo_id: input.logoId,
         gradient: input.gradient,
       };
-      await auditLog.ensureReady();
-      await vkAdsClient.getCurrentUser();
+      const readiness = await prepareWriteAction(
+        "survey.create",
+        input,
+        "surveys.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание опроса остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       let survey: VkAdsSurvey;
 
       try {
@@ -11253,6 +13293,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           survey,
         },
       };
@@ -11268,21 +13309,7 @@ export function createVkAdsMcpServer(
       inputSchema: {
         id: z.number().int().positive(),
         changes: z
-          .object({
-            name: surveyCreateInputShape.name.optional(),
-            firstScreenType:
-              surveyCreateInputShape.firstScreenType.optional(),
-            title: surveyCreateInputShape.title.optional(),
-            description:
-              surveyCreateInputShape.description.optional(),
-            companyTitle:
-              surveyCreateInputShape.companyTitle.optional(),
-            resultInfo:
-              surveyCreateInputShape.resultInfo.optional(),
-            pages: surveyCreateInputShape.pages.optional(),
-            logoId: surveyCreateInputShape.logoId.optional(),
-            gradient: surveyCreateInputShape.gradient.optional(),
-          })
+          .object(surveyChangesShape)
           .refine(
             (changes) =>
               Object.values(changes).some(
@@ -11292,10 +13319,11 @@ export function createVkAdsMcpServer(
           ),
       },
       outputSchema: {
-        updated: z.literal(true),
-        verified: z.literal(true),
+        updated: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        survey: surveyOutputSchema,
+        readiness: actionReadinessSchema,
+        survey: surveyOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -11342,8 +13370,30 @@ export function createVkAdsMcpServer(
           ? {}
           : { gradient: changes.gradient }),
       };
-      await auditLog.ensureReady();
-      await getSurvey.call(vkAdsClient, id);
+      const readiness = await prepareWriteAction(
+        "survey.update",
+        { id, changes },
+        "surveys.update",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Изменение опроса остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            updated: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       let survey: VkAdsSurvey;
 
       try {
@@ -11380,6 +13430,7 @@ export function createVkAdsMcpServer(
           updated: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           survey,
         },
       };
@@ -11397,10 +13448,11 @@ export function createVkAdsMcpServer(
         name: z.string().min(1).max(255).optional(),
       },
       outputSchema: {
-        copied: z.literal(true),
-        verified: z.literal(true),
+        copied: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        survey: surveyOutputSchema,
+        readiness: actionReadinessSchema,
+        survey: surveyOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -11420,8 +13472,30 @@ export function createVkAdsMcpServer(
         );
       }
 
-      await auditLog.ensureReady();
-      await getSurvey.call(vkAdsClient, id);
+      const readiness = await prepareWriteAction(
+        "survey.copy",
+        { id, name },
+        "surveys.copy",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Копирование опроса остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            copied: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       let survey: VkAdsSurvey;
 
       try {
@@ -11458,6 +13532,7 @@ export function createVkAdsMcpServer(
           copied: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           survey,
         },
       };
@@ -11479,10 +13554,11 @@ export function createVkAdsMcpServer(
           : "Возвращает опросы из архива и проверяет статус каждого повторным чтением.",
         inputSchema: { ids: surveyIdsSchema },
         outputSchema: {
-          changed: z.literal(true),
-          verified: z.literal(true),
+          changed: z.boolean(),
+          verified: z.boolean(),
           auditRecorded: z.boolean(),
-          surveys: z.array(surveyOutputSchema),
+          readiness: actionReadinessSchema,
+          surveys: z.array(surveyOutputSchema).optional(),
         },
         annotations: {
           readOnlyHint: false,
@@ -11505,10 +13581,34 @@ export function createVkAdsMcpServer(
           );
         }
 
-        await auditLog.ensureReady();
-        await Promise.all(
-          ids.map(async (id) => await getSurvey.call(vkAdsClient, id)),
+        const readiness = await prepareWriteAction(
+          archived ? "survey.archive" : "survey.unarchive",
+          { ids },
+          archived
+            ? "surveys.archive"
+            : "surveys.unarchive",
         );
+
+        if (!readiness.ready) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: archived
+                  ? "Архивация опросов остановлена предварительной проверкой."
+                  : "Восстановление опросов остановлено предварительной проверкой.",
+              },
+            ],
+            structuredContent: {
+              changed: false,
+              verified: false,
+              auditRecorded: true,
+              readiness,
+            },
+          };
+        }
+
         let surveys: VkAdsSurvey[];
 
         try {
@@ -11561,6 +13661,7 @@ export function createVkAdsMcpServer(
             changed: true as const,
             verified: true as const,
             auditRecorded: true,
+            readiness,
             surveys,
           },
         };
@@ -11669,10 +13770,11 @@ export function createVkAdsMcpServer(
           }),
       },
       outputSchema: {
-        saved: z.literal(true),
-        verified: z.literal(true),
+        saved: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        bytes: z.number().int().positive(),
+        readiness: actionReadinessSchema,
+        bytes: z.number().int().positive().optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -11696,15 +13798,30 @@ export function createVkAdsMcpServer(
         );
       }
 
-      if (extname(outputPath).toLowerCase() !== ".xlsx") {
-        throw new VkAdsApiError(
-          "Survey export path must end with .xlsx.",
-          "invalid_survey_export_path",
-        );
+      const readiness = await prepareWriteAction(
+        "survey.respondents_export",
+        { surveyId, outputPath },
+        "surveys.respondents.export",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Экспорт респондентов остановлен предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            saved: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
       }
 
-      await auditLog.ensureReady();
-      await getSurvey.call(vkAdsClient, surveyId);
       let exported: VkAdsLeadFormLeadsExport;
 
       try {
@@ -11768,6 +13885,7 @@ export function createVkAdsMcpServer(
           saved: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           bytes: exported.bytes.byteLength,
         },
       };
@@ -11836,17 +13954,18 @@ export function createVkAdsMcpServer(
       description:
         "Создаёт API-подписку на ресурс и проверяет её повторным чтением списка.",
       inputSchema: {
-        resource: z.enum(["BANNER", "CAMPAIGN", "OKLEADAD"]),
+        resource: subscriptionResourceSchema,
         callbackUrl: z.string().url().refine(
           (value) => new URL(value).protocol === "https:",
           "Callback URL должен использовать HTTPS.",
         ),
       },
       outputSchema: {
-        created: z.literal(true),
-        verified: z.literal(true),
+        created: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
-        subscription: subscriptionOutputSchema,
+        readiness: actionReadinessSchema,
+        subscription: subscriptionOutputSchema.optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -11869,8 +13988,30 @@ export function createVkAdsMcpServer(
         );
       }
 
-      await auditLog.ensureReady();
-      await vkAdsClient.getCurrentUser();
+      const readiness = await prepareWriteAction(
+        "subscription.create",
+        { resource, callbackUrl },
+        "subscriptions.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание подписки остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+          },
+        };
+      }
+
       let subscription: VkAdsSubscriptionsPage["items"][number];
 
       try {
@@ -11921,6 +14062,7 @@ export function createVkAdsMcpServer(
           created: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           subscription,
         },
       };
@@ -11937,9 +14079,10 @@ export function createVkAdsMcpServer(
         id: z.number().int().positive(),
       },
       outputSchema: {
-        deleted: z.literal(true),
-        verified: z.literal(true),
+        deleted: z.boolean(),
+        verified: z.boolean(),
         auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
         id: z.number().int().positive(),
       },
       annotations: {
@@ -11963,18 +14106,29 @@ export function createVkAdsMcpServer(
         );
       }
 
-      await auditLog.ensureReady();
-      const before = await listSubscriptions.call(vkAdsClient, {
-        limit: 50,
-        offset: 0,
-      });
+      const readiness = await prepareWriteAction(
+        "subscription.delete",
+        { id },
+        "subscriptions.delete",
+      );
 
-      if (!before.items.some((item) => item.id === id)) {
-        throw new VkAdsApiError(
-          "Subscription was not found.",
-          "unknown_subscription",
-          404,
-        );
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Удаление подписки остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            deleted: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            id,
+          },
+        };
       }
 
       try {
@@ -12014,6 +14168,7 @@ export function createVkAdsMcpServer(
           deleted: true as const,
           verified: true as const,
           auditRecorded: true,
+          readiness,
           id,
         },
       };

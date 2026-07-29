@@ -24,6 +24,11 @@ export interface VkAdsOAuthOperations {
   ): Promise<VkAdsAuthorizationCodeInfo>;
   refreshCurrentTokens?(): Promise<{ expiresAt: number }>;
   deleteCurrentUserTokens(): Promise<void>;
+  getCurrentTokenState?(): Promise<{
+    hasAccessToken: boolean;
+    hasRefreshToken: boolean;
+    expiresAt?: number;
+  }>;
 }
 
 export class DefaultVkAdsOAuthOperations
@@ -44,6 +49,18 @@ export class DefaultVkAdsOAuthOperations
       credentials.clientSecret,
       code,
     );
+  }
+
+  async getCurrentTokenState() {
+    const credentials = await this.store.load();
+
+    return {
+      hasAccessToken: credentials.accessToken !== undefined,
+      hasRefreshToken: credentials.refreshToken !== undefined,
+      ...(credentials.expiresAt === undefined
+        ? {}
+        : { expiresAt: credentials.expiresAt }),
+    };
   }
 
   async deleteCurrentUserTokens(): Promise<void> {

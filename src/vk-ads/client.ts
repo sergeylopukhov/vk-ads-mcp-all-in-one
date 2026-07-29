@@ -529,6 +529,8 @@ const leadFormSchema = z
     long_description: z.string().optional(),
     company_title: z.string().optional(),
     logo_id: z.string().nullable().optional(),
+    award: z.record(z.string(), z.unknown()).optional(),
+    gradient: z.number().int().optional(),
     contact_fields: z.array(z.string()).optional(),
     result_info: z.record(z.string(), z.unknown()).optional(),
     agreement: z.record(z.string(), z.unknown()).optional(),
@@ -536,6 +538,9 @@ const leadFormSchema = z
       .array(z.record(z.string(), z.unknown()))
       .optional(),
     pages: z.array(z.record(z.string(), z.unknown())).optional(),
+    required_answers: z.boolean().optional(),
+    main_color: z.string().optional(),
+    main_image_id: z.string().nullable().optional(),
     leads_count: z.number().int().nonnegative().optional(),
   })
   .passthrough();
@@ -1331,11 +1336,16 @@ export interface VkAdsLeadForm {
   longDescription?: string;
   companyTitle?: string;
   logoId?: string | null;
+  award?: Record<string, unknown>;
+  gradient?: number;
   contactFields?: string[];
   resultInfo?: Record<string, unknown>;
   agreement?: Record<string, unknown>;
   notifications?: Array<Record<string, unknown>>;
   pages?: Array<Record<string, unknown>>;
+  requiredAnswers?: boolean;
+  mainColor?: string;
+  mainImageId?: string | null;
   leadsCount?: number;
 }
 
@@ -1365,11 +1375,16 @@ export interface CreateVkAdsLeadFormInput {
   long_description?: string;
   company_title: string;
   logo_id: string;
+  award?: Record<string, unknown>;
+  gradient?: number;
   contact_fields: string[];
   result_info: Record<string, unknown>;
   agreement: Record<string, unknown>;
   notifications?: Array<Record<string, unknown>>;
   pages?: Array<Record<string, unknown>>;
+  required_answers?: boolean;
+  main_color?: string;
+  main_image_id?: string;
 }
 
 export type UpdateVkAdsLeadFormInput =
@@ -1852,6 +1867,10 @@ function normalizeLeadForm(
       ? {}
       : { companyTitle: item.company_title }),
     ...(item.logo_id === undefined ? {} : { logoId: item.logo_id }),
+    ...(item.award === undefined ? {} : { award: item.award }),
+    ...(item.gradient === undefined
+      ? {}
+      : { gradient: item.gradient }),
     ...(item.contact_fields === undefined
       ? {}
       : { contactFields: item.contact_fields }),
@@ -1865,6 +1884,15 @@ function normalizeLeadForm(
       ? {}
       : { notifications: item.notifications }),
     ...(item.pages === undefined ? {} : { pages: item.pages }),
+    ...(item.required_answers === undefined
+      ? {}
+      : { requiredAnswers: item.required_answers }),
+    ...(item.main_color === undefined
+      ? {}
+      : { mainColor: item.main_color }),
+    ...(item.main_image_id === undefined
+      ? {}
+      : { mainImageId: item.main_image_id }),
     ...(item.leads_count === undefined
       ? {}
       : { leadsCount: item.leads_count }),
@@ -2328,7 +2356,7 @@ export class VkAdsApiClient {
     if (resource === "packages") {
       url.searchParams.set(
         "fields",
-        input.ids === undefined ? "options" : "id,name,options",
+        "id,name,status,options",
       );
     }
 
@@ -3008,6 +3036,53 @@ export class VkAdsApiClient {
     }
 
     return group;
+  }
+
+  async getAdGroupWritableState(
+    id: number,
+  ): Promise<Record<string, unknown>> {
+    const url = new URL(`${this.v2BaseUrl}/ad_groups/${id}.json`);
+    url.searchParams.set(
+      "fields",
+      [
+        "id",
+        "name",
+        "status",
+        "package_id",
+        "ad_plan_id",
+        "age_restrictions",
+        "audit_pixels",
+        "autobidding_mode",
+        "banner_uniq_shows_limit",
+        "budget_limit",
+        "budget_limit_day",
+        "date_end",
+        "date_start",
+        "dynamic_banners_use_storelink",
+        "dynamic_without_remarketing",
+        "enable_offline_goals",
+        "enable_utm",
+        "language",
+        "marketplace_app_client_id",
+        "max_price",
+        "objective",
+        "price",
+        "priced_goal",
+        "pricelist_id",
+        "targetings",
+        "uniq_shows_limit",
+        "uniq_shows_period",
+        "utm",
+        "not_ad",
+      ].join(","),
+    );
+
+    return await this.requestValidated(
+      "GET",
+      url,
+      z.record(z.string(), z.unknown()),
+      "VK Ads returned an invalid writable ad-group state.",
+    );
   }
 
   async getBanner(id: number): Promise<VkAdsBanner> {

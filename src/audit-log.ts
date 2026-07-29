@@ -9,7 +9,14 @@ export const DEFAULT_AUDIT_LOG_PATH = fileURLToPath(
 
 export interface VkAdsAuditEvent {
   operation: string;
-  outcome: "success" | "failed" | "verification_failed";
+  outcome:
+    | "success"
+    | "failed"
+    | "verification_failed"
+    | "ready"
+    | "blocked";
+  stage?: "input" | "context" | "compatibility" | "permission";
+  issueCodes?: string[];
 }
 
 export interface VkAdsAuditSink {
@@ -68,6 +75,10 @@ export class JsonLinesVkAdsAuditLog implements VkAdsAuditSink {
       timestamp: this.now().toISOString(),
       operation: event.operation,
       outcome: event.outcome,
+      ...(event.stage === undefined ? {} : { stage: event.stage }),
+      ...(event.issueCodes === undefined
+        ? {}
+        : { issueCodes: [...new Set(event.issueCodes)].sort() }),
     })}\n`;
 
     try {
