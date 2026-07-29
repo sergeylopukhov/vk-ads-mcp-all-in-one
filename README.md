@@ -37,11 +37,11 @@
   <tbody>
     <tr>
       <td>Node.js</td>
-      <td>Версия 22 или новее, с npm</td>
+      <td><a href="https://nodejs.org/en/download">Установите Node.js версии 22 или новее по официальной инструкции</a>. npm устанавливается вместе с Node.js</td>
     </tr>
     <tr>
       <td>VK Реклама</td>
-      <td>Получите <code>client_id</code> и <code>client_secret</code> в <a href="https://ads.vk.com/">личном кабинете VK Рекламы</a></td>
+      <td>Откройте <a href="https://ads.vk.ru/hq/settings">настройки личного кабинета VK Рекламы</a>. Внизу страницы, в разделе «Получить API-доступ», выдаются <code>client_id</code> и <code>client_secret</code></td>
     </tr>
   </tbody>
 </table>
