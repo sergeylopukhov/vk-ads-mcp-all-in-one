@@ -8,8 +8,9 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   applyEnvValues,
@@ -22,6 +23,11 @@ import {
   resolveRef,
   selectServerFiles,
 } from "../install.mjs";
+
+const repositoryRoot = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 
 test("selectServerFiles keeps only runtime build inputs", () => {
   const files = selectServerFiles([
@@ -52,6 +58,34 @@ test("selectServerFiles includes the Codex skill", () => {
   ]);
 });
 
+test("Codex skill keeps the current blocked tool set synchronized", async () => {
+  const [catalog, routing] = await Promise.all([
+    readFile(join(repositoryRoot, "tools.md"), "utf8"),
+    readFile(
+      join(
+        repositoryRoot,
+        "codex-skill",
+        "references",
+        "tool-routing.md",
+      ),
+      "utf8",
+    ),
+  ]);
+
+  const catalogNames = [
+    ...catalog.matchAll(
+      /^\| `(vk_[^`]+)` \| `(?:read|write)` \| .* \| ⛔️ \|$/gmu,
+    ),
+  ].map((match) => match[1]).sort();
+  const blockedSection = routing.split("## Current `⛔️` tools\n")[1];
+  assert.ok(blockedSection, "missing current blocked tools section");
+  const routingNames = [
+    ...blockedSection.matchAll(/^- `(vk_[^`]+)`$/gmu),
+  ].map((match) => match[1]).sort();
+
+  assert.deepEqual(routingNames, catalogNames);
+});
+
 test("installCodexSkill replaces the complete managed skill", async () => {
   const root = await mkdtemp(
     join(tmpdir(), "vk-ads-mcp-installer-test-"),
@@ -60,12 +94,21 @@ test("installCodexSkill replaces the complete managed skill", async () => {
   try {
     const installDirectory = join(root, "server");
     const home = join(root, "home");
-    await mkdir(join(installDirectory, "codex-skill"), {
+    await mkdir(join(installDirectory, "codex-skill", "references"), {
       recursive: true,
     });
     await writeFile(
       join(installDirectory, "codex-skill", "SKILL.md"),
       "# VK Ads MCP\n",
+    );
+    await writeFile(
+      join(
+        installDirectory,
+        "codex-skill",
+        "references",
+        "workflows.md",
+      ),
+      "# Workflows\n",
     );
 
     const destination = await installCodexSkill(
@@ -81,6 +124,17 @@ test("installCodexSkill replaces the complete managed skill", async () => {
       join(home, ".codex", "skills", "vk-ads-mcp"),
     );
     assert.equal(await readFile(destination, "utf8"), "# VK Ads MCP\n");
+    assert.equal(
+      await readFile(
+        join(
+          codexSkillDirectory(home),
+          "references",
+          "workflows.md",
+        ),
+        "utf8",
+      ),
+      "# Workflows\n",
+    );
 
     await writeFile(
       join(codexSkillDirectory(home), "obsolete.md"),

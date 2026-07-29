@@ -1,0 +1,4 @@
+interface:
+  display_name: "VK Ads MCP"
+  short_description: "Анализ и управление VK Ads через MCP"
+  default_prompt: "Use $vk-ads-mcp to analyze my VK Ads account and recommend the next actions."

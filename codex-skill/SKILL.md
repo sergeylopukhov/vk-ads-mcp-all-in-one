@@ -1,37 +1,66 @@
 ---
 name: vk-ads-mcp
-description: Используй для чтения, анализа и изменения рекламы через установленный VK Ads MCP, а также для поиска и анализа публичных сообществ VK, когда пользователь упоминает VK Рекламу, рекламный кабинет VK Ads, сообщества, кампании, группы, объявления, аудитории, статистику, лид-формы, опросы или прайс-листы.
+description: Use the installed VK Ads MCP to inspect, analyze, and explicitly change VK advertising, and to research public VK communities. Activate for requests about VK Ads accounts, campaigns, ad groups, ads, creatives, audiences, statistics, forecasts, leads, surveys, price lists, token recovery, or VK community discovery and analysis.
 ---
 
 # VK Ads MCP
 
-Работай только через публичные инструменты установленного сервера `vk-ads`.
+Use only public tools exposed by the installed `vk-ads` server. Do not invent
+tool names, provider fields, object IDs, or results.
 
-## Порядок работы
+## Core procedure
 
-1. Для первой рекламной операции в задаче вызови `vk_ads_connection_check`. Для задачи только о публичных сообществах этот вызов не нужен: блок использует отдельный Core VK token.
-2. Перед записью прочитай точный объект и проверь ID, статус и родительские связи.
-3. Если цель или изменение неоднозначны, запроси недостающий выбор до вызова write tool.
-4. Вызывай один узкий write tool только после явного запроса пользователя на это изменение.
-5. После записи проверь результат отдельным read tool, если такой контракт поддерживается.
-6. Не показывай токены, `client_secret`, содержимое файлов с идентификаторами, контакты лидов и сырые приватные ответы VK Ads.
+1. For the first advertising operation, call `vk_ads_connection_check`.
+   Skip it for community-only work because those tools use a separate Core VK
+   token.
+2. Infer safe missing parameters from read tools and the conversation. Ask only
+   when a value cannot be inferred reliably or changes the user's decision.
+3. For analysis, establish the object hierarchy and reporting period before
+   interpreting metrics. Prefer complete periods and disclose partial data.
+4. Call write tools only when the user explicitly requests that exact change.
+   A write call executes immediately; there is no preview layer.
+5. Before a write, read the target and verify its ID, status, and parent. Use
+   one narrow write call, then reread the result when supported.
+6. Never expose tokens, client secrets, identifier-file contents, lead
+   contacts, respondent answers, or raw private provider payloads.
+7. Respond in Russian unless the user requests another language.
 
-## Восстановление авторизации
+## Live status
 
-- При обычном истечении или первом HTTP `401` сервер обновляет VK Ads token автоматически.
-- Если пользователь явно просит обновить token, вызови `vk_ads_oauth_token_refresh`.
-- Если refresh token отозван или другая машина сбросила пару, объясни, что `vk_ads_oauth_current_tokens_delete` отзывает все токены настроенного аккаунта. Вызывай его только после явного согласия и с обязательной строкой подтверждения `DELETE_ALL_CURRENT_VK_ADS_TOKENS`.
+Treat the installed release's `tools.md` as the status authority. Local tests
+and code presence do not prove live operation.
 
-## Статусы
+- A `✅` tool may be used normally within the rules above.
+- A `⛔️` read tool may be attempted when useful, but disclose before use that
+  it is unverified or non-working and report the real result without upgrading
+  its status.
+- Do not use a `⛔️` write tool as a routine solution. The OAuth recovery
+  exceptions below still require an explicit user request. Other `⛔️` writes
+  require explicit authorization to live-test that exact tool in the designated
+  test account.
+- Never treat an expected failure, empty mutation, or `remoderated=false` as
+  success.
 
-Код и локальные тесты не доказывают работоспособность инструмента. Не называй tool работающим, если его точный успешный сценарий не отмечен `✅` в установленной версии `tools.md`.
+See [references/tool-routing.md](references/tool-routing.md) for exact tool
+routes and the current `⛔️` set. Read only the relevant section.
 
-Инструменты с `⛔️` можно использовать только для диагностики заявленного ограничения. Не превращай ожидаемый отказ, пустую мутацию или `remoderated=false` в успешный результат.
+## Workflows
 
-Все 10 инструментов раздела «Сообщества VK» пока имеют статус `⛔️`: их код и локальные тесты перенесены, но live-проверка намеренно не выполнялась. Не называй поиск, анализ, фоновое исследование, пересчёт или экспорт работающими до отдельной успешной live-проверки точного tool.
+Read [references/workflows.md](references/workflows.md) when the task involves
+account diagnostics, performance analysis, campaign management, community
+research, token recovery, audiences, leads or surveys, or cleanup.
 
-## Запись
+For analytical work, also read
+[references/reporting.md](references/reporting.md) and produce a detailed
+report by default.
 
-Текущий сервер регистрирует read и write tools одновременно. Сам вызов write tool означает выполнение операции: отдельного preview-слоя нет. Поэтому не вызывай создание, изменение, удаление, загрузку, отправку или локальный экспорт без явного намерения пользователя.
+## Authentication recovery
 
-Записывающие инструменты выполняют собственный preflight и контрольное чтение, когда VK Ads предоставляет подходящий read-контракт. Если проверка результата не прошла, сообщи об операции как о неподтверждённой.
+- Normal expiry and the first provider HTTP `401` are handled automatically.
+- On an explicit refresh request, call `vk_ads_oauth_token_refresh` and state
+  that its current release status is `⛔️`.
+- If the pair was revoked or replaced elsewhere, explain that
+  `vk_ads_oauth_current_tokens_delete` revokes every token for the configured
+  VK Ads account. Call it only after explicit consent using
+  `DELETE_ALL_CURRENT_VK_ADS_TOKENS`, then run
+  `vk_ads_connection_check`.

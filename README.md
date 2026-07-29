@@ -10,7 +10,7 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-stdio-1f6feb" alt="MCP stdio"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b8f60" alt="Лицензия MIT"></a>
-  <img src="https://img.shields.io/badge/version-0.3.0-6b7280" alt="Версия 0.3.0">
+  <img src="https://img.shields.io/badge/version-0.4.0-6b7280" alt="Версия 0.4.0">
 </p>
 
 Сервер подключает MCP-клиент к VK Рекламе: читает кампании, группы и объявления, получает статистику, работает с аудиториями, креативами, лид-формами, опросами, подписками, прайс-листами и справочниками. Отдельный блок Core VK API ищет и анализирует публичные сообщества.
@@ -54,6 +54,14 @@ gh api -H "Accept: application/vnd.github.raw+json" repos/sergeylopukhov/vk-ads-
 6. сохранит credentials и токены в локальном `auth.env`;
 7. подключит сервер к Codex под именем `vk-ads`;
 8. установит навык Codex для безопасной работы с текущими tools.
+
+Навык включается автоматически для задач о VK Ads и сообществах VK. Он
+маршрутизирует запросы по точным MCP tools, помогает восстанавливать токены,
+проводить диагностику, анализировать статистику и сообщества, управлять
+кампаниями, аудиториями, лидами и опросами, а также безопасно выполнять очистку.
+Для анализа по умолчанию используется подробный отчёт; записывающие tools
+вызываются только по явному запросу пользователя. Навык и его справочники
+обновляются вместе с сервером.
 
 После установки перезапустите Codex и отправьте:
 
