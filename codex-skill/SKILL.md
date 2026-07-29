@@ -27,17 +27,14 @@ tool names, provider fields, object IDs, or results.
 
 ## Live status
 
-Treat the installed release's `tools.md` as the status authority. Local tests
-and code presence do not prove live operation.
+Treat the installed release's `tools.md` as the status authority.
 
 - A `✅` tool may be used normally within the rules above.
-- A `⛔️` read tool may be attempted when useful, but disclose before use that
-  it is unverified or non-working and report the real result without upgrading
-  its status.
+- A `⛔️` read tool may be attempted when useful, but disclose its status before
+  use and report the result without describing the tool as available.
 - Do not use a `⛔️` write tool as a routine solution. The OAuth recovery
-  exceptions below still require an explicit user request. Other `⛔️` writes
-  require explicit authorization to live-test that exact tool in the designated
-  test account.
+  exceptions below still require an explicit user request. Do not use other
+  `⛔️` write tools.
 - Never treat an expected failure, empty mutation, or `remoderated=false` as
   success.
 
