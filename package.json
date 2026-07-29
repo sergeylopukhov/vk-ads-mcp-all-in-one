@@ -10,6 +10,19 @@
     "url": "git+https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one.git"
   },
   "homepage": "https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one#readme",
+  "files": [
+    "dist/",
+    "assets/",
+    "codex-skill/",
+    "readme/",
+    "install.mjs",
+    "install.ps1",
+    "install.sh",
+    "tools.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "NOTICE.md"
+  ],
   "type": "module",
   "engines": {
     "node": ">=22"
