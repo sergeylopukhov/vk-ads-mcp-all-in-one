@@ -25,6 +25,9 @@
   },
   "packageManager": "npm@10.9.8",
   "scripts": {
+    "check:ci": "npm run typecheck && npm test && npm run build && npm pack --dry-run && npm run check:repo && npm run check:docs",
+    "check:docs": "node scripts/check-doc-links.mjs",
+    "check:repo": "node scripts/check-repository.mjs",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "build": "tsc -p tsconfig.json",
