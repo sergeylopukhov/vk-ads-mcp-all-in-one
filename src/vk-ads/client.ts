@@ -2314,9 +2314,15 @@ export class VkAdsApiClient {
       transaction_groups:
         `${this.v2BaseUrl}/billing/transaction_groups.json`,
     };
+    const url = new URL(endpoints[resource]);
+
+    if (resource === "packages") {
+      url.searchParams.set("fields", "options");
+    }
+
     const parsed = await this.requestValidated(
       "GET",
-      new URL(endpoints[resource]),
+      url,
       referenceCollectionSchema,
       `VK Ads returned invalid ${resource} reference data.`,
     );

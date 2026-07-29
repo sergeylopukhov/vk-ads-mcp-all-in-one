@@ -196,15 +196,46 @@ export function parseEnvValues(content) {
   return values;
 }
 
-export function parseInstalledVersion(content) {
+export function parseInstalledMetadata(content) {
   try {
     const value = JSON.parse(content);
-    return typeof value?.ref === "string" && value.ref
-      ? value.ref
+    if (!value || typeof value !== "object") {
+      return undefined;
+    }
+
+    const metadata = {
+      ref:
+        typeof value.ref === "string" && value.ref
+          ? value.ref
+          : undefined,
+      selectedClients: undefined,
+    };
+
+    if (Array.isArray(value.selectedClients)) {
+      const supportedIds = new Set(
+        MCP_CLIENTS.map((client) => client.id),
+      );
+      if (
+        value.selectedClients.every(
+          (id) => typeof id === "string" && supportedIds.has(id),
+        )
+      ) {
+        metadata.selectedClients = [
+          ...new Set(value.selectedClients),
+        ];
+      }
+    }
+
+    return metadata.ref || metadata.selectedClients !== undefined
+      ? metadata
       : undefined;
   } catch {
     return undefined;
   }
+}
+
+export function parseInstalledVersion(content) {
+  return parseInstalledMetadata(content)?.ref;
 }
 
 export function requiresConfiguration(values) {
@@ -587,9 +618,9 @@ async function pathExists(path) {
   }
 }
 
-async function installedVersion(installDirectory) {
+async function installedMetadata(installDirectory) {
   try {
-    return parseInstalledVersion(
+    return parseInstalledMetadata(
       await readFile(
         join(installDirectory, ".vk-ads-install.json"),
         "utf8",
@@ -622,8 +653,6 @@ async function runInteractiveMenu(
   output = process.stdout,
 ) {
   const wasRaw = input.isRaw === true;
-  const wasPaused =
-    typeof input.isPaused === "function" ? input.isPaused() : true;
 
   emitKeypressEvents(input);
   input.setRawMode(true);
@@ -668,9 +697,7 @@ async function runInteractiveMenu(
     });
   } finally {
     input.setRawMode(wasRaw);
-    if (wasPaused) {
-      input.pause();
-    }
+    input.pause();
   }
 }
 
@@ -923,6 +950,7 @@ async function deployServer(
   installDirectory,
   ref,
   commitSha,
+  selectedClients,
 ) {
   await mkdir(installDirectory, { recursive: true });
   const backupDirectory = join(
@@ -954,6 +982,7 @@ async function deployServer(
           repository: REPOSITORY,
           ref,
           commitSha,
+          selectedClients,
           updatedAt: new Date().toISOString(),
         },
         null,
@@ -1468,6 +1497,26 @@ export function legacyCodexSkillDirectory(home = homedir()) {
   return join(home, ".codex", "skills", "vk-ads-mcp");
 }
 
+export async function inferInstalledClients(
+  detected,
+  home = homedir(),
+  environment = process.env,
+) {
+  const installed = [];
+
+  for (const client of detected) {
+    const skillPath = join(
+      clientSkillDirectory(client.id, home, environment),
+      "SKILL.md",
+    );
+    if (await pathExists(skillPath)) {
+      installed.push(client.id);
+    }
+  }
+
+  return installed;
+}
+
 async function installSkillDirectory(source, destination) {
   const parent = dirname(destination);
   await mkdir(parent, { recursive: true });
@@ -1767,7 +1816,11 @@ export async function updateOpenCodeConfig(
   return { configPath, backupPath };
 }
 
-async function chooseMcpClients(detected, options) {
+export async function chooseMcpClients(
+  detected,
+  options,
+  savedClients,
+) {
   if (!options.register) {
     return [];
   }
@@ -1779,6 +1832,29 @@ async function chooseMcpClients(detected, options) {
     return parseRequestedClients(options.clients);
   }
 
+  if (options.allDetected) {
+    return detected.map((client) => client.id);
+  }
+
+  if (savedClients !== undefined) {
+    if (savedClients.length === 0) {
+      console.log(
+        "Сохранённый режим: без подключения к MCP-клиентам.",
+      );
+    } else {
+      console.log(
+        `Сохранённые MCP-клиенты: ${savedClients
+          .map(
+            (id) =>
+              MCP_CLIENTS.find((client) => client.id === id)?.label ||
+              id,
+          )
+          .join(", ")}.`,
+      );
+    }
+    return savedClients;
+  }
+
   const detectedIds = detected.map((client) => client.id);
   if (detectedIds.length === 0) {
     throw new Error(
@@ -1787,7 +1863,6 @@ async function chooseMcpClients(detected, options) {
   }
 
   if (
-    options.allDetected ||
     !process.stdin.isTTY ||
     !process.stdout.isTTY
   ) {
@@ -2032,18 +2107,49 @@ export async function main(argv = process.argv.slice(2)) {
     options.installDirectory || defaultInstallDirectory(),
   );
   const ref = await resolveRef(options.ref);
+  const previousInstallation =
+    await installedMetadata(installDirectory);
   const installMode = await chooseInstallMode(
-    await installedVersion(installDirectory),
+    previousInstallation?.ref,
     ref,
     await pathExists(join(installDirectory, "auth.env")),
   );
   const detectedClients = options.register
     ? await detectMcpClients()
     : [];
+  let savedClients;
+  if (
+    installMode === "update" &&
+    options.register &&
+    options.clients === undefined &&
+    !options.allDetected
+  ) {
+    savedClients = previousInstallation?.selectedClients;
+    if (
+      savedClients === undefined &&
+      previousInstallation
+    ) {
+      const inferredClients =
+        await inferInstalledClients(detectedClients);
+      if (inferredClients.length > 0) {
+        savedClients = inferredClients;
+        console.log(
+          "Выбор MCP-клиентов восстановлен из предыдущей установки.",
+        );
+      }
+    }
+  }
   const selectedClients = await chooseMcpClients(
     detectedClients,
     options,
+    savedClients,
   );
+  const clientsToRemember =
+    !options.register &&
+    installMode === "update" &&
+    previousInstallation?.selectedClients !== undefined
+      ? previousInstallation.selectedClients
+      : selectedClients;
   const temporaryRoot = await mkdtemp(
     join(tmpdir(), "vk-ads-mcp-"),
   );
@@ -2057,6 +2163,7 @@ export async function main(argv = process.argv.slice(2)) {
       installDirectory,
       ref,
       commitSha,
+      clientsToRemember,
     );
     await ensureConfiguration(
       installDirectory,
