@@ -73,6 +73,13 @@ export const MCP_CLIENTS = [
     configurableWithoutCli: true,
   },
   {
+    id: "opencode",
+    label: "OpenCode",
+    commands: ["opencode"],
+    markers: [".config/opencode", ".opencode"],
+    configurableWithoutCli: true,
+  },
+  {
     id: "cursor",
     label: "Cursor",
     commands: ["cursor-agent", "cursor"],
@@ -87,6 +94,7 @@ const MCP_CLIENT_ALIASES = new Map([
   ["gemini-cli", "gemini"],
   ["qwen-code", "qwen"],
   ["kimi-code", "kimi"],
+  ["open-code", "opencode"],
 ]);
 
 let cachedGitHubToken;
@@ -285,6 +293,12 @@ export async function detectMcpClients({
         ? resolve(environment.KIMI_CODE_HOME)
         : join(home, marker),
     );
+
+    if (client.id === "opencode" && environment.XDG_CONFIG_HOME) {
+      markerPaths.push(
+        join(environment.XDG_CONFIG_HOME, "opencode"),
+      );
+    }
 
     if (client.id === "cursor") {
       if (platform === "darwin") {
@@ -1128,6 +1142,10 @@ export function clientSkillDirectory(
   home = homedir(),
   environment = process.env,
 ) {
+  const openCodeConfigRoot = join(
+    environment.XDG_CONFIG_HOME || join(home, ".config"),
+    "opencode",
+  );
   const roots = new Map([
     ["codex", join(home, ".agents", "skills")],
     ["claude", join(home, ".claude", "skills")],
@@ -1140,6 +1158,7 @@ export function clientSkillDirectory(
         "skills",
       ),
     ],
+    ["opencode", join(openCodeConfigRoot, "skills")],
     ["cursor", join(home, ".cursor", "skills")],
   ]);
   const root = roots.get(clientId);
@@ -1299,6 +1318,71 @@ export function mergeMcpServerConfig(
   return `${JSON.stringify(configuration, null, 2)}\n`;
 }
 
+export function openCodeConfigPath(
+  home = homedir(),
+  environment = process.env,
+) {
+  return join(
+    environment.XDG_CONFIG_HOME || join(home, ".config"),
+    "opencode",
+    "opencode.json",
+  );
+}
+
+export function mergeOpenCodeConfig(
+  content,
+  serverName,
+  command,
+  args,
+) {
+  let configuration = {};
+
+  if (content.trim()) {
+    try {
+      configuration = JSON.parse(content);
+    } catch {
+      throw new Error(
+        "Конфигурация OpenCode содержит некорректный JSON.",
+      );
+    }
+  }
+
+  if (
+    !configuration ||
+    Array.isArray(configuration) ||
+    typeof configuration !== "object"
+  ) {
+    throw new Error(
+      "Корень конфигурации OpenCode должен быть объектом.",
+    );
+  }
+
+  if (
+    configuration.mcp !== undefined &&
+    (!configuration.mcp ||
+      Array.isArray(configuration.mcp) ||
+      typeof configuration.mcp !== "object")
+  ) {
+    throw new Error("Поле mcp в конфигурации OpenCode должно быть объектом.");
+  }
+
+  configuration = {
+    ...configuration,
+    $schema:
+      configuration.$schema || "https://opencode.ai/config.json",
+    mcp: {
+      ...(configuration.mcp || {}),
+      [serverName]: {
+        type: "local",
+        command: [command, ...args],
+        enabled: true,
+      },
+    },
+  };
+
+  return `${JSON.stringify(configuration, null, 2)}\n`;
+}
+
 export async function updateMcpJsonConfig(
   configPath,
   command,
@@ -1340,6 +1424,54 @@ export async function updateMcpJsonConfig(
     JSON.stringify(server?.args) !== JSON.stringify(args)
   ) {
     throw new Error(`Не удалось проверить конфигурацию ${configPath}.`);
+  }
+
+  return { configPath, backupPath };
+}
+
+export async function updateOpenCodeConfig(
+  configPath,
+  command,
+  args,
+) {
+  await mkdir(dirname(configPath), { recursive: true });
+  const exists = await pathExists(configPath);
+  const content = exists ? await readFile(configPath, "utf8") : "";
+  const updated = mergeOpenCodeConfig(
+    content,
+    "vk-ads",
+    command,
+    args,
+  );
+  let backupPath;
+
+  if (exists) {
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[:.]/gu, "-");
+    backupPath = `${configPath}.backup-${timestamp}`;
+    await cp(configPath, backupPath);
+  }
+
+  const temporaryPath = `${configPath}.tmp-${randomBytes(8).toString("hex")}`;
+  try {
+    await writeFile(temporaryPath, updated, { mode: 0o600 });
+    await rename(temporaryPath, configPath);
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
+
+  const verified = JSON.parse(await readFile(configPath, "utf8"));
+  const server = verified?.mcp?.["vk-ads"];
+  if (
+    server?.type !== "local" ||
+    server?.enabled !== true ||
+    JSON.stringify(server?.command) !==
+      JSON.stringify([command, ...args])
+  ) {
+    throw new Error(
+      `Не удалось проверить конфигурацию OpenCode ${configPath}.`,
+    );
   }
 
   return { configPath, backupPath };
@@ -1501,6 +1633,29 @@ async function setupQwen(installDirectory) {
   return {};
 }
 
+async function setupOpenCode(
+  installDirectory,
+  home = homedir(),
+  environment = process.env,
+) {
+  const configPath = openCodeConfigPath(home, environment);
+  const result = await updateOpenCodeConfig(
+    configPath,
+    process.execPath,
+    [join(installDirectory, "dist", "index.js")],
+  );
+
+  if (commandAvailable("opencode")) {
+    run("opencode", ["mcp", "list"]);
+  }
+
+  return {
+    detail: result.backupPath
+      ? `конфиг: ${configPath}, резервная копия: ${result.backupPath}`
+      : `конфиг: ${configPath}`,
+  };
+}
+
 async function setupKimi(
   installDirectory,
   home = homedir(),
@@ -1546,6 +1701,7 @@ async function setupMcpClients(clientIds, installDirectory) {
     claude: setupClaude,
     gemini: setupGemini,
     qwen: setupQwen,
+    opencode: setupOpenCode,
     kimi: setupKimi,
     cursor: setupCursor,
   };

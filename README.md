@@ -10,7 +10,7 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-stdio-1f6feb" alt="MCP stdio"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0b8f60" alt="Лицензия MIT"></a>
-  <img src="https://img.shields.io/badge/version-0.0.3-6b7280" alt="Версия 0.0.3">
+  <img src="https://img.shields.io/badge/version-0.0.4-6b7280" alt="Версия 0.0.4">
 </p>
 
 Сервер подключает MCP-клиент к VK Рекламе: читает кампании, группы и объявления, получает статистику, работает с аудиториями, креативами, лид-формами, опросами, подписками, прайс-листами и справочниками. Отдельный блок Core VK API ищет и анализирует публичные сообщества.
@@ -66,14 +66,14 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one
 </details>
 
 > [!NOTE]
-> Поддерживаются Codex CLI, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor. Можно подключить один или несколько клиентов.
+> Поддерживаются OpenCode, Codex CLI, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor. Можно подключить один или несколько клиентов.
 
 <details>
 <summary><strong>Что устанавливается вместе с MCP</strong></summary>
 
 Универсальный Agent Skill устанавливается для каждого выбранного клиента и автоматически включается в задачах о VK Ads и сообществах VK. Он выбирает подходящие инструменты MCP, помогает восстанавливать токены, проверять подключение, анализировать статистику и сообщества, управлять кампаниями, аудиториями, лидами и опросами. Инструменты записи вызываются только по явному запросу пользователя. Навык и его справочники обновляются вместе с сервером.
 
-Если перед поиском сообществ нужно собрать подробный бриф, навык предлагает ответить в чате или установить отдельный [интерактивный опросник](https://github.com/sergeylopukhov/interactive-project-questionnaire). Опросник не устанавливается без согласия пользователя. Его установщик поддерживает Claude Code, Codex, Cursor, Gemini CLI, Qwen Code, Kimi Code CLI, Hermes Agent и другие клиенты формата Agent Skills.
+Если перед поиском сообществ нужно собрать подробный бриф, навык предлагает ответить в чате или установить отдельный [интерактивный опросник](https://github.com/sergeylopukhov/interactive-project-questionnaire). Опросник не устанавливается без согласия пользователя. Его установщик поддерживает OpenCode, Claude Code, Codex, Cursor, Gemini CLI, Qwen Code, Kimi Code CLI, Hermes Agent и другие клиенты формата Agent Skills.
 
 </details>
 
@@ -286,7 +286,7 @@ VK_COMMUNITY_RESEARCH_TTL_DAYS=30
 ## MCP-клиенты
 
 > [!NOTE]
-> Установщик находит Codex CLI, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor, затем предлагает выбрать нужные клиенты.
+> Установщик находит OpenCode, Codex CLI, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor, затем предлагает выбрать нужные клиенты.
 
 <table width="100%">
   <thead>
@@ -301,7 +301,7 @@ VK_COMMUNITY_RESEARCH_TTL_DAYS=30
       <td><a href="docs/setup-codex.md">Установка и проверка подключения</a></td>
     </tr>
     <tr>
-      <td>Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor</td>
+      <td>OpenCode, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor</td>
       <td><a href="docs/setup-clients.md">Команды подключения и пути к конфигурациям</a></td>
     </tr>
   </tbody>
@@ -327,7 +327,7 @@ VK_COMMUNITY_RESEARCH_TTL_DAYS=30
     </tr>
     <tr>
       <td><a href="docs/setup-clients.md">Подключение MCP-клиентов</a></td>
-      <td>Настройка Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor</td>
+      <td>Настройка OpenCode, Claude Code, Gemini CLI, Qwen Code, Kimi Code CLI и Cursor</td>
     </tr>
     <tr>
       <td><a href="docs/SECURITY.md">Политика безопасности</a></td>
