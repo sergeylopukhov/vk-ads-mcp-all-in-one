@@ -3,6 +3,11 @@ import type { VkCommunity, VkWallPost } from "./vk-client.js";
 export interface Activity {
   last_post_at: string | null;
   posts_per_week: number | null;
+  posts_30d: number;
+  posts_90d: number;
+  posts_per_week_30d: number;
+  posts_per_week_90d: number;
+  median_posts_per_week_90d: number;
   posts_analyzed: number;
   thematic_posts: number;
   thematic_post_share: number | null;
@@ -10,10 +15,19 @@ export interface Activity {
   term_match_counts: Record<string, number>;
   exclude_term_matches: string[];
   exclude_term_match_counts: Record<string, number>;
+  exclusion_post_share: number;
+  intent_term_matches: string[];
+  intent_term_match_counts: Record<string, number>;
+  compatibility_term_matches: string[];
+  compatibility_term_match_counts: Record<string, number>;
   analyzed_terms: string[];
   analyzed_exclude_terms: string[];
+  analyzed_intent_terms: string[];
+  analyzed_compatibility_terms: string[];
   post_term_sets: string[][];
   post_exclude_term_sets: string[][];
+  post_intent_term_sets: string[][];
+  post_compatibility_term_sets: string[][];
   risk_flags: string[];
 }
 
@@ -33,17 +47,144 @@ export interface Candidate {
 export interface Score {
   id: number;
   score: number;
+  raw_score: number;
+  normalized_score: number;
+  components: {
+    content_relevance: number;
+    audience_intent: number;
+    activity: number;
+    profile_fit: number;
+    exclusion_risk: number;
+  };
+  compatibility_matches: string[];
   recommendation: "recommended" | "review" | "rejected";
   clusters: string[];
   reasons: string[];
   risk_flags: string[];
 }
 
-const normalize = (value: string): string =>
-  value.toLocaleLowerCase("ru-RU");
+export type TermStrength = "strong" | "medium" | "weak";
 
-export const matches = (text: string, terms: string[]): string[] =>
-  terms.filter((term) => normalize(text).includes(normalize(term)));
+const normalize = (value: string): string =>
+  value
+    .normalize("NFKC")
+    .toLocaleLowerCase("ru-RU")
+    .replaceAll("ё", "е");
+
+const RUSSIAN_SUFFIXES = [
+  "иями",
+  "ями",
+  "ами",
+  "иях",
+  "ого",
+  "ему",
+  "ому",
+  "ыми",
+  "ими",
+  "иям",
+  "ием",
+  "иях",
+  "ий",
+  "ый",
+  "ой",
+  "ая",
+  "яя",
+  "ое",
+  "ее",
+  "ые",
+  "ие",
+  "ых",
+  "их",
+  "ую",
+  "юю",
+  "ов",
+  "ев",
+  "ей",
+  "ам",
+  "ям",
+  "ах",
+  "ях",
+  "ом",
+  "ем",
+  "ия",
+  "ья",
+  "ы",
+  "и",
+  "а",
+  "я",
+  "у",
+  "ю",
+  "е",
+  "о",
+] as const;
+
+const tokens = (value: string): string[] =>
+  normalize(value).match(/[\p{L}\p{N}]+/gu) ?? [];
+
+const stem = (word: string): string => {
+  if (!/^[а-я]+$/u.test(word) || word.length < 5) return word;
+  for (const suffix of RUSSIAN_SUFFIXES) {
+    if (word.endsWith(suffix) && word.length - suffix.length >= 4) {
+      const base = word.slice(0, -suffix.length);
+      return base.endsWith("ск") && base.length > 6
+        ? base.slice(0, -2)
+        : base;
+    }
+  }
+  return word;
+};
+
+const termMatchesTokens = (source: string[], term: string): boolean => {
+  const expected = tokens(term).map(stem);
+  if (expected.length === 0) return false;
+  const actual = source.map(stem);
+  if (expected.length === 1) return actual.includes(expected[0]!);
+  const windowSize = expected.length + 2;
+  for (let index = 0; index < actual.length; index += 1) {
+    const window = actual.slice(index, index + windowSize);
+    if (expected.every((word) => window.includes(word))) return true;
+  }
+  return false;
+};
+
+const termPrefixMatchesTokens = (source: string[], term: string): boolean => {
+  const expectedTokens = tokens(term);
+  if (expectedTokens.length === 0) return false;
+  const expected = expectedTokens.map(stem);
+  const actual = source.map((word) => ({
+    word,
+    stem: stem(word),
+  }));
+  const wordMatches = (
+    candidate: (typeof actual)[number],
+    index: number,
+  ): boolean =>
+    candidate.stem === expected[index] ||
+    (expectedTokens[index]!.length >= 3 &&
+      candidate.word.startsWith(expectedTokens[index]!));
+  if (expected.length === 1) {
+    return actual.some((candidate) => wordMatches(candidate, 0));
+  }
+  const windowSize = expected.length + 2;
+  for (let index = 0; index < actual.length; index += 1) {
+    const window = actual.slice(index, index + windowSize);
+    if (
+      expected.every((_word, expectedIndex) =>
+        window.some((candidate) => wordMatches(candidate, expectedIndex))
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
+export const matches = (text: string, terms: string[]): string[] => {
+  const source = tokens(text);
+  return [...new Set(terms)].filter((term) =>
+    termMatchesTokens(source, term)
+  );
+};
 
 export type ExcludeMatchMode = "word_prefix" | "substring";
 
@@ -52,21 +193,16 @@ export function matchExcludedTerms(
   terms: string[],
   mode: ExcludeMatchMode = "word_prefix",
 ): string[] {
-  if (mode === "substring") return matches(text, terms);
-  const source = normalize(text);
-  return terms.filter((term) => {
-    const words = normalize(term).match(/[\p{L}\p{N}]+/gu) ?? [];
-    if (words.length === 0) return false;
-    const body = words
-      .map((word, index) =>
-        `${escapeRegExp(word)}${index === words.length - 1 ? "[\\p{L}\\p{N}]*" : ""}`,
-      )
-      .join("[^\\p{L}\\p{N}]+");
-    return new RegExp(
-      `(?:^|[^\\p{L}\\p{N}])${body}(?=$|[^\\p{L}\\p{N}])`,
-      "u",
-    ).test(source);
-  });
+  if (mode === "substring") {
+    const source = normalize(text);
+    return [...new Set(terms)].filter((term) =>
+      source.includes(normalize(term))
+    );
+  }
+  const source = tokens(text);
+  return [...new Set(terms)].filter((term) =>
+    termPrefixMatchesTokens(source, term)
+  );
 }
 
 export function candidate(
@@ -98,6 +234,13 @@ export function analyze(
   terms: string[],
   excludes: string[],
   excludeMatchMode: ExcludeMatchMode = "word_prefix",
+  options: {
+    termStrengths?: Record<string, TermStrength>;
+    minWeakMatches?: number;
+    intentTerms?: string[];
+    compatibilityTerms?: string[];
+    now?: number;
+  } = {},
 ): Activity {
   const ordinary = posts.filter(
     (post) =>
@@ -109,33 +252,76 @@ export function analyze(
     .map((post) => Number(post.date))
     .sort((left, right) => right - left);
   const newest = dates[0];
-  const oldest = dates.at(-1);
-  const span =
-    newest !== undefined && oldest !== undefined && dates.length > 1
-      ? Math.max(1, newest - oldest)
-      : 0;
+  const nowSeconds = Math.floor((options.now ?? Date.now()) / 1_000);
+  const countWithinDays = (days: number): number =>
+    dates.filter(
+      (date) => date <= nowSeconds && nowSeconds - date <= days * 86_400,
+    ).length;
+  const posts30d = countWithinDays(30);
+  const posts90d = countWithinDays(90);
   const postTermSets = ordinary.map((post) =>
     matches(post.text ?? "", terms),
   );
   const postExcludeTermSets = ordinary.map((post) =>
     matchExcludedTerms(post.text ?? "", excludes, excludeMatchMode),
   );
+  const intentTerms = options.intentTerms ?? [];
+  const compatibilityTerms = options.compatibilityTerms ?? [];
+  const postIntentTermSets = ordinary.map((post) =>
+    matches(post.text ?? "", intentTerms),
+  );
+  const postCompatibilityTermSets = ordinary.map((post) =>
+    matches(post.text ?? "", compatibilityTerms),
+  );
   const termMatchCounts = countTermSets(postTermSets);
   const excludeTermMatchCounts = countTermSets(postExcludeTermSets);
+  const intentTermMatchCounts = countTermSets(postIntentTermSets);
+  const compatibilityTermMatchCounts = countTermSets(
+    postCompatibilityTermSets,
+  );
+  const normalizedStrengths = new Map(
+    Object.entries(options.termStrengths ?? {}).map(([term, strength]) => [
+      normalize(term),
+      strength,
+    ]),
+  );
+  const minWeakMatches = Math.max(2, options.minWeakMatches ?? 2);
   const thematicPosts = postTermSets.filter(
+    (matched) => {
+      const strengths = matched.map(
+        (term) => normalizedStrengths.get(normalize(term)) ?? "medium",
+      );
+      return (
+        strengths.some((strength) => strength !== "weak") ||
+        strengths.filter((strength) => strength === "weak").length >=
+          minWeakMatches
+      );
+    },
+  ).length;
+  const exclusionPosts = postExcludeTermSets.filter(
     (matched) => matched.length > 0,
   ).length;
+  const weeklyBuckets = Array.from({ length: 13 }, (_, bucket) =>
+    dates.filter((date) => {
+      const age = nowSeconds - date;
+      return (
+        age >= bucket * 604_800 &&
+        age < (bucket + 1) * 604_800
+      );
+    }).length
+  ).sort((left, right) => left - right);
 
   return {
     last_post_at:
       dates[0] === undefined
         ? null
         : new Date(dates[0] * 1_000).toISOString(),
-    posts_per_week: span
-      ? Number((ordinary.length / (span / 604_800)).toFixed(2))
-      : ordinary.length
-        ? null
-        : 0,
+    posts_per_week: Number(((posts90d / 90) * 7).toFixed(2)),
+    posts_30d: posts30d,
+    posts_90d: posts90d,
+    posts_per_week_30d: Number(((posts30d / 30) * 7).toFixed(2)),
+    posts_per_week_90d: Number(((posts90d / 90) * 7).toFixed(2)),
+    median_posts_per_week_90d: weeklyBuckets[6] ?? 0,
     posts_analyzed: ordinary.length,
     thematic_posts: thematicPosts,
     thematic_post_share: ordinary.length
@@ -145,10 +331,21 @@ export function analyze(
     term_match_counts: termMatchCounts,
     exclude_term_matches: Object.keys(excludeTermMatchCounts),
     exclude_term_match_counts: excludeTermMatchCounts,
+    exclusion_post_share: ordinary.length
+      ? Number((exclusionPosts / ordinary.length).toFixed(3))
+      : 0,
+    intent_term_matches: Object.keys(intentTermMatchCounts),
+    intent_term_match_counts: intentTermMatchCounts,
+    compatibility_term_matches: Object.keys(compatibilityTermMatchCounts),
+    compatibility_term_match_counts: compatibilityTermMatchCounts,
     analyzed_terms: [...new Set(terms)],
     analyzed_exclude_terms: [...new Set(excludes)],
+    analyzed_intent_terms: [...new Set(intentTerms)],
+    analyzed_compatibility_terms: [...new Set(compatibilityTerms)],
     post_term_sets: postTermSets,
     post_exclude_term_sets: postExcludeTermSets,
+    post_intent_term_sets: postIntentTermSets,
+    post_compatibility_term_sets: postCompatibilityTermSets,
     risk_flags:
       Object.keys(excludeTermMatchCounts).length > 0
         ? ["exclude_term_in_posts"]
@@ -160,7 +357,21 @@ export function reanalyzeDerivedActivity(
   activity: Activity,
   terms: string[],
   excludes: string[],
-): { activity: Activity; missingTerms: string[]; missingExcludes: string[] } {
+  options: {
+    intentTerms?: string[];
+    compatibilityTerms?: string[];
+    termStrengths?: Record<string, TermStrength>;
+    minWeakMatches?: number;
+  } = {},
+): {
+  activity: Activity;
+  missingTerms: string[];
+  missingExcludes: string[];
+  missingIntentTerms: string[];
+  missingCompatibilityTerms: string[];
+} {
+  const intentTerms = options.intentTerms ?? [];
+  const compatibilityTerms = options.compatibilityTerms ?? [];
   if (
     !Array.isArray(activity.post_term_sets) ||
     !Array.isArray(activity.post_exclude_term_sets)
@@ -169,6 +380,8 @@ export function reanalyzeDerivedActivity(
       activity,
       missingTerms: [...terms],
       missingExcludes: [...excludes],
+      missingIntentTerms: [...intentTerms],
+      missingCompatibilityTerms: [...compatibilityTerms],
     };
   }
   const normalizedAnalyzedTerms = new Map(
@@ -179,6 +392,18 @@ export function reanalyzeDerivedActivity(
   );
   const normalizedAnalyzedExcludes = new Map(
     (activity.analyzed_exclude_terms ?? []).map((term) => [
+      normalize(term),
+      term,
+    ]),
+  );
+  const normalizedAnalyzedIntentTerms = new Map(
+    (activity.analyzed_intent_terms ?? []).map((term) => [
+      normalize(term),
+      term,
+    ]),
+  );
+  const normalizedAnalyzedCompatibilityTerms = new Map(
+    (activity.analyzed_compatibility_terms ?? []).map((term) => [
       normalize(term),
       term,
     ]),
@@ -195,17 +420,66 @@ export function reanalyzeDerivedActivity(
   const missingExcludes = excludes.filter(
     (term) => !normalizedAnalyzedExcludes.has(normalize(term)),
   );
+  const selectedIntentTerms = intentTerms
+    .map((term) => normalizedAnalyzedIntentTerms.get(normalize(term)))
+    .filter((term): term is string => term !== undefined);
+  const selectedCompatibilityTerms = compatibilityTerms
+    .map((term) =>
+      normalizedAnalyzedCompatibilityTerms.get(normalize(term))
+    )
+    .filter((term): term is string => term !== undefined);
+  const missingIntentTerms = intentTerms.filter(
+    (term) => !normalizedAnalyzedIntentTerms.has(normalize(term)),
+  );
+  const missingCompatibilityTerms = compatibilityTerms.filter(
+    (term) => !normalizedAnalyzedCompatibilityTerms.has(normalize(term)),
+  );
   const selectedTermKeys = new Set(selectedTerms.map(normalize));
   const selectedExcludeKeys = new Set(selectedExcludes.map(normalize));
+  const selectedIntentKeys = new Set(selectedIntentTerms.map(normalize));
+  const selectedCompatibilityKeys = new Set(
+    selectedCompatibilityTerms.map(normalize),
+  );
   const postTermSets = (activity.post_term_sets ?? []).map((set) =>
     set.filter((term) => selectedTermKeys.has(normalize(term))),
   );
   const postExcludeTermSets = (activity.post_exclude_term_sets ?? []).map((set) =>
     set.filter((term) => selectedExcludeKeys.has(normalize(term))),
   );
+  const postIntentTermSets = (activity.post_intent_term_sets ?? []).map((set) =>
+    set.filter((term) => selectedIntentKeys.has(normalize(term))),
+  );
+  const postCompatibilityTermSets = (
+    activity.post_compatibility_term_sets ?? []
+  ).map((set) =>
+    set.filter((term) => selectedCompatibilityKeys.has(normalize(term)))
+  );
   const termMatchCounts = countTermSets(postTermSets);
   const excludeTermMatchCounts = countTermSets(postExcludeTermSets);
-  const thematicPosts = postTermSets.filter((set) => set.length > 0).length;
+  const intentTermMatchCounts = countTermSets(postIntentTermSets);
+  const compatibilityTermMatchCounts = countTermSets(
+    postCompatibilityTermSets,
+  );
+  const normalizedStrengths = new Map(
+    Object.entries(options.termStrengths ?? {}).map(([term, strength]) => [
+      normalize(term),
+      strength,
+    ]),
+  );
+  const minWeakMatches = Math.max(2, options.minWeakMatches ?? 2);
+  const thematicPosts = postTermSets.filter((set) => {
+    const strengths = set.map(
+      (term) => normalizedStrengths.get(normalize(term)) ?? "medium",
+    );
+    return (
+      strengths.some((strength) => strength !== "weak") ||
+      strengths.filter((strength) => strength === "weak").length >=
+        minWeakMatches
+    );
+  }).length;
+  const exclusionPosts = postExcludeTermSets.filter(
+    (set) => set.length > 0,
+  ).length;
   const riskFlags = activity.risk_flags.filter(
     (flag) => flag !== "exclude_term_in_posts",
   );
@@ -223,10 +497,21 @@ export function reanalyzeDerivedActivity(
       term_match_counts: termMatchCounts,
       exclude_term_matches: Object.keys(excludeTermMatchCounts),
       exclude_term_match_counts: excludeTermMatchCounts,
+      exclusion_post_share: activity.posts_analyzed
+        ? Number((exclusionPosts / activity.posts_analyzed).toFixed(3))
+        : 0,
+      intent_term_matches: Object.keys(intentTermMatchCounts),
+      intent_term_match_counts: intentTermMatchCounts,
+      compatibility_term_matches: Object.keys(compatibilityTermMatchCounts),
+      compatibility_term_match_counts: compatibilityTermMatchCounts,
+      post_intent_term_sets: postIntentTermSets,
+      post_compatibility_term_sets: postCompatibilityTermSets,
       risk_flags: riskFlags,
     },
     missingTerms,
     missingExcludes,
+    missingIntentTerms,
+    missingCompatibilityTerms,
   };
 }
 
@@ -241,7 +526,12 @@ export function score(
   const excludes = strings(rules.exclude_terms);
   const memberRange = object(rules.members_range);
   const termWeights = object(rules.term_weights);
+  const intentTermWeights = object(rules.intent_term_weights);
   const perMatchWeights = object(rules.per_match_weights);
+  const intentTerms = strings(rules.intent_terms);
+  const compatibilityTerms = strings(rules.compatibility_terms);
+  const excludeMatchMode: ExcludeMatchMode =
+    rules.exclude_match_mode === "substring" ? "substring" : "word_prefix";
   const freshDays = number(rules.activity_fresh_days, 30);
   const minPostsPerWeek = number(rules.min_posts_per_week, 0);
   const minThematicShare = number(
@@ -256,41 +546,64 @@ export function score(
 
   return items.map((item) => {
     let value = 0;
+    const components = {
+      content_relevance: 0,
+      audience_intent: 0,
+      activity: 0,
+      profile_fit: 0,
+      exclusion_risk: 0,
+    };
     const reasons: string[] = [];
     const text = `${item.name}\n${item.description}`;
     const addMatches = (
       key: string,
       source: string,
       label: string,
+      component: keyof typeof components,
+      selectedTerms = terms,
+      selectedTermWeights = termWeights,
     ): void => {
       const limit = number(weights[key], 0);
       const matched = weightedOccurrences(
         source,
-        terms,
-        termWeights,
+        selectedTerms,
+        selectedTermWeights,
       );
       const perMatch = number(perMatchWeights[key], 1);
       if (limit > 0 && matched.score > 0) {
         const points = Math.min(limit, matched.score * perMatch);
         value += points;
+        components[component] += points;
         reasons.push(
           `${label}: ${matched.count} совп. +${formatPoints(points)} из ${limit}`,
         );
       }
     };
-    const add = (key: string, yes: boolean, label: string): void => {
+    const add = (
+      key: string,
+      yes: boolean,
+      label: string,
+      component: keyof typeof components,
+    ): void => {
       const weight = number(weights[key], 0);
       if (yes && weight > 0) {
         value += weight;
+        components[component] += weight;
         reasons.push(`${label}: +${weight}`);
       }
     };
 
-    addMatches("name_term", item.name, "термины в названии");
+    addMatches(
+      "name_term",
+      item.name,
+      "термины в названии",
+      "profile_fit",
+    );
     addMatches(
       "description_term",
       item.description,
       "термины в описании",
+      "profile_fit",
     );
     const postSource = item.activity === undefined
       ? ""
@@ -304,13 +617,33 @@ export function score(
             Array.from({ length: count }, () => term),
           )
           .join(" ");
-    addMatches("post_term", postSource, "термины в публикациях");
+    addMatches(
+      "post_term",
+      postSource,
+      "термины в публикациях",
+      "content_relevance",
+    );
+    const intentSource = [
+      text,
+      ...Object.entries(item.activity?.intent_term_match_counts ?? {})
+        .flatMap(([term, count]) =>
+          Array.from({ length: count }, () => term)
+        ),
+    ].join(" ");
+    addMatches(
+      "intent_term",
+      intentSource,
+      "признаки намерения аудитории",
+      "audience_intent",
+      intentTerms,
+      intentTermWeights,
+    );
     const fresh =
       item.activity?.last_post_at !== null &&
       item.activity?.last_post_at !== undefined &&
       now - Date.parse(item.activity.last_post_at) <=
         freshDays * 86_400_000;
-    add("activity_fresh", fresh, "свежая активность");
+    add("activity_fresh", fresh, "свежая активность", "activity");
 
     const min =
       typeof memberRange.min === "number"
@@ -326,6 +659,7 @@ export function score(
         (min === undefined || item.members_count >= min) &&
         (max === undefined || item.members_count <= max),
       "размер сообщества",
+      "profile_fit",
     );
 
     const thematicShare = item.activity?.thematic_post_share;
@@ -337,6 +671,7 @@ export function score(
     ) {
       const points = thematicWeight * thematicShare;
       value += points;
+      components.content_relevance += points;
       reasons.push(
         `тематические публикации: ${Math.round(thematicShare * 100)}% +${formatPoints(points)}`,
       );
@@ -351,21 +686,41 @@ export function score(
     );
     if (lowThematic && lowThematicPenalty > 0) {
       value -= lowThematicPenalty;
+      components.content_relevance -= lowThematicPenalty;
       reasons.push(`низкая тематичность: -${lowThematicPenalty}`);
     }
-    const excludePenalty = number(
+    const legacyExcludePenalty = number(
       weights.exclude_term_penalty,
-      0,
+      15,
     );
-    const metadataExcludes = matchExcludedTerms(text, excludes);
+    const metadataExcludes = matchExcludedTerms(
+      text,
+      excludes,
+      excludeMatchMode,
+    );
     const postExcludes = item.activity?.exclude_term_matches ?? [];
-    if (
-      (metadataExcludes.length > 0 || postExcludes.length > 0) &&
-      excludePenalty > 0
-    ) {
-      value -= Math.abs(excludePenalty);
+    const metadataExcludePenalty = number(
+      weights.exclude_metadata_penalty,
+      legacyExcludePenalty,
+    );
+    if (metadataExcludes.length > 0 && metadataExcludePenalty > 0) {
+      value -= metadataExcludePenalty;
+      components.exclusion_risk -= metadataExcludePenalty;
       reasons.push(
-        `исключающий термин (${metadataExcludes.length > 0 ? "metadata" : "posts"}): -${Math.abs(excludePenalty)}`,
+        `исключающий термин в названии или описании: -${formatPoints(metadataExcludePenalty)}`,
+      );
+    }
+    const exclusionPostShare = item.activity?.exclusion_post_share ?? 0;
+    const postExcludePenaltyCap = number(
+      weights.exclude_post_share_penalty,
+      legacyExcludePenalty,
+    );
+    if (postExcludes.length > 0 && postExcludePenaltyCap > 0) {
+      const penalty = postExcludePenaltyCap * exclusionPostShare;
+      value -= penalty;
+      components.exclusion_risk -= penalty;
+      reasons.push(
+        `исключения в публикациях: ${Math.round(exclusionPostShare * 100)}% -${formatPoints(penalty)}`,
       );
     }
     const lowActivity =
@@ -378,17 +733,27 @@ export function score(
     );
     if (lowActivity && lowActivityPenalty > 0) {
       value -= lowActivityPenalty;
+      components.activity -= lowActivityPenalty;
       reasons.push(`низкая активность: -${lowActivityPenalty}`);
     }
 
+    const compatibilityMatches = [
+      ...matches(text, compatibilityTerms),
+      ...(item.activity?.compatibility_term_matches ?? []),
+    ];
     const riskFlags = [
       ...item.risk_flags,
       ...(item.activity?.risk_flags ?? []),
     ];
+    if (compatibilityMatches.length > 0) {
+      riskFlags.push("compatibility_review_required");
+      reasons.push("обнаружены признаки совместимости: требуется проверка");
+    }
     if (!fresh) riskFlags.push("inactive_or_no_posts");
     if (lowActivity) riskFlags.push("low_activity");
     if (lowThematic) riskFlags.push("low_thematic_post_share");
-    const finalScore = Math.max(0, Math.min(100, Math.round(value)));
+    const rawScore = Number(value.toFixed(2));
+    const finalScore = Math.max(0, Math.min(100, Math.round(rawScore)));
     const matchedClusters = clusters
       .filter((cluster) => {
         const include = strings(cluster.include_terms);
@@ -427,8 +792,17 @@ export function score(
     return {
       id: item.id,
       score: finalScore,
+      raw_score: rawScore,
+      normalized_score: finalScore,
+      components: Object.fromEntries(
+        Object.entries(components).map(([key, points]) => [
+          key,
+          Number(points.toFixed(2)),
+        ]),
+      ) as Score["components"],
+      compatibility_matches: [...new Set(compatibilityMatches)],
       recommendation:
-        finalScore >= pass
+        finalScore >= pass && compatibilityMatches.length === 0
           ? "recommended"
           : finalScore >= reviewMin
             ? "review"
@@ -465,23 +839,21 @@ function weightedOccurrences(
   terms: string[],
   termWeights: Record<string, unknown>,
 ): { count: number; score: number } {
-  const source = normalize(text);
-  let count = 0;
-  let result = 0;
-  for (const term of [...new Set(terms.map(normalize))]) {
-    if (term === "") continue;
-    let from = 0;
-    let occurrences = 0;
-    while (true) {
-      const index = source.indexOf(term, from);
-      if (index < 0) break;
-      occurrences += 1;
-      from = index + term.length;
-    }
-    count += occurrences;
-    result += occurrences * number(termWeights[term], 1);
-  }
-  return { count, score: result };
+  const normalizedWeights = new Map(
+    Object.entries(termWeights).map(([term, weight]) => [
+      normalize(term),
+      weight,
+    ]),
+  );
+  const found = matches(text, terms);
+  return {
+    count: found.length,
+    score: found.reduce(
+      (result, term) =>
+        result + number(normalizedWeights.get(normalize(term)), 1),
+      0,
+    ),
+  };
 }
 
 function countTermSets(sets: string[][]): Record<string, number> {
@@ -492,10 +864,6 @@ function countTermSets(sets: string[][]): Record<string, number> {
     }
   }
   return result;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function formatPoints(value: number): string {

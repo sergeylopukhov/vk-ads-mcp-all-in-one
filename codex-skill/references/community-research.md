@@ -105,21 +105,31 @@ Create a small set of distinct search queries. Separate signals by strength:
 - problems, tasks, and use cases;
 - broad category terms used only for discovery.
 
-Put strong terms in `include_terms` and give them higher `term_weights`. Broad
-category terms may help discovery but should not dominate scoring. Use clusters
-when different audience motives need separate result groups.
+Put strong terms in `include_terms`, classify every scoring term in
+`term_strengths`, and give strong terms higher `term_weights`. Use `strong` for
+direct category or task signals, `medium` for supporting evidence, and `weak`
+for broad ambiguous words. One weak term does not make a post thematic; two
+distinct weak matches do by default. Broad category terms may help discovery
+but should not dominate scoring.
 
-Search queries may be natural multiword phrases. Scoring terms must also
-include short lexical signals that are likely to appear verbatim in names,
-descriptions, and posts; do not rely only on full phrases. All values in
+Put signs of active demand or purchase intent in `intent_terms`. Put
+jurisdictions, standards, platforms, technologies, or other conditions that
+require human compatibility review in `compatibility_terms`. A compatibility
+match sends an otherwise recommended candidate to `review`; it is not a hidden
+exclusion. Use clusters when different audience motives need separate result
+groups.
+
+Search queries and scoring terms may be natural multiword phrases. The server
+matches Unicode word boundaries, conservative Russian word forms, and nearby
+word-order variations. Do not add duplicate inflections of the same term
+unless the forms have different meanings. All values in
 `weights`, including fields whose names end in `_penalty`, are nonnegative
 magnitudes. The server applies the subtraction.
 
-Represent important word forms and real synonyms as separate positive scoring
-terms. A conservative shared stem may be used when it is at least four letters
-and has one clear meaning in the task. These variants affect score only; they
-must never become a hidden eligibility gate or an automatically hardened
-minus-term.
+Represent real synonyms as separate positive scoring terms. Do not replace an
+ambiguous word with a shorter stem merely to increase matches. Positive terms
+affect score only; they must never become a hidden eligibility gate or an
+automatically hardened minus-term.
 
 Prefer the server's default scoring scale unless custom weights are needed. If
 you customize weights, add the positive score caps and set explicit
@@ -128,9 +138,11 @@ you customize weights, add the positive score caps and set explicit
 candidate as suitable merely because it ranks first. State that no confident
 candidate was found and propose a revised search instead.
 
-Before calling a tool, verify that every `term_weights` key exactly matches one
-entry in `scoring_rules.terms`. Remove orphan keys, spelling variants, and
-typos. Do not invent risk-flag names. Use `exclude_risk_flags` only when the
+Before calling a tool, verify that every `term_weights` and `term_strengths` key
+exactly matches one entry in `scoring_rules.terms`, and every
+`intent_term_weights` key matches one `intent_terms` entry. Remove orphan keys,
+spelling variants, and typos. Do not invent risk-flag names. Use
+`exclude_risk_flags` only when the
 exact flag is documented or already present in a real tool result; otherwise
 omit it and rely on `exclude_terms`, score reasons, and returned risks.
 
@@ -139,10 +151,11 @@ categories. With the default `exclude_match_mode=word_prefix`, a stem can match
 normal word forms without matching arbitrary text inside another word. Use
 `substring` only when the broader behavior is intentional.
 
-Metadata exclusions are soft by default. They add a risk flag and score penalty,
-but the community still receives post analysis and remains in the result. Use
-`exclude_policy=hard` only when the user explicitly asks to remove every
-metadata match. Exclusions found in public posts also remain soft.
+Metadata exclusions are soft by default. They add a separate risk flag and
+score penalty, but the community still receives post analysis and remains in
+the result. Exclusions found in public posts remain soft and their penalty
+scales with the share of analyzed posts. Use `exclude_policy=hard` only when
+the user explicitly asks to remove every metadata match.
 
 Never replace a requested exclusion with a broader everyday synonym. Each
 minus-term must be at least as specific as the unwanted meaning. For example,
@@ -153,8 +166,8 @@ Keep meaningful qualifiers together: an unwanted `оптовый поставщ�
 justify excluding every community that contains the general word `поставщик`.
 
 The default search is broad: inspect up to ten pages and 1,000 provider
-results for every keyword, even if the requested final count is reached
-earlier. Merge all keyword results and deduplicate them before analysis.
+results for every keyword and sort mode, even if the requested final count is
+reached earlier. Merge all keyword results and deduplicate them before analysis.
 Do not infer geography from the user's language, website, timezone, or current
 location. Omit `country_id` and `city_id` by default so the search is worldwide.
 Set either field only when the user explicitly requests or confirms that
@@ -167,15 +180,15 @@ validation:
 - normal and broad research: keep the maximum per-keyword budget and use a
   saved background run.
 
-Use the default `search_sort=members` so discovery starts with the largest
-communities. Switch to `search_sort=relevance` only when the user explicitly
-prefers provider relevance over audience size. Preserve descending
-`members_count` order in discovery; final researched lists are still ranked by
-advertising score. Analyze every community returned by VK that survives only
-explicit type and member-count bounds. Positive terms and synonyms affect
-scoring, but their absence from the name or description never removes a
-provider result. A requested final count controls reporting, not how many
-candidates receive post analysis and scoring.
+Use the default `search_sort=both` so every query runs once by provider
+relevance and once by member count. Use a single sort only when the user asks
+to reduce provider requests or explicitly prefers one mode. Preserve descending
+`members_count` order after merged discovery; final researched lists are still
+ranked by advertising score. Analyze every community returned by VK that
+survives only explicit type and member-count bounds. Positive terms and
+synonyms affect scoring, but their absence from the name or description never
+removes a provider result. A requested final count controls reporting, not how
+many candidates receive post analysis and scoring.
 
 Do not present provider-reported totals as the number of communities actually
 inspected. Use `source_matches` for unique observed IDs and

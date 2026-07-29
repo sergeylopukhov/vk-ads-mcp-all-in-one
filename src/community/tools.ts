@@ -13,6 +13,7 @@ import {
   type Candidate,
   type ExcludeMatchMode,
   type Score,
+  type TermStrength,
 } from "./analysis.js";
 import {
   CommunityResearchStore,
@@ -45,13 +46,14 @@ export interface VkCommunityToolDependencies {
 
 type ResearchItem = Candidate &
   Omit<Score, "id">;
+type CommunitySearchMode = CommunitySearchSort | "both";
 type ResearchInput = {
   keywords: string[];
   include_terms: string[];
   exclude_terms: string[];
   exclude_match_mode: ExcludeMatchMode;
   exclude_policy: "soft" | "hard";
-  search_sort?: CommunitySearchSort | undefined;
+  search_sort?: CommunitySearchMode | undefined;
   search_budget: {
     max_pages_per_query: number;
     max_candidates_per_query: number;
@@ -71,6 +73,11 @@ const communityTypeSchema = z.enum(["group", "page", "event"]);
 const activitySchema = z.object({
   last_post_at: z.string().nullable(),
   posts_per_week: z.number().nullable(),
+  posts_30d: z.number().int().nonnegative().default(0),
+  posts_90d: z.number().int().nonnegative().default(0),
+  posts_per_week_30d: z.number().nonnegative().default(0),
+  posts_per_week_90d: z.number().nonnegative().default(0),
+  median_posts_per_week_90d: z.number().nonnegative().default(0),
   posts_analyzed: z.number().int().nonnegative(),
   thematic_posts: z.number().int().nonnegative(),
   thematic_post_share: z.number().min(0).max(1).nullable(),
@@ -83,10 +90,25 @@ const activitySchema = z.object({
     z.string(),
     z.number().int().nonnegative(),
   ).default({}),
+  exclusion_post_share: z.number().min(0).max(1).default(0),
+  intent_term_matches: z.array(z.string()).default([]),
+  intent_term_match_counts: z.record(
+    z.string(),
+    z.number().int().nonnegative(),
+  ).default({}),
+  compatibility_term_matches: z.array(z.string()).default([]),
+  compatibility_term_match_counts: z.record(
+    z.string(),
+    z.number().int().nonnegative(),
+  ).default({}),
   analyzed_terms: z.array(z.string()).default([]),
   analyzed_exclude_terms: z.array(z.string()).default([]),
+  analyzed_intent_terms: z.array(z.string()).default([]),
+  analyzed_compatibility_terms: z.array(z.string()).default([]),
   post_term_sets: z.array(z.array(z.string())).default([]),
   post_exclude_term_sets: z.array(z.array(z.string())).default([]),
+  post_intent_term_sets: z.array(z.array(z.string())).default([]),
+  post_compatibility_term_sets: z.array(z.array(z.string())).default([]),
   risk_flags: z.array(z.string()),
 });
 const candidateSchema = z.object({
@@ -109,13 +131,25 @@ const DEFAULT_SCORING_WEIGHTS = {
   thematic_post_share: 20,
   thematic_low_penalty: 15,
   activity_low_penalty: 20,
-  exclude_term_penalty: 15,
+  intent_term: 15,
+  exclude_metadata_penalty: 30,
+  exclude_post_share_penalty: 30,
 } as const;
 export const DEFAULT_RECOMMENDATION_SCORE = 45;
 export const DEFAULT_REVIEW_SCORE = 30;
 const scoreSchema = z.object({
   id: z.number().int().positive(),
   score: z.number().min(0).max(100),
+  raw_score: z.number(),
+  normalized_score: z.number().min(0).max(100),
+  components: z.object({
+    content_relevance: z.number(),
+    audience_intent: z.number(),
+    activity: z.number(),
+    profile_fit: z.number(),
+    exclusion_risk: z.number(),
+  }),
+  compatibility_matches: z.array(z.string()),
   recommendation: z.enum(["recommended", "review", "rejected"]),
   clusters: z.array(z.string()),
   reasons: z.array(z.string()),
@@ -124,6 +158,21 @@ const scoreSchema = z.object({
 const scoringRulesSchema = z
   .object({
     terms: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
+    term_strengths: z
+      .record(
+        z.string().trim().min(1).max(120),
+        z.enum(["strong", "medium", "weak"]),
+      )
+      .optional(),
+    min_weak_matches: z.number().int().min(2).max(10).optional(),
+    intent_terms: z
+      .array(z.string().trim().min(1).max(120))
+      .max(50)
+      .optional(),
+    compatibility_terms: z
+      .array(z.string().trim().min(1).max(120))
+      .max(50)
+      .optional(),
     exclude_terms: z
       .array(z.string().trim().min(1).max(120))
       .max(50)
@@ -133,12 +182,15 @@ const scoringRulesSchema = z
         name_term: z.number().finite().nonnegative().optional(),
         description_term: z.number().finite().nonnegative().optional(),
         post_term: z.number().finite().nonnegative().optional(),
+        intent_term: z.number().finite().nonnegative().optional(),
         activity_fresh: z.number().finite().nonnegative().optional(),
         activity_low_penalty: z.number().finite().nonnegative().optional(),
         thematic_post_share: z.number().finite().nonnegative().optional(),
         thematic_low_penalty: z.number().finite().nonnegative().optional(),
         members_range: z.number().finite().nonnegative().optional(),
         exclude_term_penalty: z.number().finite().nonnegative().optional(),
+        exclude_metadata_penalty: z.number().finite().nonnegative().optional(),
+        exclude_post_share_penalty: z.number().finite().nonnegative().optional(),
       })
       .strict()
       .refine(
@@ -155,11 +207,18 @@ const scoringRulesSchema = z
         z.number().finite().positive(),
       )
       .optional(),
+    intent_term_weights: z
+      .record(
+        z.string().trim().min(1).max(120),
+        z.number().finite().positive(),
+      )
+      .optional(),
     per_match_weights: z
       .object({
         name_term: z.number().finite().positive().optional(),
         description_term: z.number().finite().positive().optional(),
         post_term: z.number().finite().positive().optional(),
+        intent_term: z.number().finite().positive().optional(),
       })
       .strict()
       .optional(),
@@ -204,6 +263,39 @@ const scoringRulesSchema = z
         }
       }
     }
+    if (rules.terms !== undefined && rules.term_strengths !== undefined) {
+      const terms = new Set(
+        rules.terms.map((term) => term.toLocaleLowerCase("ru-RU")),
+      );
+      for (const term of Object.keys(rules.term_strengths)) {
+        if (!terms.has(term.toLocaleLowerCase("ru-RU"))) {
+          context.addIssue({
+            code: "custom",
+            path: ["term_strengths", term],
+            message:
+              "Ключ term_strengths должен точно совпадать с одним из terms.",
+          });
+        }
+      }
+    }
+    if (
+      rules.intent_terms !== undefined &&
+      rules.intent_term_weights !== undefined
+    ) {
+      const intentTerms = new Set(
+        rules.intent_terms.map((term) => term.toLocaleLowerCase("ru-RU")),
+      );
+      for (const term of Object.keys(rules.intent_term_weights)) {
+        if (!intentTerms.has(term.toLocaleLowerCase("ru-RU"))) {
+          context.addIssue({
+            code: "custom",
+            path: ["intent_term_weights", term],
+            message:
+              "Ключ intent_term_weights должен точно совпадать с одним из intent_terms.",
+          });
+        }
+      }
+    }
     const maximumPositiveScore =
       (rules.weights?.name_term ??
         DEFAULT_SCORING_WEIGHTS.name_term) +
@@ -211,6 +303,8 @@ const scoringRulesSchema = z
         DEFAULT_SCORING_WEIGHTS.description_term) +
       (rules.weights?.post_term ??
         DEFAULT_SCORING_WEIGHTS.post_term) +
+      (rules.weights?.intent_term ??
+        DEFAULT_SCORING_WEIGHTS.intent_term) +
       (rules.weights?.activity_fresh ??
         DEFAULT_SCORING_WEIGHTS.activity_fresh) +
       (rules.weights?.thematic_post_share ??
@@ -271,7 +365,7 @@ export const researchInputSchema = {
     .enum(["word_prefix", "substring"])
     .default("word_prefix"),
   exclude_policy: z.enum(["soft", "hard"]).default("soft"),
-  search_sort: z.enum(["relevance", "members"]).default("members"),
+  search_sort: z.enum(["relevance", "members", "both"]).default("both"),
   search_budget: z
     .object({
       max_pages_per_query: z.number().int().min(1).max(10).default(10),
@@ -298,7 +392,7 @@ export const researchInputSchema = {
   community_types: z.array(communityTypeSchema).max(3).optional(),
   min_members: z.number().int().nonnegative().optional(),
   max_members: z.number().int().nonnegative().optional(),
-  posts_limit: z.number().int().min(1).max(100).default(30),
+  posts_limit: z.number().int().min(1).max(100).default(100),
   scoring_rules: scoringRulesSchema.optional(),
   clusters: z.array(clusterSchema).max(50).default([]),
 };
@@ -309,7 +403,7 @@ const runOutputSchema = {
   run_id: z.string().uuid(),
   created_at: z.string(),
   expires_at: z.string(),
-  scoring_version: z.literal("community-research-v2"),
+  scoring_version: z.enum(["community-research-v2", "community-research-v3"]),
   status: z.enum(["queued", "running", "completed", "failed"]),
   request: z.record(z.string(), z.unknown()),
   progress: z.object({
@@ -430,11 +524,14 @@ export function registerVkCommunityTools(
           ? input.community_types
           : [undefined];
       for (const type of types) {
-        let queryCandidates = 0;
-        let queryPages = 0;
-        let sort: CommunitySearchSort =
-          input.search_sort ?? "members";
-        for (let offset = 0; ; ) {
+        const sorts: CommunitySearchSort[] =
+          (input.search_sort ?? "both") === "both"
+            ? ["relevance", "members"]
+            : [input.search_sort as CommunitySearchSort];
+        for (const sort of sorts) {
+          let queryCandidates = 0;
+          let queryPages = 0;
+          for (let offset = 0; ; ) {
           const pageSize = Math.min(
             100,
             input.search_budget.max_candidates_per_query -
@@ -513,43 +610,44 @@ export function registerVkCommunityTools(
             }
             found.set(item.id, item);
           }
-          const next = offset + page.items.length;
-          const reachedBudget =
-            queryPages >= input.search_budget.max_pages_per_query ||
-            queryCandidates >=
-              input.search_budget.max_candidates_per_query;
-          const belowThreshold =
-            sort === "members" &&
-            input.min_members !== undefined &&
-            page.items.length > 0 &&
-            pageCandidates.length === page.items.length &&
-            pageCandidates.every(
-              (item) =>
-                item.members_count !== null &&
-                item.members_count < input.min_members!,
-            );
-          if (
-            page.items.length === 0 ||
-            belowThreshold ||
-            next >= page.count ||
-            next >= 1_000 ||
-            reachedBudget
-          ) {
-            if (page.count >= 1_000) providerLimited = true;
+            const next = offset + page.items.length;
+            const reachedBudget =
+              queryPages >= input.search_budget.max_pages_per_query ||
+              queryCandidates >=
+                input.search_budget.max_candidates_per_query;
+            const belowThreshold =
+              sort === "members" &&
+              input.min_members !== undefined &&
+              page.items.length > 0 &&
+              pageCandidates.length === page.items.length &&
+              pageCandidates.every(
+                (item) =>
+                  item.members_count !== null &&
+                  item.members_count < input.min_members!,
+              );
             if (
-              reachedBudget &&
-              next < Math.min(page.count, 1_000)
+              page.items.length === 0 ||
+              belowThreshold ||
+              next >= page.count ||
+              next >= 1_000 ||
+              reachedBudget
             ) {
-              budgetLimited = true;
+              if (page.count >= 1_000) providerLimited = true;
+              if (
+                reachedBudget &&
+                next < Math.min(page.count, 1_000)
+              ) {
+                budgetLimited = true;
+              }
+              break;
             }
-            break;
+            offset = next;
           }
-          offset = next;
         }
       }
     }
     const items = [...found.values()];
-    if ((input.search_sort ?? "members") === "members") {
+    if ((input.search_sort ?? "both") !== "relevance") {
       items.sort(
         (left, right) =>
           (right.members_count ?? -1) - (left.members_count ?? -1) ||
@@ -588,10 +686,11 @@ export function registerVkCommunityTools(
   const analyzeItems = async (
     items: Candidate[],
     postsLimit: number,
-    terms: string[],
-    excludes: string[],
+    rules: Record<string, unknown>,
     excludeMatchMode: ExcludeMatchMode,
   ): Promise<Candidate[]> => {
+    const terms = strings(rules.terms);
+    const excludes = strings(rules.exclude_terms);
     for (const item of items) {
       if (
         item.risk_flags.some(
@@ -606,6 +705,15 @@ export function registerVkCommunityTools(
           terms,
           excludes,
           excludeMatchMode,
+          {
+            termStrengths: termStrengths(rules.term_strengths),
+            minWeakMatches:
+              typeof rules.min_weak_matches === "number"
+                ? rules.min_weak_matches
+                : 2,
+            intentTerms: strings(rules.intent_terms),
+            compatibilityTerms: strings(rules.compatibility_terms),
+          },
         );
         item.risk_flags.push(...item.activity.risk_flags);
       } catch {
@@ -628,7 +736,12 @@ export function registerVkCommunityTools(
         name_term: 8,
         description_term: 4,
         post_term: 3,
+        intent_term: 3,
       },
+      term_strengths: {},
+      min_weak_matches: 2,
+      intent_terms: [],
+      compatibility_terms: [],
       activity_fresh_days: 30,
       min_posts_per_week: 1,
       min_thematic_post_share: 0.5,
@@ -651,6 +764,14 @@ export function registerVkCommunityTools(
         ...asObject(base.term_weights),
         ...asObject(overrides.term_weights),
       },
+      intent_term_weights: {
+        ...asObject(base.intent_term_weights),
+        ...asObject(overrides.intent_term_weights),
+      },
+      term_strengths: {
+        ...asObject(base.term_strengths),
+        ...asObject(overrides.term_strengths),
+      },
       per_match_weights: {
         ...asObject(base.per_match_weights),
         ...asObject(overrides.per_match_weights),
@@ -671,10 +792,7 @@ export function registerVkCommunityTools(
         const result = byId.get(community.id)!;
         return {
           ...community,
-          score: result.score,
-          recommendation: result.recommendation,
-          clusters: result.clusters,
-          reasons: result.reasons,
+          ...result,
           risk_flags: result.risk_flags,
         };
       })
@@ -705,7 +823,7 @@ export function registerVkCommunityTools(
       run_id: randomUUID(),
       created_at: createdAt,
       expires_at: store.expiresAt(),
-      scoring_version: "community-research-v2",
+      scoring_version: "community-research-v3",
       status,
       request: buildRequest(input, rules),
       progress: {
@@ -766,11 +884,12 @@ export function registerVkCommunityTools(
       [...new Set([...input.keywords, ...input.include_terms])],
       input.exclude_terms,
     );
+    rules.exclude_match_mode = input.exclude_match_mode;
     const terms = strings(rules.terms);
     const excludes = strings(rules.exclude_terms);
     const discovery = await discover(input);
     const ordered = discovery.items.sort((left, right) => {
-      if ((input.search_sort ?? "members") === "members") {
+      if ((input.search_sort ?? "both") !== "relevance") {
         return (
           (right.members_count ?? -1) - (left.members_count ?? -1) ||
           left.id - right.id
@@ -840,8 +959,7 @@ export function registerVkCommunityTools(
     const analyzed = await analyzeItems(
       prepared.selected,
       input.posts_limit,
-      prepared.terms,
-      prepared.excludes,
+      prepared.rules,
       input.exclude_match_mode,
     );
     const items = rank(analyzed, prepared.rules, input.clusters);
@@ -955,8 +1073,7 @@ export function registerVkCommunityTools(
           const analyzed = await analyzeItems(
             batch,
             input.posts_limit,
-            prepared.terms,
-            prepared.excludes,
+            prepared.rules,
             input.exclude_match_mode,
           );
           const currentItems = [
@@ -1106,8 +1223,14 @@ export function registerVkCommunityTools(
           ? strings(savedRules.exclude_terms)
           : strings(request.exclude_terms),
       );
+      rules.exclude_match_mode =
+        request.exclude_match_mode === "substring"
+          ? "substring"
+          : "word_prefix";
       const rescoreTerms = strings(rules.terms);
       const rescoreExcludes = strings(rules.exclude_terms);
+      const rescoreIntentTerms = strings(rules.intent_terms);
+      const rescoreCompatibilityTerms = strings(rules.compatibility_terms);
       const termsChanged = !sameStrings(
         rescoreTerms,
         strings(savedRules.terms),
@@ -1116,8 +1239,18 @@ export function registerVkCommunityTools(
         rescoreExcludes,
         strings(savedRules.exclude_terms),
       );
+      const intentTermsChanged = !sameStrings(
+        rescoreIntentTerms,
+        strings(savedRules.intent_terms),
+      );
+      const compatibilityTermsChanged = !sameStrings(
+        rescoreCompatibilityTerms,
+        strings(savedRules.compatibility_terms),
+      );
       const missingTerms = new Set<string>();
       const missingExcludes = new Set<string>();
+      const missingIntentTerms = new Set<string>();
+      const missingCompatibilityTerms = new Set<string>();
       const sourceItems = [
         ...(source.passed as Candidate[]),
         ...((source.review as Candidate[] | undefined) ?? []),
@@ -1125,18 +1258,36 @@ export function registerVkCommunityTools(
       ].map((item) => {
         const derived =
           item.activity === undefined ||
-          (!termsChanged && !excludesChanged)
+          (!termsChanged &&
+            !excludesChanged &&
+            !intentTermsChanged &&
+            !compatibilityTermsChanged)
             ? undefined
             : reanalyzeDerivedActivity(
                 item.activity,
                 rescoreTerms,
                 rescoreExcludes,
+                {
+                  intentTerms: rescoreIntentTerms,
+                  compatibilityTerms: rescoreCompatibilityTerms,
+                  termStrengths: termStrengths(rules.term_strengths),
+                  minWeakMatches:
+                    typeof rules.min_weak_matches === "number"
+                      ? rules.min_weak_matches
+                      : 2,
+                },
               );
         for (const term of derived?.missingTerms ?? []) {
           missingTerms.add(term);
         }
         for (const term of derived?.missingExcludes ?? []) {
           missingExcludes.add(term);
+        }
+        for (const term of derived?.missingIntentTerms ?? []) {
+          missingIntentTerms.add(term);
+        }
+        for (const term of derived?.missingCompatibilityTerms ?? []) {
+          missingCompatibilityTerms.add(term);
         }
         return {
           ...item,
@@ -1174,7 +1325,12 @@ export function registerVkCommunityTools(
           clusters ?? objects(request.clusters),
         ),
       );
-      if (missingTerms.size > 0 || missingExcludes.size > 0) {
+      if (
+        missingTerms.size > 0 ||
+        missingExcludes.size > 0 ||
+        missingIntentTerms.size > 0 ||
+        missingCompatibilityTerms.size > 0
+      ) {
         const summary = next.summary as Record<string, unknown>;
         summary.incomplete = true;
         summary.incomplete_reasons = [
@@ -1187,6 +1343,10 @@ export function registerVkCommunityTools(
           ...asObject(next.request),
           rescore_missing_terms: [...missingTerms],
           rescore_missing_exclude_terms: [...missingExcludes],
+          rescore_missing_intent_terms: [...missingIntentTerms],
+          rescore_missing_compatibility_terms: [
+            ...missingCompatibilityTerms,
+          ],
         };
       }
       await store.save(next);
@@ -1260,11 +1420,15 @@ export function registerVkCommunityTools(
           .array(z.number().int().positive())
           .min(1)
           .max(500),
-        posts_limit: z.number().int().min(1).max(100).default(30),
+        posts_limit: z.number().int().min(1).max(100).default(100),
         analysis_terms: z
           .array(z.string().trim().min(1).max(120))
           .max(50)
           .default([]),
+        term_strengths: scoringRulesSchema.shape.term_strengths,
+        min_weak_matches: scoringRulesSchema.shape.min_weak_matches,
+        intent_terms: scoringRulesSchema.shape.intent_terms,
+        compatibility_terms: scoringRulesSchema.shape.compatibility_terms,
         exclude_terms: z
           .array(z.string().trim().min(1).max(120))
           .max(50)
@@ -1284,8 +1448,14 @@ export function registerVkCommunityTools(
               await client.getByIds([...new Set(input.community_ids)])
             ).map((item) => candidate(item)),
             input.posts_limit,
-            input.analysis_terms,
-            input.exclude_terms,
+            {
+              terms: input.analysis_terms,
+              exclude_terms: input.exclude_terms,
+              term_strengths: input.term_strengths ?? {},
+              min_weak_matches: input.min_weak_matches ?? 2,
+              intent_terms: input.intent_terms ?? [],
+              compatibility_terms: input.compatibility_terms ?? [],
+            },
             input.exclude_match_mode,
           ),
         },
@@ -1315,9 +1485,8 @@ export function registerVkCommunityTools(
         (
           await client.getByIds([...new Set(community_ids)])
         ).map((item) => candidate(item)),
-        30,
-        strings(rules.terms),
-        strings(rules.exclude_terms),
+        100,
+        rules,
         "word_prefix",
       );
       return result(
@@ -1413,6 +1582,17 @@ function objects(value: unknown): Array<Record<string, unknown>> {
           !Array.isArray(item),
       )
     : [];
+}
+
+function termStrengths(value: unknown): Record<string, TermStrength> {
+  return Object.fromEntries(
+    Object.entries(asObject(value)).filter(
+      (entry): entry is [string, TermStrength] =>
+        entry[1] === "strong" ||
+        entry[1] === "medium" ||
+        entry[1] === "weak",
+    ),
+  );
 }
 
 function compareResearchItems(
