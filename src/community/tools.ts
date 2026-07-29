@@ -201,7 +201,46 @@ const researchInputSchema = {
   scoring_rules: scoringRulesSchema.optional(),
   clusters: z.array(clusterSchema).max(50).default([]),
 };
-const runOutputSchema = z.record(z.string(), z.unknown());
+const researchItemSchema = candidateSchema.and(
+  scoreSchema.omit({ id: true }),
+);
+const runOutputSchema = {
+  run_id: z.string().uuid(),
+  created_at: z.string(),
+  expires_at: z.string(),
+  scoring_version: z.literal("community-research-v2"),
+  status: z.enum(["queued", "running", "completed", "failed"]),
+  request: z.record(z.string(), z.unknown()),
+  progress: z.object({
+    discovered: z.number().int().nonnegative(),
+    selected: z.number().int().nonnegative(),
+    processed: z.number().int().nonnegative(),
+    remaining: z.number().int().nonnegative(),
+    batch_size: z.number().int().positive(),
+    batches_total: z.number().int().nonnegative(),
+    batches_completed: z.number().int().nonnegative(),
+  }),
+  summary: z.object({
+    source_matches: z.number().int().nonnegative(),
+    matched_filters: z.number().int().nonnegative(),
+    selected: z.number().int().nonnegative(),
+    analyzed: z.number().int().nonnegative(),
+    analysis_batch_size: z.number().int().positive(),
+    analysis_batches: z.number().int().nonnegative(),
+    posts_unavailable: z.number().int().nonnegative(),
+    passed: z.number().int().nonnegative(),
+    review: z.number().int().nonnegative(),
+    rejected: z.number().int().nonnegative(),
+    search_pages: z.number().int().nonnegative(),
+    incomplete: z.boolean(),
+    incomplete_reasons: z.array(z.string()),
+  }),
+  passed: z.array(researchItemSchema),
+  review: z.array(researchItemSchema),
+  rejected: z.array(researchItemSchema),
+  error: z.string().optional(),
+  rescore_of: z.string().uuid().optional(),
+};
 
 export function registerVkCommunityTools(
   server: McpServer,
@@ -668,6 +707,10 @@ export function registerVkCommunityTools(
           summary.analysis_batches =
             progress.batches_completed ?? 0;
           if (run.pending.length === 0) run.status = "completed";
+          await store.save(run);
+        }
+        if (run.status === "running") {
+          run.status = "completed";
           await store.save(run);
         }
       } catch {

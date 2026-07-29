@@ -109,11 +109,6 @@ The installed `docs/tools.md` remains authoritative if this list differs.
 Read tools that may be attempted with explicit status disclosure:
 
 - `vk_ads_oauth_code_info`
-- `vk_start_community_research`
-- `vk_research_communities`
-- `vk_get_community_research_progress`
-- `vk_get_community_research_run`
-- `vk_rescore_community_research_run`
 - `vk_ads_remarketing_counter_get`
 - `vk_ads_remarketing_counter_goals_list`
 - `vk_ads_ord_user_status_get`
