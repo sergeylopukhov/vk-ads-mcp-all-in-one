@@ -45,7 +45,7 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one
 Пример настройки всех поддерживаемых клиентов:
 
 ```bash
-npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --clients opencode,codex,claude,gemini,qwen,kimi,cursor
+npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --clients opencode,openclaw,hermes,codex,claude,gemini,qwen,kimi,cursor
 ```
 
 > [!NOTE]
@@ -97,6 +97,16 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --clients opencode,codex,c
       <td>Cursor</td>
       <td><code>~/.cursor/mcp.json</code></td>
       <td><code>~/.cursor/skills/vk-ads-mcp/</code></td>
+    </tr>
+    <tr>
+      <td>OpenClaw</td>
+      <td>Подключение <code>vk-ads</code> через OpenClaw CLI</td>
+      <td><code>$OPENCLAW_STATE_DIR/skills/vk-ads-mcp/</code> или <code>~/.openclaw/skills/vk-ads-mcp/</code></td>
+    </tr>
+    <tr>
+      <td>Hermes Agent</td>
+      <td>Подключение <code>vk-ads</code> через Hermes CLI</td>
+      <td><code>$HERMES_HOME/skills/vk-ads-mcp/</code> или <code>~/.hermes/skills/vk-ads-mcp/</code></td>
     </tr>
   </tbody>
 </table>
@@ -165,6 +175,14 @@ python3 scripts/install_skill.py --agent auto
     <tr>
       <td>Cursor</td>
       <td>Раздел MCP в настройках Cursor</td>
+    </tr>
+    <tr>
+      <td>OpenClaw</td>
+      <td><code>openclaw mcp doctor vk-ads --probe</code></td>
+    </tr>
+    <tr>
+      <td>Hermes Agent</td>
+      <td><code>hermes mcp test vk-ads</code></td>
     </tr>
   </tbody>
 </table>
@@ -309,6 +327,36 @@ opencode mcp list
 После перезапуска откройте раздел MCP в настройках Cursor.
 
 [Официальная документация Cursor MCP](https://docs.cursor.com/context/model-context-protocol)
+
+</details>
+
+<details>
+<summary><strong>OpenClaw</strong></summary>
+
+```bash
+openclaw mcp unset vk-ads
+openclaw mcp add vk-ads --command "/полный/путь/к/node" --arg "/полный/путь/к/VK Ads MCP/dist/index.js"
+openclaw mcp doctor vk-ads --probe
+```
+
+Скопируйте каталог навыка в `$OPENCLAW_STATE_DIR/skills/vk-ads-mcp/` или `~/.openclaw/skills/vk-ads-mcp/`, затем перезапустите OpenClaw.
+
+[Официальная документация OpenClaw MCP](https://docs.openclaw.ai/cli/mcp) · [Официальная документация OpenClaw Skills](https://docs.openclaw.ai/tools/skills)
+
+</details>
+
+<details>
+<summary><strong>Hermes Agent</strong></summary>
+
+```bash
+hermes mcp remove vk-ads
+hermes mcp add vk-ads --command "/полный/путь/к/node" --args "/полный/путь/к/VK Ads MCP/dist/index.js"
+hermes mcp test vk-ads
+```
+
+При добавлении Hermes предложит включить инструменты сервера. Подтвердите включение, затем скопируйте каталог навыка в `$HERMES_HOME/skills/vk-ads-mcp/` или `~/.hermes/skills/vk-ads-mcp/` и перезапустите Hermes.
+
+[Официальная документация Hermes MCP](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp) · [Официальная документация Hermes Skills](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills)
 
 </details>
 
