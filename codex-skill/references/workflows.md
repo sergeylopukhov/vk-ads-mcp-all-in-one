@@ -52,7 +52,7 @@ phrases such as "these campaigns" beyond the visible selection.
 7. Do not export by default. Prepare export only when requested.
 
 All community tools currently carry `⛔️`. State that before attempting them and
-do not describe a successful-looking payload as formally live-verified.
+do not describe them as available.
 
 ## Token recovery
 
