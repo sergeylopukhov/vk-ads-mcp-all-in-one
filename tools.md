@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="VK Ads MCP" width="120">
+</p>
+
 <h1 align="center">Инструменты VK Ads MCP</h1>
 
 <p align="center">Каталог возможностей текущего MCP-сервера для VK Рекламы.</p>
