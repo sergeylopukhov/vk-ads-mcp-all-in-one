@@ -26,7 +26,7 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one
   </thead>
   <tbody>
     <tr>
-      <td><code>--clients codex,claude,cursor</code></td>
+      <td><code>--clients opencode,codex,claude</code></td>
       <td>Подключает только перечисленные клиенты</td>
     </tr>
     <tr>
@@ -43,7 +43,7 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one
 Пример настройки всех поддерживаемых клиентов:
 
 ```bash
-npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --clients codex,claude,gemini,qwen,kimi,cursor
+npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --clients opencode,codex,claude,gemini,qwen,kimi,cursor
 ```
 
 > [!NOTE]
@@ -87,6 +87,11 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --clients codex,claude,gem
       <td><code>$KIMI_CODE_HOME/skills/vk-ads-mcp/</code> или <code>~/.kimi-code/skills/vk-ads-mcp/</code></td>
     </tr>
     <tr>
+      <td>OpenCode</td>
+      <td><code>~/.config/opencode/opencode.json</code></td>
+      <td><code>~/.config/opencode/skills/vk-ads-mcp/</code></td>
+    </tr>
+    <tr>
       <td>Cursor</td>
       <td><code>~/.cursor/mcp.json</code></td>
       <td><code>~/.cursor/skills/vk-ads-mcp/</code></td>
@@ -94,7 +99,7 @@ npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one --clients codex,claude,gem
   </tbody>
 </table>
 
-При обновлении заменяется только каталог `vk-ads-mcp`; остальные навыки не изменяются. Старую копию Codex из `~/.codex/skills/vk-ads-mcp/` установщик переносит в `~/.codex/skill-backups/`. Перед изменением существующей конфигурации Kimi или Cursor установщик создаёт резервную копию с датой и временем в имени.
+При обновлении заменяется только каталог `vk-ads-mcp`; остальные навыки не изменяются. Старую копию Codex из `~/.codex/skills/vk-ads-mcp/` установщик переносит в `~/.codex/skill-backups/`. Перед изменением существующей конфигурации Kimi, OpenCode или Cursor установщик создаёт резервную копию с датой и временем в имени. Если задан `XDG_CONFIG_HOME`, OpenCode использует каталог `opencode` внутри него.
 
 </details>
 
@@ -150,6 +155,10 @@ python3 scripts/install_skill.py --agent auto
     <tr>
       <td>Kimi Code CLI</td>
       <td>Команда <code>/mcp</code> в Kimi Code CLI</td>
+    </tr>
+    <tr>
+      <td>OpenCode</td>
+      <td><code>opencode mcp list</code></td>
     </tr>
     <tr>
       <td>Cursor</td>
@@ -245,6 +254,37 @@ qwen mcp list
 После перезапуска проверьте подключение командой `/mcp`.
 
 [Официальная документация Kimi Code MCP](https://moonshotai.github.io/kimi-code/en/customization/mcp.html)
+
+</details>
+
+<details>
+<summary><strong>OpenCode</strong></summary>
+
+Добавьте сервер в `~/.config/opencode/opencode.json`, сохранив другие параметры и записи в `mcp`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "vk-ads": {
+      "type": "local",
+      "command": [
+        "/полный/путь/к/node",
+        "/полный/путь/к/VK Ads MCP/dist/index.js"
+      ],
+      "enabled": true
+    }
+  }
+}
+```
+
+Скопируйте каталог навыка в `~/.config/opencode/skills/vk-ads-mcp/`, перезапустите OpenCode и проверьте подключение:
+
+```bash
+opencode mcp list
+```
+
+[Официальная документация OpenCode MCP](https://opencode.ai/docs/mcp-servers/) · [Официальная документация OpenCode Agent Skills](https://opencode.ai/docs/skills)
 
 </details>
 
