@@ -187,7 +187,7 @@ function parseArguments(argv) {
 function printHelp() {
   console.log(`VK Ads MCP installer
 
-Использование: node install.mjs [параметры]
+Использование: npx --yes github:sergeylopukhov/vk-ads-mcp-all-in-one [параметры]
   --ref <tag|branch>       установить указанный тег или ветку
   --install-dir <path>     изменить каталог установки
   --no-register            не настраивать Codex
