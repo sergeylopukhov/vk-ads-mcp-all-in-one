@@ -19,10 +19,22 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 
 const REPOSITORY = "sergeylopukhov/vk-ads-mcp-all-in-one";
+export const DEFAULT_AUTH_ENV_TEMPLATE = `VK_ADS_CLIENT_ID=
+VK_ADS_CLIENT_SECRET=
+VK_ADS_TOKEN=
+VK_ADS_REFRESH_TOKEN=
+VK_ADS_TOKEN_EXPIRES_AT=
+VK_API_TOKEN=
+VK_API_TOKEN_TYPE=legacy
+VK_API_CLIENT_ID=6270012
+VK_API_DEVICE_ID=
+VK_API_REFRESH_TOKEN=
+VK_API_TOKEN_EXPIRES_AT=
+VK_COMMUNITY_RESEARCH_TTL_DAYS=30
+`;
 const MANAGED_ENTRIES = [
   "dist",
   "node_modules",
-  ".env.example",
   "package.json",
   "package-lock.json",
   "codex-skill",
@@ -68,7 +80,6 @@ export function selectServerFiles(tree) {
     .map((item) => item.path)
     .filter(
       (path) =>
-        path === ".env.example" ||
         path === "package.json" ||
         path === "package-lock.json" ||
         path === "tsconfig.json" ||
@@ -303,7 +314,6 @@ async function downloadServer(ref, destination) {
 
   const paths = selectServerFiles(tree.tree ?? []);
   const required = [
-    ".env.example",
     "package.json",
     "package-lock.json",
     "tsconfig.json",
@@ -776,7 +786,9 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
     }
 
     if (!authExists) {
-      await cp(join(stagingTemplateDirectory, ".env.example"), authPath);
+      await writeFile(authPath, DEFAULT_AUTH_ENV_TEMPLATE, {
+        mode: 0o600,
+      });
       await chmod(authPath, 0o600).catch(() => {});
       console.log(
         `Создан ${authPath}. Заполните VK_ADS_CLIENT_ID и VK_ADS_CLIENT_SECRET.`,
@@ -884,11 +896,7 @@ async function ensureConfiguration(installDirectory, reinstall = false) {
     ? await authorizeCommunity(communityClientId, communityTokenType)
     : undefined;
 
-  const template = await readFile(
-    join(stagingTemplateDirectory, ".env.example"),
-    "utf8",
-  );
-  const content = applyEnvValues(template, {
+  const content = applyEnvValues(DEFAULT_AUTH_ENV_TEMPLATE, {
     VK_ADS_CLIENT_ID: clientId,
     VK_ADS_CLIENT_SECRET: clientSecret,
     VK_ADS_TOKEN: "",
@@ -1003,8 +1011,6 @@ async function setupCodex(installDirectory) {
   return { registered: true, skillPath };
 }
 
-let stagingTemplateDirectory = "";
-
 export async function main(argv = process.argv.slice(2)) {
   if (Number(process.versions.node.split(".")[0]) < 22) {
     throw new Error("Нужен Node.js 22 или новее.");
@@ -1031,8 +1037,6 @@ export async function main(argv = process.argv.slice(2)) {
   );
   const stagingDirectory = join(temporaryRoot, "server");
   await mkdir(stagingDirectory, { recursive: true });
-  stagingTemplateDirectory = stagingDirectory;
-
   try {
     const commitSha = await downloadServer(ref, stagingDirectory);
     await buildServer(stagingDirectory);
@@ -1073,7 +1077,6 @@ export async function main(argv = process.argv.slice(2)) {
       );
     }
   } finally {
-    stagingTemplateDirectory = "";
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 }
