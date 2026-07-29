@@ -27,10 +27,24 @@
 
 ### 1. Подготовьте данные
 
-| Потребуется | Условие |
-| --- | --- |
-| Node.js | Версия 22 или новее, с npm |
-| Приложение VK Ads | `client_id` и `client_secret` |
+<table width="100%">
+  <thead>
+    <tr>
+      <th width="30%">Потребуется</th>
+      <th width="70%">Условие</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Node.js</td>
+      <td>Версия 22 или новее, с npm</td>
+    </tr>
+    <tr>
+      <td>VK Реклама</td>
+      <td>Получите <code>client_id</code> и <code>client_secret</code> в <a href="https://ads.vk.com/">личном кабинете VK Рекламы</a></td>
+    </tr>
+  </tbody>
+</table>
 
 ### 2. Запустите установщик
 
