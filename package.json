@@ -12,7 +12,6 @@
   "homepage": "https://github.com/sergeylopukhov/vk-ads-mcp-all-in-one#readme",
   "files": [
     "dist/",
-    "assets/",
     "codex-skill/",
     "docs/",
     "install.mjs",

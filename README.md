@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/cover.png" alt="VK Ads MCP: аналитика и управление рекламой" width="100%">
+  <img src="docs/img/cover.png" alt="VK Ads MCP: аналитика и управление рекламой" width="100%">
 </p>
 
 <h1 align="center">VK Ads MCP All in One</h1>
