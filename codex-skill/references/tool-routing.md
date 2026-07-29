@@ -78,6 +78,8 @@ by MCP before filling provider-specific fields.
 
 ## Community research
 
+- All search terms, exclusions, weights, budgets, and clusters are request
+  inputs. Do not assume a business category or a product-specific preset.
 - One-call foreground research: `vk_find_community_candidates`
 - Discovery only: `vk_discover_communities`
 - Post and metadata analysis: `vk_analyze_communities`

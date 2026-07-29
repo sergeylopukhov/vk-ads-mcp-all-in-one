@@ -13,11 +13,11 @@ import { VkCommunityTokenManager } from "./token-manager.js";
 import { VkCommunityClient } from "./vk-client.js";
 import { CommunityResearchStore } from "./research-store.js";
 
-const DEFAULT_AUTH_PATH = fileURLToPath(
-  new URL("../../../auth.env", import.meta.url),
+export const DEFAULT_AUTH_PATH = fileURLToPath(
+  new URL("../../auth.env", import.meta.url),
 );
-const DEFAULT_RESEARCH_PATH = fileURLToPath(
-  new URL("../../../.vk-community-research.json", import.meta.url),
+export const DEFAULT_RESEARCH_PATH = fileURLToPath(
+  new URL("../../.vk-community-research.json", import.meta.url),
 );
 
 export interface VkCommunityRuntime {

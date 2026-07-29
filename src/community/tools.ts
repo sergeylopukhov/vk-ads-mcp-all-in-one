@@ -7,9 +7,12 @@ import {
   analyze,
   candidate,
   includeCandidate,
+  matchExcludedTerms,
   matches,
+  reanalyzeDerivedActivity,
   score,
   type Candidate,
+  type ExcludeMatchMode,
   type Score,
 } from "./analysis.js";
 import {
@@ -47,6 +50,13 @@ type ResearchInput = {
   keywords: string[];
   include_terms: string[];
   exclude_terms: string[];
+  exclude_match_mode: ExcludeMatchMode;
+  search_sort?: CommunitySearchSort | undefined;
+  search_budget: {
+    max_pages_per_query: number;
+    max_candidates_per_query: number;
+    oversample_factor: number;
+  };
   country_id?: number | undefined;
   city_id?: number | undefined;
   community_types?: CommunityType[] | undefined;
@@ -66,6 +76,18 @@ const activitySchema = z.object({
   thematic_posts: z.number().int().nonnegative(),
   thematic_post_share: z.number().min(0).max(1).nullable(),
   term_matches: z.array(z.string()),
+  term_match_counts: z
+    .record(z.string(), z.number().int().nonnegative())
+    .default({}),
+  exclude_term_matches: z.array(z.string()).default([]),
+  exclude_term_match_counts: z.record(
+    z.string(),
+    z.number().int().nonnegative(),
+  ).default({}),
+  analyzed_terms: z.array(z.string()).default([]),
+  analyzed_exclude_terms: z.array(z.string()).default([]),
+  post_term_sets: z.array(z.array(z.string())).default([]),
+  post_exclude_term_sets: z.array(z.array(z.string())).default([]),
   risk_flags: z.array(z.string()),
 });
 const candidateSchema = z.object({
@@ -80,6 +102,16 @@ const candidateSchema = z.object({
   risk_flags: z.array(z.string()),
   activity: activitySchema.optional(),
 });
+const DEFAULT_SCORING_WEIGHTS = {
+  name_term: 20,
+  description_term: 20,
+  post_term: 20,
+  activity_fresh: 15,
+  thematic_post_share: 20,
+  thematic_low_penalty: 15,
+  activity_low_penalty: 20,
+  exclude_term_penalty: 15,
+} as const;
 const scoreSchema = z.object({
   id: z.number().int().positive(),
   score: z.number().min(0).max(100),
@@ -114,7 +146,8 @@ const scoringRulesSchema = z
             (value) => typeof value === "number" && value > 0,
           ),
         "Укажите хотя бы один положительный вес.",
-      ),
+      )
+      .optional(),
     term_weights: z
       .record(
         z.string().trim().min(1).max(120),
@@ -155,6 +188,50 @@ const scoringRulesSchema = z
         message: "min не может быть больше max.",
       });
     }
+    if (rules.terms !== undefined && rules.term_weights !== undefined) {
+      const terms = new Set(
+        rules.terms.map((term) => term.toLocaleLowerCase("ru-RU")),
+      );
+      for (const term of Object.keys(rules.term_weights)) {
+        if (!terms.has(term.toLocaleLowerCase("ru-RU"))) {
+          context.addIssue({
+            code: "custom",
+            path: ["term_weights", term],
+            message:
+              "Ключ term_weights должен точно совпадать с одним из terms.",
+          });
+        }
+      }
+    }
+    const maximumPositiveScore =
+      (rules.weights?.name_term ??
+        DEFAULT_SCORING_WEIGHTS.name_term) +
+      (rules.weights?.description_term ??
+        DEFAULT_SCORING_WEIGHTS.description_term) +
+      (rules.weights?.post_term ??
+        DEFAULT_SCORING_WEIGHTS.post_term) +
+      (rules.weights?.activity_fresh ??
+        DEFAULT_SCORING_WEIGHTS.activity_fresh) +
+      (rules.weights?.thematic_post_share ??
+        DEFAULT_SCORING_WEIGHTS.thematic_post_share) +
+      (rules.weights?.members_range ?? 0);
+    const minimumScore = rules.min_score ?? 60;
+    if (maximumPositiveScore < minimumScore) {
+      context.addIssue({
+        code: "custom",
+        path: ["min_score"],
+        message:
+          "min_score недостижим при заданных положительных весах.",
+      });
+    }
+    const reviewMinimum = rules.review_min_score ?? 45;
+    if (reviewMinimum > minimumScore) {
+      context.addIssue({
+        code: "custom",
+        path: ["review_min_score"],
+        message: "review_min_score не может быть больше min_score.",
+      });
+    }
   });
 const clusterSchema = z
   .object({
@@ -187,6 +264,27 @@ const researchInputSchema = {
     .array(z.string().trim().min(1).max(120))
     .max(50)
     .default([]),
+  exclude_match_mode: z
+    .enum(["word_prefix", "substring"])
+    .default("word_prefix"),
+  search_sort: z.enum(["relevance", "members"]).default("members"),
+  search_budget: z
+    .object({
+      max_pages_per_query: z.number().int().min(1).max(10).default(10),
+      max_candidates_per_query: z
+        .number()
+        .int()
+        .min(1)
+        .max(1_000)
+        .default(1_000),
+      oversample_factor: z.number().int().min(1).max(10).default(10),
+    })
+    .strict()
+    .default({
+      max_pages_per_query: 10,
+      max_candidates_per_query: 1_000,
+      oversample_factor: 10,
+    }),
   exclude_terms: z
     .array(z.string().trim().min(1).max(120))
     .max(50)
@@ -201,7 +299,7 @@ const researchInputSchema = {
   scoring_rules: scoringRulesSchema.optional(),
   clusters: z.array(clusterSchema).max(50).default([]),
 };
-const researchItemSchema = candidateSchema.and(
+const researchItemSchema = candidateSchema.merge(
   scoreSchema.omit({ id: true }),
 );
 const runOutputSchema = {
@@ -212,6 +310,9 @@ const runOutputSchema = {
   status: z.enum(["queued", "running", "completed", "failed"]),
   request: z.record(z.string(), z.unknown()),
   progress: z.object({
+    phase: z
+      .enum(["queued", "discovering", "analyzing", "completed"])
+      .default("analyzing"),
     discovered: z.number().int().nonnegative(),
     selected: z.number().int().nonnegative(),
     processed: z.number().int().nonnegative(),
@@ -222,6 +323,12 @@ const runOutputSchema = {
   }),
   summary: z.object({
     source_matches: z.number().int().nonnegative(),
+    provider_reported_matches: z.number().int().nonnegative().default(0),
+    metadata_excluded: z.number().int().nonnegative().default(0),
+    metadata_exclusion_matches: z.record(
+      z.string(),
+      z.number().int().nonnegative(),
+    ).default({}),
     matched_filters: z.number().int().nonnegative(),
     selected: z.number().int().nonnegative(),
     analyzed: z.number().int().nonnegative(),
@@ -257,6 +364,9 @@ export function registerVkCommunityTools(
       | "keywords"
       | "include_terms"
       | "exclude_terms"
+      | "exclude_match_mode"
+      | "search_sort"
+      | "search_budget"
       | "country_id"
       | "city_id"
       | "community_types"
@@ -267,9 +377,16 @@ export function registerVkCommunityTools(
   ): Promise<{
     items: Candidate[];
     searchPages: number;
-    providerMatches: number;
+    sourceMatches: number;
+    providerReportedMatches: number;
+    metadataExcluded: number;
+    metadataExclusionMatches: Record<string, number>;
     providerLimited: boolean;
+    budgetLimited: boolean;
   }> => {
+    if (input.keywords.length === 0) {
+      throw new Error("Укажите хотя бы одно ключевое слово.");
+    }
     if (
       input.min_members !== undefined &&
       input.max_members !== undefined &&
@@ -279,46 +396,62 @@ export function registerVkCommunityTools(
     }
     const found = new Map<number, Candidate>();
     const terms = [...new Set([...input.keywords, ...input.include_terms])];
+    const sourceIds = new Set<number>();
+    const metadataExcludedIds = new Set<number>();
+    const metadataExclusionIds = new Map<string, Set<number>>();
     let searchPages = 0;
-    let providerMatches = 0;
+    let providerReportedMatches = 0;
     let providerLimited = false;
-
+    let budgetLimited = false;
     for (const keyword of input.keywords) {
       const types: Array<CommunityType | undefined> =
         input.community_types?.length
           ? input.community_types
           : [undefined];
       for (const type of types) {
+        let queryCandidates = 0;
+        let queryPages = 0;
         let sort: CommunitySearchSort =
-          input.min_members === undefined ? "relevance" : "members";
+          input.search_sort ?? "members";
         for (let offset = 0; ; ) {
+          const pageSize = Math.min(
+            100,
+            input.search_budget.max_candidates_per_query -
+              queryCandidates,
+          );
           let page = await client.searchPage(
             keyword,
             offset,
-            100,
+            pageSize,
             input.country_id,
             input.city_id,
             type,
             sort,
           );
-          if (offset === 0 && sort === "members" && page.count === 0) {
-            sort = "relevance";
-            page = await client.searchPage(
-              keyword,
-              offset,
-              100,
-              input.country_id,
-              input.city_id,
-              type,
-              sort,
-            );
-          }
           searchPages += 1;
-          providerMatches += page.count;
+          queryPages += 1;
+          if (offset === 0) providerReportedMatches += page.count;
+          for (const item of page.items) sourceIds.add(item.id);
+          queryCandidates += page.items.length;
           const pageCandidates = (
             await client.getByIds(page.items.map((item) => item.id))
           ).map((item) => candidate(item));
           for (const item of pageCandidates) {
+            const exclusionMatches = matchExcludedTerms(
+              `${item.name}\n${item.description}`,
+              input.exclude_terms,
+              input.exclude_match_mode,
+            );
+            if (exclusionMatches.length > 0) {
+              metadataExcludedIds.add(item.id);
+              for (const term of exclusionMatches) {
+                const ids =
+                  metadataExclusionIds.get(term) ?? new Set<number>();
+                ids.add(item.id);
+                metadataExclusionIds.set(term, ids);
+              }
+              continue;
+            }
             if (
               includeCandidate(
                 item,
@@ -327,12 +460,17 @@ export function registerVkCommunityTools(
                 input.community_types,
                 input.min_members,
                 input.max_members,
+                input.exclude_match_mode,
               )
             ) {
               found.set(item.id, item);
             }
           }
           const next = offset + page.items.length;
+          const reachedBudget =
+            queryPages >= input.search_budget.max_pages_per_query ||
+            queryCandidates >=
+              input.search_budget.max_candidates_per_query;
           const belowThreshold =
             sort === "members" &&
             input.min_members !== undefined &&
@@ -347,20 +485,44 @@ export function registerVkCommunityTools(
             page.items.length === 0 ||
             belowThreshold ||
             next >= page.count ||
-            next >= 1_000
+            next >= 1_000 ||
+            reachedBudget
           ) {
             if (page.count >= 1_000) providerLimited = true;
+            if (
+              reachedBudget &&
+              next < Math.min(page.count, 1_000)
+            ) {
+              budgetLimited = true;
+            }
             break;
           }
           offset = next;
         }
       }
     }
+    const items = [...found.values()];
+    if ((input.search_sort ?? "members") === "members") {
+      items.sort(
+        (left, right) =>
+          (right.members_count ?? -1) - (left.members_count ?? -1) ||
+          left.id - right.id,
+      );
+    }
     return {
-      items: [...found.values()],
+      items,
       searchPages,
-      providerMatches,
+      sourceMatches: sourceIds.size,
+      providerReportedMatches,
+      metadataExcluded: metadataExcludedIds.size,
+      metadataExclusionMatches: Object.fromEntries(
+        [...metadataExclusionIds].map(([term, ids]) => [
+          term,
+          ids.size,
+        ]),
+      ),
       providerLimited,
+      budgetLimited,
     };
   };
 
@@ -369,6 +531,7 @@ export function registerVkCommunityTools(
     postsLimit: number,
     terms: string[],
     excludes: string[],
+    excludeMatchMode: ExcludeMatchMode,
   ): Promise<Candidate[]> => {
     for (const item of items) {
       if (item.risk_flags.length > 0) continue;
@@ -377,6 +540,7 @@ export function registerVkCommunityTools(
           await client.wall(item.id, postsLimit),
           terms,
           excludes,
+          excludeMatchMode,
         );
         item.risk_flags.push(...item.activity.risk_flags);
       } catch {
@@ -394,16 +558,7 @@ export function registerVkCommunityTools(
     const base: Record<string, unknown> = {
       terms,
       exclude_terms: excludes,
-      weights: {
-        name_term: 20,
-        description_term: 20,
-        post_term: 20,
-        activity_fresh: 15,
-        thematic_post_share: 20,
-        thematic_low_penalty: 15,
-        activity_low_penalty: 20,
-        exclude_term_penalty: 15,
-      },
+      weights: { ...DEFAULT_SCORING_WEIGHTS },
       per_match_weights: {
         name_term: 8,
         description_term: 4,
@@ -458,14 +613,7 @@ export function registerVkCommunityTools(
           risk_flags: result.risk_flags,
         };
       })
-      .sort(
-        (left, right) =>
-          right.score - left.score ||
-          (Date.parse(right.activity?.last_post_at ?? "") || 0) -
-            (Date.parse(left.activity?.last_post_at ?? "") || 0) ||
-          (right.members_count ?? 0) - (left.members_count ?? 0) ||
-          left.id - right.id,
-      );
+      .sort(compareResearchItems);
   };
 
   const buildRequest = (
@@ -486,6 +634,7 @@ export function registerVkCommunityTools(
     const createdAt = new Date().toISOString();
     const incompleteReasons = [
       ...(discovery.providerLimited ? ["provider_search_limit"] : []),
+      ...(discovery.budgetLimited ? ["search_budget_limit"] : []),
       ...(discovery.items.length > selected.length
         ? ["requested_result_limit"]
         : []),
@@ -498,6 +647,7 @@ export function registerVkCommunityTools(
       status,
       request: buildRequest(input, rules),
       progress: {
+        phase: status === "completed" ? "completed" : "queued",
         discovered: discovery.items.length,
         selected: selected.length,
         processed: status === "completed" ? selected.length : 0,
@@ -508,7 +658,11 @@ export function registerVkCommunityTools(
           status === "completed" ? Math.ceil(selected.length / batchSize) : 0,
       },
       summary: {
-        source_matches: discovery.providerMatches,
+        source_matches: discovery.sourceMatches,
+        provider_reported_matches: discovery.providerReportedMatches,
+        metadata_excluded: discovery.metadataExcluded,
+        metadata_exclusion_matches:
+          discovery.metadataExclusionMatches,
         matched_filters: discovery.items.length,
         selected: selected.length,
         analyzed: 0,
@@ -547,6 +701,12 @@ export function registerVkCommunityTools(
     const excludes = strings(rules.exclude_terms);
     const discovery = await discover(input);
     const ordered = discovery.items.sort((left, right) => {
+      if ((input.search_sort ?? "members") === "members") {
+        return (
+          (right.members_count ?? -1) - (left.members_count ?? -1) ||
+          left.id - right.id
+        );
+      }
       const leftMatches = matches(
         `${left.name}\n${left.description}`,
         terms,
@@ -575,15 +735,15 @@ export function registerVkCommunityTools(
     run: CommunityResearchRun,
     items: ResearchItem[],
   ): void => {
-    const passed = items.filter(
-      (item) => item.recommendation === "recommended",
-    );
-    const review = items.filter(
-      (item) => item.recommendation === "review",
-    );
-    const rejected = items.filter(
-      (item) => item.recommendation === "rejected",
-    );
+    const passed = items
+      .filter((item) => item.recommendation === "recommended")
+      .sort(compareResearchItems);
+    const review = items
+      .filter((item) => item.recommendation === "review")
+      .sort(compareResearchItems);
+    const rejected = items
+      .filter((item) => item.recommendation === "rejected")
+      .sort(compareResearchItems);
     run.passed = passed;
     run.review = review;
     run.rejected = rejected;
@@ -604,15 +764,17 @@ export function registerVkCommunityTools(
   };
 
   const runSynchronously = async (
-    input: ResearchInput,
+    rawInput: ResearchInput,
     persist: boolean,
   ): Promise<Record<string, unknown>> => {
+    const input = rawInput;
     const prepared = await prepare(input);
     const analyzed = await analyzeItems(
       prepared.selected,
       input.posts_limit,
       prepared.terms,
       prepared.excludes,
+      input.exclude_match_mode,
     );
     const items = rank(analyzed, prepared.rules, input.clusters);
     const run = createRun(
@@ -659,15 +821,29 @@ export function registerVkCommunityTools(
   };
 
   const start = async (
-    input: ResearchInput,
+    rawInput: ResearchInput,
     sessionId?: string,
   ): Promise<Record<string, unknown>> => {
-    const prepared = await prepare(input);
+    const input = rawInput;
+    const initialRules = resolveRules(
+      input.scoring_rules,
+      [...new Set([...input.keywords, ...input.include_terms])],
+      input.exclude_terms,
+    );
     const run = createRun(
       input,
-      prepared.discovery,
-      prepared.selected,
-      prepared.rules,
+      {
+        items: [],
+        searchPages: 0,
+        sourceMatches: 0,
+        providerReportedMatches: 0,
+        metadataExcluded: 0,
+        metadataExclusionMatches: {},
+        providerLimited: false,
+        budgetLimited: false,
+      },
+      [],
+      initialRules,
       "queued",
     );
     await store.save(run);
@@ -676,12 +852,31 @@ export function registerVkCommunityTools(
       let timer: ReturnType<typeof setInterval> | undefined;
       try {
         run.status = "running";
+        const initialProgress = run.progress as Record<string, unknown>;
+        initialProgress.phase = "discovering";
         await store.save(run);
         await notify(run);
         timer = setInterval(() => {
           void notify(run);
         }, Math.max(1, dependencies.progressIntervalMs ?? 60_000));
         timer.unref?.();
+        const prepared = await prepare(input);
+        const preparedRun = createRun(
+          input,
+          prepared.discovery,
+          prepared.selected,
+          prepared.rules,
+          "queued",
+        );
+        run.request = preparedRun.request;
+        run.progress = preparedRun.progress;
+        run.summary = preparedRun.summary;
+        run.pending = preparedRun.pending;
+        const preparedProgress = run.progress as Record<string, unknown>;
+        preparedProgress.phase =
+          prepared.selected.length === 0 ? "completed" : "analyzing";
+        if (prepared.selected.length === 0) run.status = "completed";
+        await store.save(run);
         while (Array.isArray(run.pending) && run.pending.length > 0) {
           const batch = (run.pending as Candidate[]).splice(0, batchSize);
           const analyzed = await analyzeItems(
@@ -689,6 +884,7 @@ export function registerVkCommunityTools(
             input.posts_limit,
             prepared.terms,
             prepared.excludes,
+            input.exclude_match_mode,
           );
           const currentItems = [
             ...(run.passed as ResearchItem[]),
@@ -707,10 +903,14 @@ export function registerVkCommunityTools(
           summary.analysis_batches =
             progress.batches_completed ?? 0;
           if (run.pending.length === 0) run.status = "completed";
+          if (run.status === "completed") {
+            (run.progress as Record<string, unknown>).phase = "completed";
+          }
           await store.save(run);
         }
         if (run.status === "running") {
           run.status = "completed";
+          (run.progress as Record<string, unknown>).phase = "completed";
           await store.save(run);
         }
       } catch {
@@ -742,7 +942,7 @@ export function registerVkCommunityTools(
     {
       title: "Запустить фоновое исследование сообществ VK",
       description:
-        "Ищет и фильтрует публичные сообщества, затем в фоне анализирует их пакетами по 25 и сохраняет прогресс.",
+        "Сразу создаёт запуск; поиск и анализ публичных сообществ выполняются в фоне пакетами по 25.",
       inputSchema: researchInputSchema,
       outputSchema: runOutputSchema,
       annotations: { ...readOnly, idempotentHint: false },
@@ -806,7 +1006,7 @@ export function registerVkCommunityTools(
     {
       title: "Пересчитать сохранённое исследование сообществ",
       description:
-        "Повторно применяет скоринг и кластеры без новых запросов к VK.",
+        "Повторно применяет проанализированные термины, скоринг и кластеры без новых запросов к VK.",
       inputSchema: {
         run_id: z.string().uuid(),
         scoring_rules: scoringRulesSchema.optional(),
@@ -833,22 +1033,53 @@ export function registerVkCommunityTools(
           ? strings(savedRules.exclude_terms)
           : strings(request.exclude_terms),
       );
+      const rescoreTerms = strings(rules.terms);
+      const rescoreExcludes = strings(rules.exclude_terms);
+      const termsChanged = !sameStrings(
+        rescoreTerms,
+        strings(savedRules.terms),
+      );
+      const excludesChanged = !sameStrings(
+        rescoreExcludes,
+        strings(savedRules.exclude_terms),
+      );
+      const missingTerms = new Set<string>();
+      const missingExcludes = new Set<string>();
       const sourceItems = [
         ...(source.passed as Candidate[]),
         ...((source.review as Candidate[] | undefined) ?? []),
         ...(source.rejected as Candidate[]),
-      ].map((item) => ({
-        ...item,
-        risk_flags: item.risk_flags.filter(
-          (flag) =>
-            ![
-              "inactive_or_no_posts",
-              "low_activity",
-              "low_thematic_post_share",
-              "below_min_score",
-            ].includes(flag),
-        ),
-      }));
+      ].map((item) => {
+        const derived =
+          item.activity === undefined ||
+          (!termsChanged && !excludesChanged)
+            ? undefined
+            : reanalyzeDerivedActivity(
+                item.activity,
+                rescoreTerms,
+                rescoreExcludes,
+              );
+        for (const term of derived?.missingTerms ?? []) {
+          missingTerms.add(term);
+        }
+        for (const term of derived?.missingExcludes ?? []) {
+          missingExcludes.add(term);
+        }
+        return {
+          ...item,
+          ...(derived === undefined ? {} : { activity: derived.activity }),
+          risk_flags: item.risk_flags.filter(
+            (flag) =>
+              ![
+                "exclude_term_in_posts",
+                "inactive_or_no_posts",
+                "low_activity",
+                "low_thematic_post_share",
+                "below_min_score",
+              ].includes(flag),
+          ),
+        };
+      });
       const next: CommunityResearchRun = {
         ...source,
         run_id: randomUUID(),
@@ -870,6 +1101,21 @@ export function registerVkCommunityTools(
           clusters ?? objects(request.clusters),
         ),
       );
+      if (missingTerms.size > 0 || missingExcludes.size > 0) {
+        const summary = next.summary as Record<string, unknown>;
+        summary.incomplete = true;
+        summary.incomplete_reasons = [
+          ...new Set([
+            ...strings(summary.incomplete_reasons),
+            "rescore_terms_not_analyzed",
+          ]),
+        ];
+        next.request = {
+          ...asObject(next.request),
+          rescore_missing_terms: [...missingTerms],
+          rescore_missing_exclude_terms: [...missingExcludes],
+        };
+      }
       await store.save(next);
       return result(project(next), "Сохранённый результат пересчитан.");
     },
@@ -882,7 +1128,7 @@ export function registerVkCommunityTools(
         "За один вызов выполняет поиск, анализ публикаций и прозрачный скоринг.",
       inputSchema: researchInputSchema,
       outputSchema: {
-        items: z.array(candidateSchema.and(scoreSchema.omit({ id: true }))),
+        items: z.array(candidateSchema.merge(scoreSchema.omit({ id: true }))),
       },
       annotations: { ...readOnly, idempotentHint: true },
     },
@@ -908,17 +1154,20 @@ export function registerVkCommunityTools(
     {
       title: "Найти публичные сообщества VK",
       description:
-        "Ищет через groups.search, дополняет metadata и удаляет дубли по ID.",
+        "Ищет через groups.search в заданном бюджете, фильтрует metadata и удаляет дубли по ID.",
       inputSchema: {
         keywords: researchInputSchema.keywords,
         include_terms: researchInputSchema.include_terms,
         exclude_terms: researchInputSchema.exclude_terms,
+        exclude_match_mode: researchInputSchema.exclude_match_mode,
+        search_sort: researchInputSchema.search_sort,
+        search_budget: researchInputSchema.search_budget,
         country_id: researchInputSchema.country_id,
         city_id: researchInputSchema.city_id,
         community_types: researchInputSchema.community_types,
         min_members: researchInputSchema.min_members,
         max_members: researchInputSchema.max_members,
-        limit: z.number().int().min(1).max(500).default(100),
+        limit: z.number().int().min(1).max(1_000).default(100),
       },
       outputSchema: { items: z.array(candidateSchema) },
       annotations: { ...readOnly, idempotentHint: true },
@@ -934,7 +1183,7 @@ export function registerVkCommunityTools(
     {
       title: "Проанализировать сообщества VK",
       description:
-        "Анализирует metadata и последние публичные записи без возврата полных текстов.",
+        "Анализирует metadata и публичные записи, возвращая только производные совпадения без полных текстов.",
       inputSchema: {
         community_ids: z
           .array(z.number().int().positive())
@@ -949,6 +1198,9 @@ export function registerVkCommunityTools(
           .array(z.string().trim().min(1).max(120))
           .max(50)
           .default([]),
+        exclude_match_mode: z
+          .enum(["word_prefix", "substring"])
+          .default("word_prefix"),
       },
       outputSchema: { items: z.array(candidateSchema) },
       annotations: { ...readOnly, idempotentHint: true },
@@ -963,6 +1215,7 @@ export function registerVkCommunityTools(
             input.posts_limit,
             input.analysis_terms,
             input.exclude_terms,
+            input.exclude_match_mode,
           ),
         },
         "Сообщества проанализированы.",
@@ -994,6 +1247,7 @@ export function registerVkCommunityTools(
         30,
         strings(rules.terms),
         strings(rules.exclude_terms),
+        "word_prefix",
       );
       return result(
         { items: score(communities, rules, clusters) },
@@ -1088,6 +1342,27 @@ function objects(value: unknown): Array<Record<string, unknown>> {
           !Array.isArray(item),
       )
     : [];
+}
+
+function compareResearchItems(
+  left: ResearchItem,
+  right: ResearchItem,
+): number {
+  return (
+    right.score - left.score ||
+    (Date.parse(right.activity?.last_post_at ?? "") || 0) -
+      (Date.parse(left.activity?.last_post_at ?? "") || 0) ||
+    (right.members_count ?? 0) - (left.members_count ?? 0) ||
+    left.id - right.id
+  );
+}
+
+function sameStrings(left: string[], right: string[]): boolean {
+  const normalize = (values: string[]) =>
+    [...new Set(values.map((value) =>
+      value.trim().toLocaleLowerCase("ru-RU"),
+    ))].sort();
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 }
 
 function toCsv(rows: Array<Record<string, unknown>>): string {
