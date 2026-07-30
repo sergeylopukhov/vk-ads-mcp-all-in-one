@@ -106,10 +106,13 @@ All community tools carry `✅`.
 2. Read existing objects and their relations before creating or changing data.
 3. For VK community subscribers, call `vk_ads_vk_groups_list`, then import
    missing numeric IDs, shortnames, or VK links with
-   `vk_ads_vk_groups_import`. Use the returned `objectId` as
-   `params.source_id` with `objectType=remarketing_vk_group`. Do not use the
-   registry `id`, a URL ID, or `remarketing_group`; the latter is for
-   Odnoklassniki groups.
+   `vk_ads_vk_groups_import`. Pass the returned `objectId` values to
+   `vk_ads_vk_community_audience_create`. Use
+   `excludeCommunityObjectIds` for community exclusions and
+   `excludeSegmentIds` for earlier audiences. Do not send
+   `type=negative` for `remarketing_vk_group`: VK represents exclusions as
+   a verified tree of service segments. Do not use the registry `id`, a URL
+   ID, or `remarketing_group`; the latter is for Odnoklassniki groups.
 4. Prefer existing verified list and segment tools.
 5. Treat current counter-goal write tools as unverified and do not use them as
    routine operations.
