@@ -114,6 +114,7 @@ const relationObjectTypeSchema = z.enum([
   "remarketing_inapp_event",
   "remarketing_users_list",
   "remarketing_vk_group",
+  "segment",
 ]);
 export const segmentRelationInputSchema = z
   .object({
@@ -124,8 +125,34 @@ export const segmentRelationInputSchema = z
   .superRefine((relation, context) => {
     if (
       relation.objectType !== "remarketing_vk_group" &&
-      relation.objectType !== "remarketing_group"
+      relation.objectType !== "remarketing_group" &&
+      relation.objectType !== "segment"
     ) {
+      return;
+    }
+
+    if (relation.objectType === "segment") {
+      if (
+        typeof relation.objectId !== "number" ||
+        !Number.isInteger(relation.objectId) ||
+        relation.objectId <= 0
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["objectId"],
+          message:
+            "Для связи с аудиторией укажите положительный objectId сегмента.",
+        });
+      }
+
+      if (relation.params !== undefined) {
+        context.addIssue({
+          code: "custom",
+          path: ["params"],
+          message:
+            "Связь с сегментом не принимает params.",
+        });
+      }
       return;
     }
 
@@ -158,6 +185,18 @@ export const segmentRelationInputSchema = z
     }
 
     if (
+      relation.objectType === "remarketing_vk_group" &&
+      relationType === "negative"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["params", "type"],
+        message:
+          "VK не принимает отрицательное сообщество напрямую. Используйте vk_ads_vk_community_audience_create с полями исключений.",
+      });
+    }
+
+    if (
       relation.objectType === "remarketing_group" &&
       relation.params?.source_type !== "group"
     ) {
@@ -174,6 +213,65 @@ const segmentCreateSchema = z.object({
   passCondition: z.number().int().positive(),
   relations: z.array(segmentRelationInputSchema).min(1),
 });
+export const vkCommunityAudienceCreateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(255),
+    includeCommunityObjectIds: z
+      .array(idSchema)
+      .min(1)
+      .max(300),
+    excludeCommunityObjectIds: z
+      .array(idSchema)
+      .max(300)
+      .default([]),
+    excludeSegmentIds: z
+      .array(idSchema)
+      .max(100)
+      .default([]),
+  })
+  .superRefine((input, context) => {
+    const include = new Set(input.includeCommunityObjectIds);
+    const duplicateInclude =
+      include.size !== input.includeCommunityObjectIds.length;
+    const exclude = new Set(input.excludeCommunityObjectIds);
+    const duplicateExclude =
+      exclude.size !== input.excludeCommunityObjectIds.length;
+    const segmentIds = new Set(input.excludeSegmentIds);
+
+    if (duplicateInclude) {
+      context.addIssue({
+        code: "custom",
+        path: ["includeCommunityObjectIds"],
+        message: "ID включаемых сообществ не должны повторяться.",
+      });
+    }
+    if (duplicateExclude) {
+      context.addIssue({
+        code: "custom",
+        path: ["excludeCommunityObjectIds"],
+        message: "ID исключаемых сообществ не должны повторяться.",
+      });
+    }
+    if (segmentIds.size !== input.excludeSegmentIds.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["excludeSegmentIds"],
+        message: "ID исключаемых аудиторий не должны повторяться.",
+      });
+    }
+
+    for (const objectId of exclude) {
+      if (include.has(objectId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["excludeCommunityObjectIds"],
+          message:
+            "Одно сообщество нельзя одновременно включать и исключать.",
+        });
+        break;
+      }
+    }
+  });
 const segmentUpdateSchema = z
   .object({
     id: idSchema,
@@ -204,6 +302,9 @@ const relationDeleteSchema = z.object({
 
 type SegmentCreateInput = z.infer<
   typeof segmentCreateSchema
+>;
+type VkCommunityAudienceCreateInput = z.infer<
+  typeof vkCommunityAudienceCreateSchema
 >;
 type VkGroupImportInput = z.infer<typeof vkGroupImportSchema>;
 type SegmentUpdateInput = z.infer<
@@ -236,6 +337,7 @@ interface SegmentContext {
   segment?: VkAdsSegment;
   relations?: VkAdsSegmentRelation[];
   vkGroups?: VkAdsVkGroup[];
+  excludedSegments?: VkAdsSegment[];
 }
 
 function issue(
@@ -341,6 +443,84 @@ export function createSegmentActionContracts(
           ? { object_id: normalized.objectId }
           : { shortname: normalized.shortname };
       }),
+    }),
+  };
+
+  const vkCommunityAudienceCreate: ActionContract<
+    VkCommunityAudienceCreateInput,
+    SegmentContext
+  > = {
+    action: "vk_community_audience.create",
+    staticSchema: vkCommunityAudienceCreateSchema,
+    target: () => ({ resource: "segment" }),
+    async loadContext(input, reads) {
+      const [user, vkGroups, excludedSegments] =
+        await Promise.all([
+          reads.loadOnce("current-user", () =>
+            client.getCurrentUser(),
+          ),
+          client.listVkGroups === undefined
+            ? Promise.resolve(undefined)
+            : reads.loadOnce("vk-groups", () =>
+                client.listVkGroups!(),
+              ),
+          Promise.all(
+            input.excludeSegmentIds.map((id) =>
+              reads.loadOnce(`segment:${id}`, () =>
+                client.getSegment(id),
+              ),
+            ),
+          ),
+        ]);
+      return {
+        user,
+        ...(vkGroups === undefined ? {} : { vkGroups }),
+        excludedSegments,
+      };
+    },
+    async validate(input, context) {
+      const incompatible: RequirementIssue[] = [];
+      const registeredIds = new Set(
+        context.vkGroups?.map((group) => group.objectId),
+      );
+
+      for (const [field, objectIds] of [
+        [
+          "includeCommunityObjectIds",
+          input.includeCommunityObjectIds,
+        ],
+        [
+          "excludeCommunityObjectIds",
+          input.excludeCommunityObjectIds,
+        ],
+      ] as const) {
+        objectIds.forEach((objectId, index) => {
+          if (!registeredIds.has(objectId)) {
+            incompatible.push(
+              issue(
+                "vk_group_not_registered",
+                `${field}.${index}`,
+                "Сначала добавьте VK-сообщество через vk_ads_vk_groups_import.",
+              ),
+            );
+          }
+        });
+      }
+
+      return result(
+        "vk_community_audience.create",
+        "segment",
+        undefined,
+        incompatible,
+      );
+    },
+    buildRequest: (input) => ({
+      name: input.name,
+      include_community_object_ids:
+        input.includeCommunityObjectIds,
+      exclude_community_object_ids:
+        input.excludeCommunityObjectIds,
+      exclude_segment_ids: input.excludeSegmentIds,
     }),
   };
 
@@ -608,6 +788,7 @@ export function createSegmentActionContracts(
 
   return [
     vkGroupImport,
+    vkCommunityAudienceCreate,
     segmentCreate,
     segmentUpdate,
     segmentDelete,

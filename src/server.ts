@@ -138,6 +138,7 @@ import {
   createSegmentActionContracts,
   normalizeVkGroupReference,
   segmentRelationInputSchema,
+  vkCommunityAudienceCreateSchema,
   vkGroupImportSchema,
 } from "./preflight/segments.js";
 import { createSharingKeyActionContracts } from "./preflight/sharing-keys.js";
@@ -179,7 +180,7 @@ import { actionReadinessSchema } from "./preflight/types.js";
 
 export const SERVER_INFO = {
   name: "vk-ads-mcp",
-  version: "0.1.346",
+  version: "0.1.347",
 } as const;
 
 export const CONNECTION_CHECK_TOOL = "vk_ads_connection_check";
@@ -241,6 +242,8 @@ export const REMARKETING_USERS_LIST_DELETE_TOOL =
   "vk_ads_remarketing_users_list_delete";
 export const VK_GROUPS_LIST_TOOL = "vk_ads_vk_groups_list";
 export const VK_GROUPS_IMPORT_TOOL = "vk_ads_vk_groups_import";
+export const VK_COMMUNITY_AUDIENCE_CREATE_TOOL =
+  "vk_ads_vk_community_audience_create";
 export const SEGMENTS_LIST_TOOL = "vk_ads_segments_list";
 export const SEGMENT_GET_TOOL = "vk_ads_segment_get";
 export const SEGMENT_CREATE_TOOL = "vk_ads_segment_create";
@@ -975,7 +978,7 @@ const remarketingUsersListOutputSchema = z.object({
 const segmentOutputSchema = z.object({
   id: z.number().int().positive(),
   name: z.string(),
-  passCondition: z.number().int().positive(),
+  passCondition: z.number().int().nonnegative(),
   relationsCount: z.number().int().nonnegative().optional(),
 });
 
@@ -4576,6 +4579,296 @@ export function createVkAdsMcpServer(
           items,
         },
       };
+    },
+  );
+
+  server.registerTool(
+    VK_COMMUNITY_AUDIENCE_CREATE_TOOL,
+    {
+      title: "Создать аудиторию подписчиков VK-сообществ",
+      description:
+        "Создаёт объединение подписчиков VK-сообществ и при необходимости исключает другие сообщества или существующие аудитории. Составное дерево VK проверяется повторным чтением.",
+      inputSchema: vkCommunityAudienceCreateSchema.shape,
+      outputSchema: {
+        created: z.boolean(),
+        verified: z.boolean(),
+        auditRecorded: z.boolean(),
+        readiness: actionReadinessSchema,
+        audience: segmentOutputSchema.optional(),
+        componentSegmentIds: z
+          .array(z.number().int().positive()),
+        includedCommunityCount: z.number().int().positive(),
+        excludedCommunityCount: z
+          .number()
+          .int()
+          .nonnegative(),
+        excludedSegmentCount: z.number().int().nonnegative(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({
+      name,
+      includeCommunityObjectIds,
+      excludeCommunityObjectIds,
+      excludeSegmentIds,
+    }) => {
+      const input = {
+        name,
+        includeCommunityObjectIds,
+        excludeCommunityObjectIds,
+        excludeSegmentIds,
+      };
+      const readiness = await prepareWriteAction(
+        "vk_community_audience.create",
+        input,
+        "remarketing.vk_community_audience.create",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Создание аудитории остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            created: false,
+            verified: false,
+            auditRecorded: true,
+            readiness,
+            componentSegmentIds: [],
+            includedCommunityCount:
+              includeCommunityObjectIds.length,
+            excludedCommunityCount:
+              excludeCommunityObjectIds.length,
+            excludedSegmentCount: excludeSegmentIds.length,
+          },
+        };
+      }
+
+      const createSegment = vkAdsClient.createSegment;
+      const getSegment = vkAdsClient.getSegment;
+      const listRelations =
+        vkAdsClient.listSegmentRelations;
+      const deleteSegment = vkAdsClient.deleteSegment;
+      const listSegments = vkAdsClient.listSegments;
+
+      if (
+        createSegment === undefined ||
+        getSegment === undefined ||
+        listRelations === undefined ||
+        deleteSegment === undefined ||
+        listSegments === undefined
+      ) {
+        throw new VkAdsApiError(
+          "Segment capability is unavailable.",
+          "segment_client_unavailable",
+        );
+      }
+
+      const createdIds: number[] = [];
+      const groupRelations = (objectIds: number[]) =>
+        objectIds.map((sourceId) => ({
+          object_type: "remarketing_vk_group",
+          params: {
+            source_id: sourceId,
+            type: "positive",
+          },
+        }));
+      const segmentRelations = (ids: number[]) =>
+        ids.map((objectId) => ({
+          object_type: "segment",
+          object_id: objectId,
+        }));
+      const helperName = (suffix: string) =>
+        `${name.slice(0, Math.max(1, 255 - suffix.length))}${suffix}`;
+
+      const createVerifiedSegment = async (
+        segmentName: string,
+        passCondition: number,
+        relations: CreateVkAdsSegmentRelationInput[],
+      ): Promise<VkAdsSegment> => {
+        const created = await createSegment.call(vkAdsClient, {
+          name: segmentName,
+          pass_condition: passCondition,
+          relations,
+        });
+        createdIds.push(created.id);
+        const [segment, rereadRelations] = await Promise.all([
+          getSegment.call(vkAdsClient, created.id),
+          listRelations.call(vkAdsClient, created.id),
+        ]);
+
+        if (
+          segment.name !== segmentName ||
+          segment.passCondition !== passCondition ||
+          rereadRelations.length !== relations.length
+        ) {
+          throw new VkAdsApiError(
+            "Created community audience component could not be verified.",
+            "vk_community_audience_verification_failed",
+          );
+        }
+
+        const actualGroups = new Set(
+          rereadRelations.flatMap((relation) =>
+            relation.objectType === "remarketing_vk_group" &&
+            typeof relation.params?.source_id === "number"
+              ? [relation.params.source_id]
+              : [],
+          ),
+        );
+        const actualSegments = new Set(
+          rereadRelations.flatMap((relation) =>
+            relation.objectType === "segment"
+              ? [relation.objectId]
+              : [],
+          ),
+        );
+        const expectedGroups = relations.flatMap((relation) =>
+          relation.object_type === "remarketing_vk_group" &&
+          typeof relation.params?.source_id === "number"
+            ? [relation.params.source_id]
+            : [],
+        );
+        const expectedSegments = relations.flatMap((relation) =>
+          relation.object_type === "segment" &&
+          relation.object_id !== undefined
+            ? [relation.object_id]
+            : [],
+        );
+
+        if (
+          expectedGroups.some(
+            (objectId) => !actualGroups.has(objectId),
+          ) ||
+          expectedSegments.some(
+            (segmentId) => !actualSegments.has(segmentId),
+          )
+        ) {
+          throw new VkAdsApiError(
+            "Created community audience relations could not be verified.",
+            "vk_community_audience_relations_unverified",
+          );
+        }
+
+        return segment;
+      };
+
+      const cleanupCreated = async (): Promise<void> => {
+        for (const id of [...createdIds].reverse()) {
+          await deleteSegment.call(vkAdsClient, id);
+          const reread = await listSegments.call(vkAdsClient, {
+            id,
+          });
+
+          if (reread.items.some((item) => item.id === id)) {
+            throw new VkAdsApiError(
+              "Temporary audience component cleanup could not be verified.",
+              "vk_community_audience_cleanup_failed",
+            );
+          }
+        }
+      };
+
+      await auditLog.ensureReady();
+      await vkAdsClient.getCurrentUser();
+
+      try {
+        let audience: VkAdsSegment;
+        let componentSegmentIds: number[] = [];
+        const hasExclusions =
+          excludeCommunityObjectIds.length > 0 ||
+          excludeSegmentIds.length > 0;
+
+        if (!hasExclusions) {
+          audience = await createVerifiedSegment(
+            name,
+            1,
+            groupRelations(includeCommunityObjectIds),
+          );
+        } else {
+          const included = await createVerifiedSegment(
+            helperName(" — включения"),
+            1,
+            groupRelations(includeCommunityObjectIds),
+          );
+          const excluded = await createVerifiedSegment(
+            helperName(" — исключения"),
+            0,
+            [
+              ...groupRelations(
+                excludeCommunityObjectIds,
+              ),
+              ...segmentRelations(excludeSegmentIds),
+            ],
+          );
+          audience = await createVerifiedSegment(
+            name,
+            2,
+            segmentRelations([included.id, excluded.id]),
+          );
+          componentSegmentIds = [included.id, excluded.id];
+        }
+
+        await auditLog.record({
+          operation:
+            "remarketing.vk_community_audience.create",
+          outcome: "success",
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: hasExclusions
+                ? "Аудитория сообществ с исключениями создана и проверена."
+                : "Аудитория сообществ создана и проверена.",
+            },
+          ],
+          structuredContent: {
+            created: true as const,
+            verified: true as const,
+            auditRecorded: true,
+            readiness,
+            audience,
+            componentSegmentIds,
+            includedCommunityCount:
+              includeCommunityObjectIds.length,
+            excludedCommunityCount:
+              excludeCommunityObjectIds.length,
+            excludedSegmentCount: excludeSegmentIds.length,
+          },
+        };
+      } catch (error) {
+        try {
+          await cleanupCreated();
+        } catch {
+          await auditLog.record({
+            operation:
+              "remarketing.vk_community_audience.create",
+            outcome: "verification_failed",
+          });
+          throw new VkAdsApiError(
+            "Community audience creation failed and automatic cleanup was incomplete.",
+            "vk_community_audience_cleanup_failed",
+          );
+        }
+
+        await auditLog.record({
+          operation:
+            "remarketing.vk_community_audience.create",
+          outcome: "failed",
+        });
+        throw error;
+      }
     },
   );
 
@@ -9348,6 +9641,7 @@ export function createVkAdsMcpServer(
           "remarketing_counter_goal.update",
           "remarketing_in_app_event.update",
           "vk_group.import",
+          "vk_community_audience.create",
           "segment.create",
           "segment.update",
           "segment.delete",

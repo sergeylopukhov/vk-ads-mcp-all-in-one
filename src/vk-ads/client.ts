@@ -354,7 +354,7 @@ const segmentSchema = z
   .object({
     id: z.number().int().positive(),
     name: z.string(),
-    pass_condition: z.number().int().positive(),
+    pass_condition: z.number().int().nonnegative(),
     relations_count: z.number().int().nonnegative().optional(),
   })
   .passthrough();
@@ -369,7 +369,10 @@ const segmentRelationSchema = z
     id: z.number().int().positive(),
     object_type: z.string().min(1),
     object_id: z.number().int(),
-    params: z.record(z.string(), z.unknown()).optional(),
+    params: z
+      .record(z.string(), z.unknown())
+      .nullable()
+      .optional(),
   })
   .passthrough();
 const segmentRelationsResponseSchema = z
@@ -1854,7 +1857,7 @@ function normalizeSegmentRelation(
     id: item.id,
     objectType: item.object_type,
     objectId: item.object_id,
-    ...(item.params === undefined ? {} : { params: item.params }),
+    ...(item.params == null ? {} : { params: item.params }),
   };
 }
 
@@ -5102,7 +5105,13 @@ export class VkAdsApiClient {
 }
 
 export function createDefaultVkAdsApiClient(): VkAdsApiClient {
-  const store = new EnvFileVkAdsCredentialStore();
+  const configuredAuthPath =
+    process.env.VK_ADS_AUTH_FILE?.trim();
+  const store =
+    configuredAuthPath === undefined ||
+    configuredAuthPath.length === 0
+      ? new EnvFileVkAdsCredentialStore()
+      : new EnvFileVkAdsCredentialStore(configuredAuthPath);
   const oauthClient = new VkAdsOAuthClient();
   const tokenManager = new VkAdsTokenManager(store, oauthClient);
 
