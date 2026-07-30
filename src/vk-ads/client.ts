@@ -78,25 +78,77 @@ const adGroupSchema = z
   })
   .passthrough();
 const adGroupsPageSchema = createPageSchema(adGroupSchema);
+const bannerContentVariantSchema = z
+  .object({
+    height: z.number().int().optional(),
+    size: z.number().int().optional(),
+    url: z.string().optional(),
+    width: z.number().int().optional(),
+  })
+  .passthrough();
+const bannerContentSchema = z
+  .object({
+    id: z.number().int().positive(),
+    type: z.string(),
+    variants: z.record(z.string(), bannerContentVariantSchema),
+  })
+  .passthrough();
+const bannerTextblockSchema = z
+  .object({
+    text: z.string().optional(),
+    title: z.string().optional(),
+  })
+  .passthrough();
+const bannerUrlSchema = z
+  .object({
+    id: z.number().int().positive(),
+    url: z.string().optional(),
+    url_object_id: z.string().optional(),
+    url_object_type: z.string().optional(),
+    url_types: z.array(z.string()).optional(),
+  })
+  .passthrough();
+const bannerIssueSchema = z
+  .object({
+    code: z.string(),
+    message: z.string(),
+  })
+  .passthrough();
+const bannerModerationReasonSchema = z
+  .object({
+    code: z.string(),
+    message: z.string(),
+  })
+  .passthrough();
 const bannerSchema = z
   .object({
     id: z.number().int().positive(),
     ad_group_id: z.number().int().positive().optional(),
     ad_group: z.number().int().positive().optional(),
+    created: z.string().optional(),
+    updated: z.string().optional(),
     name: z.string().optional(),
     status: adPlanStatusSchema.optional(),
+    delivery: z
+      .enum(["pending", "delivering", "not_delivering"])
+      .optional(),
+    issues: z.array(bannerIssueSchema).optional(),
+    moderation_reasons: z
+      .array(bannerModerationReasonSchema)
+      .optional(),
     moderation_status: z
       .enum(["pending", "allowed", "banned"])
       .optional(),
     content: z
-      .record(z.string(), z.unknown())
+      .record(z.string(), bannerContentSchema)
       .optional(),
     textblocks: z
-      .record(z.string(), z.unknown())
+      .record(z.string(), bannerTextblockSchema)
       .optional(),
     urls: z
-      .record(z.string(), z.unknown())
+      .record(z.string(), bannerUrlSchema)
       .optional(),
+    ord_marker: z.string().max(32).optional(),
   })
   .passthrough()
   .refine(
@@ -952,12 +1004,61 @@ export interface VkAdsAdGroupsPage {
 export interface VkAdsBanner {
   id: number;
   adGroupId: number;
+  created?: string;
+  updated?: string;
   name?: string;
   status?: VkAdsAdPlanStatus;
+  delivery?: "pending" | "delivering" | "not_delivering";
+  issues?: VkAdsBannerIssue[];
+  moderationReasons?: VkAdsModerationReason[];
   moderationStatus?: "pending" | "allowed" | "banned";
-  content?: Record<string, unknown>;
-  textblocks?: Record<string, unknown>;
-  urls?: Record<string, unknown>;
+  ordMarker?: string;
+  content?: Record<string, VkAdsBannerContent>;
+  textblocks?: Record<string, VkAdsTextblock>;
+  urls?: Record<string, VkAdsBannerUrl>;
+  [key: string]: unknown;
+}
+
+export interface VkAdsBannerContent {
+  id: number;
+  type: string;
+  variants: Record<string, VkAdsContentVariant>;
+  [key: string]: unknown;
+}
+
+export interface VkAdsContentVariant {
+  height?: number | undefined;
+  size?: number | undefined;
+  url?: string | undefined;
+  width?: number | undefined;
+  [key: string]: unknown;
+}
+
+export interface VkAdsTextblock {
+  text?: string | undefined;
+  title?: string | undefined;
+  [key: string]: unknown;
+}
+
+export interface VkAdsBannerUrl {
+  id: number;
+  url?: string | undefined;
+  urlObjectId?: string | undefined;
+  urlObjectType?: string | undefined;
+  urlTypes?: string[] | undefined;
+  [key: string]: unknown;
+}
+
+export interface VkAdsBannerIssue {
+  code: string;
+  message: string;
+  [key: string]: unknown;
+}
+
+export interface VkAdsModerationReason {
+  code: string;
+  message: string;
+  [key: string]: unknown;
 }
 
 export interface ListVkAdsBannersInput extends VkAdsPaginationInput {
@@ -1007,12 +1108,6 @@ export interface MassUpdateVkAdsBannerInput {
 export interface VkAdsBannerRemoderationResult {
   id: number;
   remoderated: boolean;
-}
-
-export interface VkAdsContentVariant {
-  width: number;
-  height: number;
-  size: number;
 }
 
 export interface VkAdsContentUploadResult {
@@ -2113,6 +2208,67 @@ function normalizeOrdUser(
       : { foreign_inn: item.foreign_inn }),
     ...(item.site === undefined ? {} : { site: item.site }),
   };
+}
+
+function normalizeBanner(
+  item: z.infer<typeof bannerSchema>,
+): VkAdsBanner {
+  const banner: VkAdsBanner = {
+    id: item.id,
+    adGroupId: item.ad_group_id ?? item.ad_group!,
+  };
+
+  if (item.created !== undefined) banner.created = item.created;
+  if (item.updated !== undefined) banner.updated = item.updated;
+  if (item.name !== undefined) banner.name = item.name;
+  if (item.status !== undefined) banner.status = item.status;
+  if (item.delivery !== undefined) banner.delivery = item.delivery;
+  if (item.issues !== undefined) {
+    banner.issues = item.issues.map(({ code, message, ...extra }) => ({
+      code,
+      message,
+      ...extra,
+    }));
+  }
+  if (item.moderation_reasons !== undefined) {
+    banner.moderationReasons = item.moderation_reasons.map(
+      ({ code, message, ...extra }) => ({ code, message, ...extra }),
+    );
+  }
+  if (item.moderation_status !== undefined) {
+    banner.moderationStatus = item.moderation_status;
+  }
+  if (item.content !== undefined) banner.content = item.content;
+  if (item.textblocks !== undefined) banner.textblocks = item.textblocks;
+  if (item.urls !== undefined) {
+    banner.urls = Object.fromEntries(
+      Object.entries(item.urls).map(([key, value]) => {
+        const {
+          id,
+          url,
+          url_object_id,
+          url_object_type,
+          url_types,
+          ...extra
+        } = value;
+        return [key, {
+          id,
+          ...(url === undefined ? {} : { url }),
+          ...(url_object_id === undefined
+            ? {}
+            : { urlObjectId: url_object_id }),
+          ...(url_object_type === undefined
+            ? {}
+            : { urlObjectType: url_object_type }),
+          ...(url_types === undefined ? {} : { urlTypes: url_types }),
+          ...extra,
+        }];
+      }),
+    );
+  }
+  if (item.ord_marker !== undefined) banner.ordMarker = item.ord_marker;
+
+  return banner;
 }
 
 export class VkAdsApiClient {
@@ -3230,7 +3386,22 @@ export class VkAdsApiClient {
     const url = new URL(`${this.v2BaseUrl}/banners/${id}.json`);
     url.searchParams.set(
       "fields",
-      "id,ad_group_id,name,status,moderation_status,content,textblocks,urls",
+      [
+        "id",
+        "created",
+        "updated",
+        "name",
+        "status",
+        "ad_group_id",
+        "content",
+        "delivery",
+        "issues",
+        "moderation_reasons",
+        "moderation_status",
+        "textblocks",
+        "urls",
+        "ord_marker",
+      ].join(","),
     );
 
     const parsed = await this.requestValidated(
@@ -3239,36 +3410,7 @@ export class VkAdsApiClient {
       bannerSchema,
       "VK Ads returned an invalid banner object.",
     );
-    const banner: VkAdsBanner = {
-      id: parsed.id,
-      adGroupId: parsed.ad_group_id ?? parsed.ad_group!,
-    };
-
-    if (parsed.name !== undefined) {
-      banner.name = parsed.name;
-    }
-
-    if (parsed.status !== undefined) {
-      banner.status = parsed.status;
-    }
-
-    if (parsed.moderation_status !== undefined) {
-      banner.moderationStatus = parsed.moderation_status;
-    }
-
-    if (parsed.content !== undefined) {
-      banner.content = parsed.content;
-    }
-
-    if (parsed.textblocks !== undefined) {
-      banner.textblocks = parsed.textblocks;
-    }
-
-    if (parsed.urls !== undefined) {
-      banner.urls = parsed.urls;
-    }
-
-    return banner;
+    return normalizeBanner(parsed);
   }
 
   async listBanners(
@@ -3277,7 +3419,22 @@ export class VkAdsApiClient {
     const url = new URL(`${this.v2BaseUrl}/banners.json`);
     url.searchParams.set(
       "fields",
-      "id,ad_group_id,name,status,moderation_status",
+      [
+        "id",
+        "created",
+        "updated",
+        "name",
+        "status",
+        "ad_group_id",
+        "content",
+        "delivery",
+        "issues",
+        "moderation_reasons",
+        "moderation_status",
+        "textblocks",
+        "urls",
+        "ord_marker",
+      ].join(","),
     );
     appendPagination(url.searchParams, input);
 
@@ -3321,17 +3478,7 @@ export class VkAdsApiClient {
     return {
       count: parsed.count,
       offset: parsed.offset,
-      items: parsed.items.map((item) => ({
-        id: item.id,
-        adGroupId: item.ad_group_id ?? item.ad_group!,
-        ...(item.name !== undefined ? { name: item.name } : {}),
-        ...(item.status !== undefined
-          ? { status: item.status }
-          : {}),
-        ...(item.moderation_status !== undefined
-          ? { moderationStatus: item.moderation_status }
-          : {}),
-      })),
+      items: parsed.items.map(normalizeBanner),
     };
   }
 

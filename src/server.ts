@@ -184,7 +184,7 @@ import { actionReadinessSchema } from "./preflight/types.js";
 
 export const SERVER_INFO = {
   name: "vk-ads-mcp",
-  version: "0.1.349",
+  version: "0.1.350",
 } as const;
 
 export const CONNECTION_CHECK_TOOL = "vk_ads_connection_check";
@@ -2161,6 +2161,76 @@ export function createVkAdsMcpServer(
 
     return readiness;
   };
+
+  const bannerOutputSchema = z
+    .object({
+      id: z.number().int().positive(),
+      adGroupId: z.number().int().positive(),
+      created: z.string().optional(),
+      updated: z.string().optional(),
+      name: z.string().optional(),
+      status: z.enum(["active", "blocked", "deleted"]).optional(),
+      delivery: z
+        .enum(["pending", "delivering", "not_delivering"])
+        .optional(),
+      issues: z
+        .array(z.object({ code: z.string(), message: z.string() }).passthrough())
+        .optional(),
+      moderationReasons: z
+        .array(z.object({ code: z.string(), message: z.string() }).passthrough())
+        .optional(),
+      moderationStatus: z
+        .enum(["pending", "allowed", "banned"])
+        .optional(),
+      ordMarker: z.string().max(32).optional(),
+      content: z
+        .record(
+          z.string(),
+          z
+            .object({
+              id: z.number().int().positive(),
+              type: z.string(),
+              variants: z
+                .record(
+                  z.string(),
+                  z
+                    .object({
+                      height: z.number().int().optional(),
+                      size: z.number().int().optional(),
+                      url: z.string().optional(),
+                      width: z.number().int().optional(),
+                    })
+                    .passthrough(),
+                ),
+            })
+            .passthrough(),
+        )
+        .optional(),
+      textblocks: z
+        .record(
+          z.string(),
+          z.object({
+            text: z.string().optional(),
+            title: z.string().optional(),
+          }).passthrough(),
+        )
+        .optional(),
+      urls: z
+        .record(
+          z.string(),
+          z
+            .object({
+              id: z.number().int().positive(),
+              url: z.string().optional(),
+              urlObjectId: z.string().optional(),
+              urlObjectType: z.string().optional(),
+              urlTypes: z.array(z.string()).optional(),
+            })
+            .passthrough(),
+        )
+        .optional(),
+    })
+    .passthrough();
 
   server.registerTool(
     OAUTH_CODE_INFO_TOOL,
@@ -10420,17 +10490,7 @@ export function createVkAdsMcpServer(
       outputSchema: {
         count: z.number().int().nonnegative(),
         offset: z.number().int().nonnegative(),
-        items: z.array(
-          z.object({
-            id: z.number().int().positive(),
-            adGroupId: z.number().int().positive(),
-            name: z.string().optional(),
-            status: adGroupStatusSchema.optional(),
-            moderationStatus: z
-              .enum(["pending", "allowed", "banned"])
-              .optional(),
-          }),
-        ),
+        items: z.array(bannerOutputSchema),
       },
       annotations: {
         readOnlyHint: true,
@@ -10493,21 +10553,11 @@ export function createVkAdsMcpServer(
     {
       title: "Получить рекламное объявление VK Рекламы",
       description:
-        "Возвращает безопасную нормализованную сводку одного рекламного объявления по ID.",
+        "Возвращает безопасный типизированный объект объявления по ID, включая доступное содержимое креатива, тексты, ссылки, медиа-варианты и статусы.",
       inputSchema: {
         id: z.number().int().positive(),
       },
-      outputSchema: {
-        id: z.number().int().positive(),
-        adGroupId: z.number().int().positive(),
-        name: z.string().optional(),
-        status: z
-          .enum(["active", "blocked", "deleted"])
-          .optional(),
-        moderationStatus: z
-          .enum(["pending", "allowed", "banned"])
-          .optional(),
-      },
+      outputSchema: bannerOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -10517,20 +10567,6 @@ export function createVkAdsMcpServer(
     },
     async ({ id }) => {
       const banner = await vkAdsClient.getBanner(id);
-      const structuredContent = {
-        id: banner.id,
-        adGroupId: banner.adGroupId,
-        ...(banner.name !== undefined
-          ? { name: banner.name }
-          : {}),
-        ...(banner.status !== undefined
-          ? { status: banner.status }
-          : {}),
-        ...(banner.moderationStatus !== undefined
-          ? { moderationStatus: banner.moderationStatus }
-          : {}),
-      };
-
       return {
         content: [
           {
@@ -10538,7 +10574,7 @@ export function createVkAdsMcpServer(
             text: "Рекламное объявление получено.",
           },
         ],
-        structuredContent,
+        structuredContent: banner,
       };
     },
   );
