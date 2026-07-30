@@ -4,24 +4,45 @@ Read this file before calling any community discovery or research tool. Its
 purpose is to turn an advertising goal into a domain-neutral, reviewable search
 configuration.
 
-## Decide whether questions are needed
+## Choose the research purpose
+
+Every high-level call must explicitly set one purpose:
+
+- `advertising_audience` — find communities whose members may buy the
+  advertised offer;
+- `topic_discovery` — ordinary thematic search without an advertising-audience
+  claim;
+- `competitor_research` — study competitors as the subject of the research.
+
+Never infer `topic_discovery` merely because the advertising brief is missing.
+For an advertising request, collect the brief first.
+
+## Establish the advertising brief
 
 Use facts already supplied by the user, their site, and the conversation. Do
 not ask for information that is already known.
 
-The minimum brief must establish:
+Before advertising research, establish:
 
 - what is being advertised and which user action matters;
-- who is most likely to take that action;
-- the audience's roles, needs, tasks, and signs of current intent;
-- geography and language, when relevant;
-- unrelated meanings, competitors, industries, or content that must be
-  excluded;
+- the buyer or decision maker;
+- needs and events that occur before purchase;
+- geography;
+- whether competitor subscribers may be used;
+- providers and specialists that must not be mistaken for buyers;
 - the desired breadth of the result.
 
-Ask up to four missing questions directly in chat. When five or more material
-questions remain, tell the user that the search needs a short brief and offer a
-choice before asking the questions.
+When the buyer or competitor policy is missing, ask at least:
+
+> Кому рекламируем этот продукт или услугу и можно ли использовать подписчиков
+> конкурентов?
+
+Do not replace this business question with schema names, search terms, scoring
+weights, or page budgets. Do not guess the answer from the offer category.
+
+Ask up to four missing business questions directly in chat. When five or more
+material questions remain, tell the user that the search needs a short brief
+and offer a choice before asking the questions.
 
 This choice is mandatory. Do not activate, read, or open
 `interactive-project-questionnaire` merely because its normal trigger
@@ -98,7 +119,47 @@ choices.
 
 ## Build the search configuration
 
-Create a small set of distinct search queries. Separate signals by strength:
+Before creating search queries, separate:
+
+- people and roles that may buy;
+- needs, tasks, and life events before purchase;
+- adjacent communities and institutions;
+- possible partners;
+- competitors;
+- providers and specialists that sell the offer.
+
+Pass these distinctions in `research_context`. A typical advertising context
+contains:
+
+```json
+{
+  "purpose": "advertising_audience",
+  "offer": "Семейный и свадебный фотограф",
+  "conversion_action": "Записаться на фотосессию",
+  "target_audience": ["невесты", "родители", "семьи с детьми"],
+  "purchase_triggers": ["свадьба", "выпускной", "детский праздник"],
+  "geography": "Домодедово",
+  "competitor_policy": "exclude",
+  "competitor_policy_confirmed": true,
+  "personal_choice_level": "high",
+  "audience_terms": ["невесты", "родители"],
+  "adjacent_audience_terms": ["свадебный салон", "детский праздник"],
+  "partner_terms": ["школа", "детский сад"],
+  "competitor_terms": ["фотограф"],
+  "provider_terms": ["фотостудия", "фотошкола"]
+}
+```
+
+`personal_choice_level=high` is suitable when purchase depends strongly on
+trust, style, or a relationship with a specific specialist. Competitors then
+require explicit confirmation and receive at most `review`. For a replaceable
+retail purchase, `low` may allow an explicitly confirmed competitor audience
+as a separate cluster.
+
+Create a small set of distinct search queries. At least one query must describe
+buyers, needs, events, or adjacent places. A list made only from the product,
+profession, providers, or competitors is invalid. Separate scoring signals by
+strength:
 
 - direct product or purchase-intent terms;
 - audience roles and professional identities;
@@ -210,9 +271,10 @@ inspected. Use `source_matches` for unique observed IDs and
 
 Before the first tool call, show a compact search brief containing:
 
-- advertising goal and target audience;
+- purpose, advertised offer, conversion action, and buyer;
+- purchase triggers and competitor policy;
 - search queries and strongest positive terms;
-- exclusions and any risky ambiguous terms;
+- provider, competitor, and irrelevant exclusions;
 - geography, community types, and size limits;
 - search breadth and expected result count;
 - deep-analysis mode and maximum candidate budget;
@@ -222,13 +284,25 @@ If the user's original request already authorized the research, start after the
 brief without asking for a second confirmation. Ask again only when an
 unresolved choice could materially change the audience.
 
+The MCP independently validates the brief and strategy. If it returns
+`needs_clarification`, ask the returned questions and do not claim that a run
+was created. If it returns `invalid_strategy`, show the business-level error,
+revise the audience queries with the user, and do not retry the same provider-
+only strategy.
+
 Use `vk_find_community_candidates` for a small bounded search. Use
 `vk_start_community_research` for broad work, then poll progress and read the
 saved run. Report incomplete reasons caused by provider or search-budget
 limits.
 
-After completion, return ranked candidates with score reasons, exclusion
-matches, risks, and clusters. Always report `exhaustive`, `stop_reason`,
+After completion, separate `target_audience`, `adjacent_audience`, `partner`,
+and `competitor` results. Show `provider` and `irrelevant` only as rejected
+controls when useful. For every candidate, preserve the relationship reasons,
+buyer signals, provider or competitor signals, applied competitor policy,
+score reasons, risks, and clusters. Never merge the competitor cluster into
+organic buyer communities.
+
+Always report `exhaustive`, `stop_reason`,
 `analyzed`, `skipped`, `remaining_discovery`, and
 `estimated_wall_requests_saved`. `completed` means the selected analysis
 policy finished; it does not mean every discovery candidate was deeply
