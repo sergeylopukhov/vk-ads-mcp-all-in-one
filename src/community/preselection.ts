@@ -15,7 +15,8 @@ import {
 export interface AnalysisPolicy {
   mode: "efficient" | "exhaustive";
   initial_candidates: number;
-  max_candidates: number;
+  /** Устаревший совместимый параметр. Адаптивный анализ его не использует. */
+  max_candidates?: number | undefined;
   batch_size: number;
   primary_share: number;
   small_community_share: number;
@@ -29,7 +30,6 @@ export interface AnalysisPolicy {
 export const DEFAULT_ANALYSIS_POLICY: AnalysisPolicy = {
   mode: "efficient",
   initial_candidates: 100,
-  max_candidates: 300,
   batch_size: 25,
   primary_share: 0.65,
   small_community_share: 0.15,
@@ -208,7 +208,10 @@ export function preselectCandidates(
       );
       return item;
     });
-  const limit = Math.min(policy.max_candidates, eligible.length);
+  const initialLimit = Math.min(
+    policy.initial_candidates,
+    eligible.length,
+  );
   const selected = new Map<number, Candidate>();
   const take = (
     source: Candidate[],
@@ -216,7 +219,7 @@ export function preselectCandidates(
     reason: string,
   ): void => {
     for (const item of source) {
-      if (selected.size >= limit || count <= 0) break;
+      if (selected.size >= initialLimit || count <= 0) break;
       if (!selected.has(item.id)) {
         selected.set(item.id, item);
         item.preselection?.selection_reasons.push(reason);
@@ -227,24 +230,25 @@ export function preselectCandidates(
 
   const requestedCounts = {
     primary: Math.round(
-      limit *
+      initialLimit *
         (policy.primary_share ?? DEFAULT_ANALYSIS_POLICY.primary_share),
     ),
     small: Math.round(
-      limit *
+      initialLimit *
         (policy.small_community_share ??
           DEFAULT_ANALYSIS_POLICY.small_community_share),
     ),
     query: Math.round(
-      limit * (policy.query_share ?? DEFAULT_ANALYSIS_POLICY.query_share),
+      initialLimit *
+        (policy.query_share ?? DEFAULT_ANALYSIS_POLICY.query_share),
     ),
-    exploration: Math.round(limit * policy.exploration_share),
+    exploration: Math.round(initialLimit * policy.exploration_share),
   };
   const requestedTotal = Object.values(requestedCounts).reduce(
     (sum, value) => sum + value,
     0,
   );
-  const overflow = Math.max(0, requestedTotal - limit);
+  const overflow = Math.max(0, requestedTotal - initialLimit);
   const primaryCount = Math.max(0, requestedCounts.primary - overflow);
   const smallCount = requestedCounts.small;
   const queryCount = requestedCounts.query;
@@ -294,19 +298,25 @@ export function preselectCandidates(
     explorationCount,
     "exploration",
   );
-  take(eligible, limit - selected.size, "metadata_relevance_fill");
+  take(
+    eligible,
+    initialLimit - selected.size,
+    "metadata_relevance_fill",
+  );
 
-  const selectedItems = [...selected.values()].sort(comparePreselection);
-  const selectedIds = new Set(selectedItems.map((item) => item.id));
-  const budgetSkipped = eligible
+  const initialItems = [...selected.values()];
+  const selectedIds = new Set(initialItems.map((item) => item.id));
+  const expansionItems = eligible
     .filter((item) => !selectedIds.has(item.id))
     .map((item) => {
-      item.risk_flags.push("analysis_budget_not_selected");
+      item.preselection?.selection_reasons.push(
+        "metadata_relevance_expansion",
+      );
       return item;
     });
   return {
-    selected: selectedItems,
-    skipped: [...skippedByCeiling, ...budgetSkipped],
+    selected: [...initialItems, ...expansionItems],
+    skipped: skippedByCeiling,
     metadataScored: scored.length,
     scoreCeilingRejected: skippedByCeiling.length,
   };

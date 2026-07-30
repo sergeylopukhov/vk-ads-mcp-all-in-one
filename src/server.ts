@@ -171,7 +171,7 @@ import { actionReadinessSchema } from "./preflight/types.js";
 
 export const SERVER_INFO = {
   name: "vk-ads-mcp",
-  version: "0.1.341",
+  version: "0.1.342",
 } as const;
 
 export const CONNECTION_CHECK_TOOL = "vk_ads_connection_check";

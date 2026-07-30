@@ -71,9 +71,10 @@ must include attainable `min_score` and `review_min_score` values. Preserve
 qualifiers in multiword exclusions; never broaden "оптовый поставщик" to the
 generic term "поставщик". Use `analysis_policy.mode=efficient` for broad
 research unless the user explicitly requests a complete pass. State the
-maximum deep-analysis budget before starting. A requested result count is a
-reporting target and may guide adaptive stopping; it is not proof that
-discovery is exhaustive.
+initial batch size and adaptive stopping criteria before starting. Do not pass
+`max_candidates`: it is accepted only for backward compatibility and no
+longer limits deep analysis. A requested result count is a reporting target
+and may guide adaptive stopping; it is not proof that discovery is exhaustive.
 Never infer `country_id` or `city_id` from the user's language, domain, or
 location. Omit both fields for a worldwide search unless the user explicitly
 requests or confirms a geography. Keep `exclude_policy=soft` unless the user
@@ -82,8 +83,8 @@ After every community search, state the active recommendation and review
 thresholds, `exhaustive`, `stop_reason`, and the number of candidates that did
 not receive deep post analysis. If the result contains fewer suitable candidates than requested,
 do not stop at "nothing found": explain the limiting stage and offer score
-adjustment, an `exhaustive` run or a larger shortlist, query refinement, or an
-explicit filter change. First evaluate the precision of the analyzed results.
+adjustment, an `exhaustive` run, query refinement, or an explicit filter
+change. First evaluate the precision of the analyzed results.
 Never lower thresholds or relax exclusions without the user's choice.
 When the user gives an exact recommendation threshold without a review
 threshold, use that exact `min_score` and keep a 15-point review band below it,

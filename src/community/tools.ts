@@ -621,7 +621,15 @@ const analysisPolicySchema = z
   .object({
     mode: z.enum(["efficient", "exhaustive"]).default("efficient"),
     initial_candidates: z.number().int().min(25).max(10_000).default(100),
-    max_candidates: z.number().int().min(25).max(10_000).default(300),
+    max_candidates: z
+      .number()
+      .int()
+      .min(25)
+      .max(10_000)
+      .optional()
+      .describe(
+        "Устаревший совместимый параметр. Сервер принимает его, но адаптивный анализ не ограничивает им число кандидатов.",
+      ),
     batch_size: z.number().int().min(1).max(100).default(25),
     primary_share: z.number().min(0).max(1).default(0.65),
     small_community_share: z.number().min(0).max(1).default(0.15),
@@ -633,14 +641,6 @@ const analysisPolicySchema = z
   })
   .strict()
   .superRefine((policy, context) => {
-    if (policy.initial_candidates > policy.max_candidates) {
-      context.addIssue({
-        code: "custom",
-        path: ["initial_candidates"],
-        message:
-          "initial_candidates не может быть больше max_candidates.",
-      });
-    }
     const totalShare =
       policy.primary_share +
       policy.small_community_share +
@@ -650,7 +650,7 @@ const analysisPolicySchema = z
       context.addIssue({
         code: "custom",
         path: ["primary_share"],
-        message: "Сумма долей shortlist не может быть больше 1.",
+        message: "Сумма долей стартовой выборки не может быть больше 1.",
       });
     }
   });
@@ -1471,71 +1471,211 @@ export function registerVkCommunityTools(
     );
     if (!preflight.ready) return clarificationResult(preflight);
     const prepared = await prepare(input);
-    const analyzed = await analyzeItems(
-      prepared.selected,
-      input.posts_limit,
-      prepared.rules,
-      input.exclude_match_mode,
-    );
-    const items = rank(
-      analyzed,
-      prepared.rules,
-      input.clusters,
-      input.research_context,
-    );
     const run = createRun(
       input,
       prepared.discovery,
       prepared.selected,
       prepared.rules,
-      "completed",
+      "queued",
       prepared.preselection,
     );
-    const progress = run.progress as Record<string, unknown>;
-    const summary = run.summary as Record<string, unknown>;
-    summary.analyzed = analyzed.filter(
-      (item) => item.activity !== undefined,
-    ).length;
-    const cached = analyzed.filter(
-      (item) => item.analysis_source === "cache",
-    ).length;
-    summary.cached = cached;
-    summary.estimated_wall_requests_saved =
-      Number(summary.estimated_wall_requests_saved ?? 0) + cached;
-    progress.cached = cached;
-    progress.analyzed = analyzed.length;
-    progress.estimated_wall_requests_saved =
-      summary.estimated_wall_requests_saved;
-    summary.analysis_batches = Math.ceil(
-      analyzed.length / input.analysis_policy.batch_size,
-    );
-    progress.processed = analyzed.length;
-    progress.remaining = 0;
-    progress.batches_completed = Math.ceil(
-      analyzed.length / input.analysis_policy.batch_size,
-    );
-    const exhaustive = analyzed.length === prepared.discovery.items.length;
-    const stopReason = exhaustive
-      ? "all_candidates_analyzed"
-      : "analysis_budget_limit";
-    progress.exhaustive = exhaustive;
-    progress.stop_reason = stopReason;
-    progress.remaining_discovery = Math.max(
-      0,
-      prepared.discovery.items.length - analyzed.length,
-    );
-    summary.exhaustive = exhaustive;
-    summary.stop_reason = stopReason;
-    if (!exhaustive) {
-      summary.incomplete = true;
-      summary.incomplete_reasons = [
-        ...new Set([
-          ...((summary.incomplete_reasons as string[]) ?? []),
-          "analysis_budget_limit",
-        ]),
-      ];
+    run.status = "running";
+    const initialProgress = run.progress as Record<string, unknown>;
+    initialProgress.phase =
+      prepared.selected.length === 0 ? "completed" : "analyzing";
+    if (prepared.selected.length === 0) {
+      run.status = "completed";
+      const stopReason =
+        prepared.discovery.items.length === 0
+          ? "all_candidates_analyzed"
+          : "all_candidates_resolved";
+      initialProgress.stop_reason = stopReason;
+      initialProgress.exhaustive =
+        prepared.discovery.items.length === 0;
+      const summary = run.summary as Record<string, unknown>;
+      summary.stop_reason = stopReason;
+      summary.exhaustive = prepared.discovery.items.length === 0;
     }
-    updatePartitions(run, items);
+    let previousSuitable = 0;
+    let stagnantBatches = 0;
+    let previousTop = "";
+    let stableTopBatches = 0;
+    while (Array.isArray(run.pending) && run.pending.length > 0) {
+      const batch = (run.pending as Candidate[]).splice(
+        0,
+        input.analysis_policy.batch_size,
+      );
+      const analyzed = await analyzeItems(
+        batch,
+        input.posts_limit,
+        prepared.rules,
+        input.exclude_match_mode,
+      );
+      const currentItems = [
+        ...(run.passed as ResearchItem[]),
+        ...(run.review as ResearchItem[]),
+        ...(run.rejected as ResearchItem[]),
+        ...rank(
+          analyzed,
+          prepared.rules,
+          input.clusters,
+          input.research_context,
+        ),
+      ];
+      updatePartitions(run, currentItems);
+      const progress = run.progress as Record<string, unknown>;
+      const summary = run.summary as Record<string, unknown>;
+      progress.processed =
+        Number(progress.processed ?? 0) + batch.length;
+      progress.analyzed = progress.processed;
+      progress.remaining =
+        Number(progress.remaining ?? 0) - batch.length;
+      progress.batches_completed =
+        Number(progress.batches_completed ?? 0) + 1;
+      summary.analyzed = Number(progress.processed ?? 0);
+      const cachedInBatch = analyzed.filter(
+        (item) => item.analysis_source === "cache",
+      ).length;
+      progress.cached =
+        Number(progress.cached ?? 0) + cachedInBatch;
+      summary.cached = Number(progress.cached ?? 0);
+      summary.estimated_wall_requests_saved =
+        Number(summary.estimated_wall_requests_saved ?? 0) +
+        cachedInBatch;
+      progress.estimated_wall_requests_saved =
+        summary.estimated_wall_requests_saved;
+      summary.analysis_batches =
+        Number(progress.batches_completed ?? 0);
+      progress.remaining_shortlist = run.pending.length;
+      const suitable =
+        Number(summary.passed ?? 0) + Number(summary.review ?? 0);
+      stagnantBatches =
+        suitable === previousSuitable ? stagnantBatches + 1 : 0;
+      previousSuitable = suitable;
+      const top = [
+        ...(run.passed as ResearchItem[]),
+        ...(run.review as ResearchItem[]),
+      ]
+        .sort(compareResearchItems)
+        .slice(0, 10)
+        .map((item) => item.id)
+        .join(",");
+      stableTopBatches =
+        top.length > 0 && top === previousTop
+          ? stableTopBatches + 1
+          : 0;
+      previousTop = top;
+      const enoughProcessed =
+        Number(progress.processed ?? 0) >=
+        input.analysis_policy.initial_candidates;
+      const recommended = Number(summary.passed ?? 0);
+      const review = Number(summary.review ?? 0);
+      const targetsReached =
+        recommended >= input.analysis_policy.target_recommended &&
+        recommended + review >=
+          input.analysis_policy.target_recommended +
+            input.analysis_policy.target_review;
+      const topItems = [
+        ...(run.passed as ResearchItem[]),
+        ...(run.review as ResearchItem[]),
+      ]
+        .sort(compareResearchItems)
+        .slice(0, 10);
+      const lastTopScore =
+        topItems.length === 10
+          ? topItems.at(-1)?.normalized_score
+          : undefined;
+      const remainingCandidates = [
+        ...((run.pending as Candidate[]) ?? []),
+        ...((run.skipped_candidates as Candidate[]) ?? []),
+      ];
+      const maximumRemainingCeiling = Math.max(
+        -1,
+        ...remainingCandidates.map(
+          (item) => item.preselection?.score_ceiling ?? 100,
+        ),
+      );
+      const topMathematicallyStable =
+        lastTopScore !== undefined &&
+        lastTopScore > maximumRemainingCeiling;
+      let stopReason: string | null = null;
+      if (run.pending.length === 0) {
+        stopReason =
+          Number(progress.processed ?? 0) ===
+          prepared.discovery.items.length
+            ? "all_candidates_analyzed"
+            : "all_candidates_resolved";
+      } else if (
+        input.analysis_policy.mode === "efficient" &&
+        topMathematicallyStable
+      ) {
+        stopReason = "top_results_stable";
+      } else if (
+        input.analysis_policy.mode === "efficient" &&
+        enoughProcessed &&
+        targetsReached &&
+        stableTopBatches >= input.analysis_policy.stable_batches
+      ) {
+        stopReason = "target_counts_reached";
+      } else if (
+        input.analysis_policy.mode === "efficient" &&
+        enoughProcessed &&
+        stagnantBatches >= input.analysis_policy.stable_batches
+      ) {
+        stopReason = "no_relevant_gain";
+      }
+      if (stopReason !== null) {
+        const unprocessed = [...(run.pending as Candidate[])];
+        for (const item of unprocessed) {
+          item.risk_flags.push("analysis_stopped_before_wall");
+        }
+        run.skipped_candidates = [
+          ...((run.skipped_candidates as Candidate[]) ?? []),
+          ...unprocessed,
+        ];
+        summary.skipped =
+          Number(summary.skipped ?? 0) + unprocessed.length;
+        progress.skipped = summary.skipped;
+        summary.estimated_wall_requests_saved =
+          Number(summary.estimated_wall_requests_saved ?? 0) +
+          unprocessed.length;
+        progress.estimated_wall_requests_saved =
+          summary.estimated_wall_requests_saved;
+        progress.remaining_shortlist = unprocessed.length;
+        progress.remaining = 0;
+        progress.remaining_discovery = Math.max(
+          0,
+          prepared.discovery.items.length -
+            Number(progress.processed ?? 0),
+        );
+        run.pending = [];
+        run.status = "completed";
+        progress.phase = "completed";
+        progress.stop_reason = stopReason;
+        summary.stop_reason = stopReason;
+        const exhaustive =
+          Number(progress.processed ?? 0) ===
+          prepared.discovery.items.length;
+        progress.exhaustive = exhaustive;
+        summary.exhaustive = exhaustive;
+        if (
+          !exhaustive &&
+          stopReason !== "all_candidates_resolved"
+        ) {
+          summary.incomplete = true;
+          summary.incomplete_reasons = [
+            ...new Set([
+              ...((summary.incomplete_reasons as string[]) ?? []),
+              stopReason,
+            ]),
+          ];
+        }
+      }
+    }
+    if (run.status === "running") {
+      run.status = "completed";
+      (run.progress as Record<string, unknown>).phase = "completed";
+    }
     if (persist) await store.save(run);
     return project(run);
   };
@@ -1638,22 +1778,13 @@ export function registerVkCommunityTools(
           const stopReason =
             prepared.discovery.items.length === 0
               ? "all_candidates_analyzed"
-              : "score_ceiling_below_review_threshold";
+              : "all_candidates_resolved";
           preparedProgress.stop_reason = stopReason;
           preparedProgress.exhaustive =
             prepared.discovery.items.length === 0;
           const summary = run.summary as Record<string, unknown>;
           summary.stop_reason = stopReason;
           summary.exhaustive = prepared.discovery.items.length === 0;
-          if (prepared.discovery.items.length > 0) {
-            summary.incomplete = true;
-            summary.incomplete_reasons = [
-              ...new Set([
-                ...strings(summary.incomplete_reasons),
-                stopReason,
-              ]),
-            ];
-          }
         }
         await store.save(run);
         let previousSuitable = 0;
@@ -1728,11 +1859,13 @@ export function registerVkCommunityTools(
           const enoughProcessed =
             Number(progress.processed ?? 0) >=
               input.analysis_policy.initial_candidates;
+          const recommended = Number(summary.passed ?? 0);
+          const review = Number(summary.review ?? 0);
           const targetsReached =
-            Number(summary.passed ?? 0) >=
-              input.analysis_policy.target_recommended &&
-            Number(summary.review ?? 0) >=
-              input.analysis_policy.target_review;
+            recommended >= input.analysis_policy.target_recommended &&
+            recommended + review >=
+              input.analysis_policy.target_recommended +
+                input.analysis_policy.target_review;
           const topItems = [
             ...(run.passed as ResearchItem[]),
             ...(run.review as ResearchItem[]),
@@ -1759,18 +1892,24 @@ export function registerVkCommunityTools(
           let stopReason: string | null = null;
           if (run.pending.length === 0) {
             stopReason =
-              prepared.selected.length === prepared.discovery.items.length
+              Number(progress.processed ?? 0) ===
+              prepared.discovery.items.length
                 ? "all_candidates_analyzed"
-                : "analysis_budget_limit";
-          } else if (topMathematicallyStable) {
+                : "all_candidates_resolved";
+          } else if (
+            input.analysis_policy.mode === "efficient" &&
+            topMathematicallyStable
+          ) {
             stopReason = "top_results_stable";
           } else if (
+            input.analysis_policy.mode === "efficient" &&
             enoughProcessed &&
             targetsReached &&
             stableTopBatches >= input.analysis_policy.stable_batches
           ) {
             stopReason = "target_counts_reached";
           } else if (
+            input.analysis_policy.mode === "efficient" &&
             enoughProcessed &&
             stagnantBatches >= input.analysis_policy.stable_batches
           ) {
@@ -1809,7 +1948,10 @@ export function registerVkCommunityTools(
               prepared.discovery.items.length;
             progress.exhaustive = exhaustive;
             summary.exhaustive = exhaustive;
-            if (!exhaustive) {
+            if (
+              !exhaustive &&
+              stopReason !== "all_candidates_resolved"
+            ) {
               summary.incomplete = true;
               summary.incomplete_reasons = [
                 ...new Set([
