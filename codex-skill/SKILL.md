@@ -69,17 +69,21 @@ Before every community tool call, omit custom `scoring_rules.weights` unless
 they materially improve the search. If weights are present, the same payload
 must include attainable `min_score` and `review_min_score` values. Preserve
 qualifiers in multiword exclusions; never broaden "оптовый поставщик" to the
-generic term "поставщик". Research every community that passes the metadata
-filters. A requested result count is a reporting target, not an analysis cap;
-control provider request volume only through `search_budget`.
+generic term "поставщик". Use `analysis_policy.mode=efficient` for broad
+research unless the user explicitly requests a complete pass. State the
+maximum deep-analysis budget before starting. A requested result count is a
+reporting target and may guide adaptive stopping; it is not proof that
+discovery is exhaustive.
 Never infer `country_id` or `city_id` from the user's language, domain, or
 location. Omit both fields for a worldwide search unless the user explicitly
 requests or confirms a geography. Keep `exclude_policy=soft` unless the user
 explicitly authorizes hard removal by metadata minus-terms.
 After every community search, state the active recommendation and review
-thresholds. If the result contains fewer suitable candidates than requested,
+thresholds, `exhaustive`, `stop_reason`, and the number of candidates that did
+not receive deep post analysis. If the result contains fewer suitable candidates than requested,
 do not stop at "nothing found": explain the limiting stage and offer score
-adjustment, search expansion, query refinement, or an explicit filter change.
+adjustment, an `exhaustive` run or a larger shortlist, query refinement, or an
+explicit filter change. First evaluate the precision of the analyzed results.
 Never lower thresholds or relax exclusions without the user's choice.
 When the user gives an exact recommendation threshold without a review
 threshold, use that exact `min_score` and keep a 15-point review band below it,

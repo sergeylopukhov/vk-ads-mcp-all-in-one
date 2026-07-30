@@ -1,6 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import type { Activity } from "./analysis.js";
+
 export interface CommunityResearchRun extends Record<string, unknown> {
   run_id: string;
   created_at: string;
@@ -8,7 +10,7 @@ export interface CommunityResearchRun extends Record<string, unknown> {
 }
 
 interface StoredRuns {
-  version: 1;
+  version: 2;
   items: CommunityResearchRun[];
 }
 
@@ -33,7 +35,7 @@ export class CommunityResearchStore {
           Date.parse(right.created_at) - Date.parse(left.created_at),
       )
       .slice(0, this.maxRuns);
-    await this.write({ version: 1, items });
+    await this.write({ version: 2, items });
   }
 
   async get(runId: string): Promise<CommunityResearchRun> {
@@ -42,7 +44,7 @@ export class CommunityResearchStore {
       (item) => Date.parse(item.expires_at) > this.now(),
     );
     if (active.length !== current.items.length) {
-      await this.write({ version: 1, items: active });
+      await this.write({ version: 2, items: active });
     }
     const found = active.find((item) => item.run_id === runId);
     if (found === undefined) {
@@ -55,6 +57,38 @@ export class CommunityResearchStore {
 
   expiresAt(): string {
     return new Date(this.now() + this.ttlMs).toISOString();
+  }
+
+  async findCachedActivities(
+    ids: number[],
+    analysisFingerprint: string,
+  ): Promise<Map<number, Activity>> {
+    const wanted = new Set(ids);
+    const result = new Map<number, Activity>();
+    const current = await this.read();
+    for (const run of current.items) {
+      if (Date.parse(run.expires_at) <= this.now()) continue;
+      const candidates = [
+        ...array(run.passed),
+        ...array(run.review),
+        ...array(run.rejected),
+      ];
+      for (const candidate of candidates) {
+        if (result.size === wanted.size) return result;
+        const id =
+          typeof candidate.id === "number" ? candidate.id : undefined;
+        const activity = record(candidate.activity);
+        if (
+          id !== undefined &&
+          wanted.has(id) &&
+          !result.has(id) &&
+          activity.analysis_fingerprint === analysisFingerprint
+        ) {
+          result.set(id, activity as unknown as Activity);
+        }
+      }
+    }
+    return result;
   }
 
   private async read(): Promise<StoredRuns> {
@@ -71,14 +105,14 @@ export class CommunityResearchStore {
       const items = Array.isArray(source.items)
         ? source.items.filter(isResearchRun)
         : [];
-      return { version: 1, items };
+      return { version: 2, items };
     } catch (error) {
       if (
         error instanceof Error &&
         "code" in error &&
         error.code === "ENOENT"
       ) {
-        return { version: 1, items: [] };
+        return { version: 2, items: [] };
       }
       throw new Error(
         "Не удалось прочитать локальные снимки исследований сообществ.",
@@ -94,6 +128,23 @@ export class CommunityResearchStore {
     });
     await rename(temporary, this.filePath);
   }
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function array(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is Record<string, unknown> =>
+          item !== null &&
+          typeof item === "object" &&
+          !Array.isArray(item),
+      )
+    : [];
 }
 
 function isResearchRun(value: unknown): value is CommunityResearchRun {

@@ -28,7 +28,36 @@ export interface Activity {
   post_exclude_term_sets: string[][];
   post_intent_term_sets: string[][];
   post_compatibility_term_sets: string[][];
+  concept_matches: string[];
+  concept_match_counts: Record<string, number>;
+  contextual_signal_matches: string[];
+  contextual_signal_match_counts: Record<string, number>;
+  negative_cluster_matches: string[];
+  negative_cluster_post_shares: Record<string, number>;
+  post_concept_sets: string[][];
+  post_contextual_signal_sets: string[][];
+  post_negative_cluster_sets: string[][];
+  analysis_fingerprint: string | null;
   risk_flags: string[];
+}
+
+export interface DiscoveryEvidence {
+  queries: string[];
+  sorts: Array<"relevance" | "members">;
+  occurrences: number;
+  best_relevance_rank: number | null;
+  best_members_rank: number | null;
+}
+
+export interface PreselectionEvidence {
+  metadata_score: number;
+  score_ceiling: number;
+  matched_strong_signals: string[];
+  matched_medium_signals: string[];
+  matched_weak_signals: string[];
+  matched_target_clusters: string[];
+  matched_negative_clusters: string[];
+  selection_reasons: string[];
 }
 
 export interface Candidate {
@@ -41,6 +70,9 @@ export interface Candidate {
   verified: boolean;
   retrieved_at: string;
   risk_flags: string[];
+  discovery?: DiscoveryEvidence;
+  preselection?: PreselectionEvidence;
+  analysis_source?: "vk" | "cache";
   activity?: Activity;
 }
 
@@ -57,6 +89,11 @@ export interface Score {
     exclusion_risk: number;
   };
   compatibility_matches: string[];
+  concept_matches: string[];
+  contextual_signal_matches: string[];
+  negative_cluster_matches: string[];
+  blocking_risks: string[];
+  status_reason: string;
   recommendation: "recommended" | "review" | "rejected";
   clusters: string[];
   reasons: string[];
@@ -64,6 +101,29 @@ export interface Score {
 }
 
 export type TermStrength = "strong" | "medium" | "weak";
+
+export interface ConceptRule {
+  id: string;
+  strength: TermStrength;
+  phrases: string[];
+  weight: number;
+}
+
+export interface ContextualSignal {
+  term: string;
+  requires_any: string[];
+  max_token_distance: number;
+  weight: number;
+}
+
+export interface NegativeCluster {
+  id: string;
+  terms: string[];
+  contextual_terms?: ContextualSignal[];
+  metadata_action: "penalty" | "review" | "reject";
+  post_share_review?: number;
+  post_share_reject?: number;
+}
 
 const normalize = (value: string): string =>
   value
@@ -147,6 +207,27 @@ const termMatchesTokens = (source: string[], term: string): boolean => {
   return false;
 };
 
+const matchingWindowStarts = (
+  source: string[],
+  term: string,
+): number[] => {
+  const expected = tokens(term).map(stem);
+  if (expected.length === 0) return [];
+  const actual = source.map(stem);
+  if (expected.length === 1) {
+    return actual.flatMap((word, index) =>
+      word === expected[0] ? [index] : []
+    );
+  }
+  const windowSize = expected.length + 2;
+  const result: number[] = [];
+  for (let index = 0; index < actual.length; index += 1) {
+    const window = actual.slice(index, index + windowSize);
+    if (expected.every((word) => window.includes(word))) result.push(index);
+  }
+  return result;
+};
+
 const termPrefixMatchesTokens = (source: string[], term: string): boolean => {
   const expectedTokens = tokens(term);
   if (expectedTokens.length === 0) return false;
@@ -185,6 +266,51 @@ export const matches = (text: string, terms: string[]): string[] => {
     termMatchesTokens(source, term)
   );
 };
+
+export const matchConcepts = (
+  text: string,
+  concepts: ConceptRule[],
+): string[] =>
+  concepts
+    .filter((concept) => matches(text, concept.phrases).length > 0)
+    .map((concept) => concept.id);
+
+export const matchesContextualSignals = (
+  text: string,
+  signals: ContextualSignal[],
+): string[] => {
+  const source = tokens(text);
+  return signals
+    .filter((signal) => {
+      const signalPositions = matchingWindowStarts(source, signal.term);
+      if (signalPositions.length === 0) return false;
+      return signal.requires_any.some((anchor) => {
+        const anchorPositions = matchingWindowStarts(source, anchor);
+        return signalPositions.some((signalAt) =>
+          anchorPositions.some(
+            (anchorAt) =>
+              Math.abs(anchorAt - signalAt) <= signal.max_token_distance,
+          )
+        );
+      });
+    })
+    .map((signal) => signal.term);
+};
+
+export const matchNegativeClusters = (
+  text: string,
+  clusters: NegativeCluster[],
+): string[] =>
+  clusters
+    .filter(
+      (cluster) =>
+        matches(text, cluster.terms).length > 0 ||
+        matchesContextualSignals(
+          text,
+          cluster.contextual_terms ?? [],
+        ).length > 0,
+    )
+    .map((cluster) => cluster.id);
 
 export type ExcludeMatchMode = "word_prefix" | "substring";
 
@@ -239,6 +365,10 @@ export function analyze(
     minWeakMatches?: number;
     intentTerms?: string[];
     compatibilityTerms?: string[];
+    concepts?: ConceptRule[];
+    contextualSignals?: ContextualSignal[];
+    negativeClusters?: NegativeCluster[];
+    analysisFingerprint?: string;
     now?: number;
   } = {},
 ): Activity {
@@ -267,17 +397,36 @@ export function analyze(
   );
   const intentTerms = options.intentTerms ?? [];
   const compatibilityTerms = options.compatibilityTerms ?? [];
+  const concepts = options.concepts ?? [];
+  const contextualSignals = options.contextualSignals ?? [];
+  const negativeClusters = options.negativeClusters ?? [];
   const postIntentTermSets = ordinary.map((post) =>
     matches(post.text ?? "", intentTerms),
   );
   const postCompatibilityTermSets = ordinary.map((post) =>
     matches(post.text ?? "", compatibilityTerms),
   );
+  const postConceptSets = ordinary.map((post) =>
+    matchConcepts(post.text ?? "", concepts),
+  );
+  const postContextualSignalSets = ordinary.map((post) =>
+    matchesContextualSignals(post.text ?? "", contextualSignals),
+  );
+  const postNegativeClusterSets = ordinary.map((post) =>
+    matchNegativeClusters(post.text ?? "", negativeClusters),
+  );
   const termMatchCounts = countTermSets(postTermSets);
   const excludeTermMatchCounts = countTermSets(postExcludeTermSets);
   const intentTermMatchCounts = countTermSets(postIntentTermSets);
   const compatibilityTermMatchCounts = countTermSets(
     postCompatibilityTermSets,
+  );
+  const conceptMatchCounts = countTermSets(postConceptSets);
+  const contextualSignalMatchCounts = countTermSets(
+    postContextualSignalSets,
+  );
+  const negativeClusterMatchCounts = countTermSets(
+    postNegativeClusterSets,
   );
   const normalizedStrengths = new Map(
     Object.entries(options.termStrengths ?? {}).map(([term, strength]) => [
@@ -286,11 +435,20 @@ export function analyze(
     ]),
   );
   const minWeakMatches = Math.max(2, options.minWeakMatches ?? 2);
+  const conceptStrengths = new Map(
+    concepts.map((concept) => [concept.id, concept.strength]),
+  );
   const thematicPosts = postTermSets.filter(
-    (matched) => {
-      const strengths = matched.map(
+    (matched, index) => {
+      const strengths = [
+        ...matched.map(
         (term) => normalizedStrengths.get(normalize(term)) ?? "medium",
-      );
+        ),
+        ...(postConceptSets[index] ?? []).map(
+          (id) => conceptStrengths.get(id) ?? "medium",
+        ),
+        ...(postContextualSignalSets[index] ?? []).map(() => "medium" as const),
+      ];
       return (
         strengths.some((strength) => strength !== "weak") ||
         strengths.filter((strength) => strength === "weak").length >=
@@ -301,6 +459,19 @@ export function analyze(
   const exclusionPosts = postExcludeTermSets.filter(
     (matched) => matched.length > 0,
   ).length;
+  const negativeClusterPostShares = Object.fromEntries(
+    negativeClusters.map((cluster) => [
+      cluster.id,
+      ordinary.length
+        ? Number(
+            (
+              (negativeClusterMatchCounts[cluster.id] ?? 0) /
+              ordinary.length
+            ).toFixed(3),
+          )
+        : 0,
+    ]),
+  );
   const weeklyBuckets = Array.from({ length: 13 }, (_, bucket) =>
     dates.filter((date) => {
       const age = nowSeconds - date;
@@ -346,6 +517,16 @@ export function analyze(
     post_exclude_term_sets: postExcludeTermSets,
     post_intent_term_sets: postIntentTermSets,
     post_compatibility_term_sets: postCompatibilityTermSets,
+    concept_matches: Object.keys(conceptMatchCounts),
+    concept_match_counts: conceptMatchCounts,
+    contextual_signal_matches: Object.keys(contextualSignalMatchCounts),
+    contextual_signal_match_counts: contextualSignalMatchCounts,
+    negative_cluster_matches: Object.keys(negativeClusterMatchCounts),
+    negative_cluster_post_shares: negativeClusterPostShares,
+    post_concept_sets: postConceptSets,
+    post_contextual_signal_sets: postContextualSignalSets,
+    post_negative_cluster_sets: postNegativeClusterSets,
+    analysis_fingerprint: options.analysisFingerprint ?? null,
     risk_flags:
       Object.keys(excludeTermMatchCounts).length > 0
         ? ["exclude_term_in_posts"]
@@ -530,13 +711,24 @@ export function score(
   const perMatchWeights = object(rules.per_match_weights);
   const intentTerms = strings(rules.intent_terms);
   const compatibilityTerms = strings(rules.compatibility_terms);
+  const concepts = conceptRules(rules.concepts);
+  const contextualSignals = contextualSignalRules(
+    rules.contextual_signals,
+  );
+  const negativeClusters = negativeClusterRules(
+    rules.negative_clusters,
+  );
   const excludeMatchMode: ExcludeMatchMode =
     rules.exclude_match_mode === "substring" ? "substring" : "word_prefix";
   const freshDays = number(rules.activity_fresh_days, 30);
   const minPostsPerWeek = number(rules.min_posts_per_week, 0);
   const minThematicShare = number(
     rules.min_thematic_post_share,
-    0,
+    0.5,
+  );
+  const lowThematicRiskShare = number(
+    rules.low_thematic_post_share_threshold,
+    0.3,
   );
   const pass = number(rules.min_score, 0);
   const reviewMin = Math.min(
@@ -562,6 +754,9 @@ export function score(
       component: keyof typeof components,
       selectedTerms = terms,
       selectedTermWeights = termWeights,
+      includeConcepts = false,
+      conceptCounts: Record<string, number> = {},
+      includeContextualSignals = false,
     ): void => {
       const limit = number(weights[key], 0);
       const matched = weightedOccurrences(
@@ -569,13 +764,40 @@ export function score(
         selectedTerms,
         selectedTermWeights,
       );
+      const matchedConcepts = includeConcepts
+        ? matchConcepts(source, concepts)
+        : Object.keys(conceptCounts);
+      const conceptScore = matchedConcepts.reduce(
+        (total, id) => {
+          const concept = concepts.find((item) => item.id === id);
+          return (
+            total +
+            (concept?.weight ?? 0) *
+              Math.max(1, conceptCounts[id] ?? 1)
+          );
+        },
+        0,
+      );
+      const matchedContextual = includeContextualSignals
+        ? matchesContextualSignals(source, contextualSignals)
+        : [];
+      const contextualScore = matchedContextual.reduce(
+        (total, term) =>
+          total +
+          (contextualSignals.find((item) => item.term === term)?.weight ?? 0),
+        0,
+      );
       const perMatch = number(perMatchWeights[key], 1);
-      if (limit > 0 && matched.score > 0) {
-        const points = Math.min(limit, matched.score * perMatch);
+      const combinedScore =
+        matched.score + conceptScore + contextualScore;
+      const combinedCount =
+        matched.count + matchedConcepts.length + matchedContextual.length;
+      if (limit > 0 && combinedScore > 0) {
+        const points = Math.min(limit, combinedScore * perMatch);
         value += points;
         components[component] += points;
         reasons.push(
-          `${label}: ${matched.count} совп. +${formatPoints(points)} из ${limit}`,
+          `${label}: ${combinedCount} совп. +${formatPoints(points)} из ${limit}`,
         );
       }
     };
@@ -598,12 +820,22 @@ export function score(
       item.name,
       "термины в названии",
       "profile_fit",
+      terms,
+      termWeights,
+      true,
+      {},
+      true,
     );
     addMatches(
       "description_term",
       item.description,
       "термины в описании",
       "profile_fit",
+      terms,
+      termWeights,
+      true,
+      {},
+      true,
     );
     const postSource = item.activity === undefined
       ? ""
@@ -622,6 +854,10 @@ export function score(
       postSource,
       "термины в публикациях",
       "content_relevance",
+      terms,
+      termWeights,
+      false,
+      item.activity?.concept_match_counts ?? {},
     );
     const intentSource = [
       text,
@@ -653,14 +889,13 @@ export function score(
       typeof memberRange.max === "number"
         ? memberRange.max
         : undefined;
-    add(
-      "members_range",
+    if (
       item.members_count !== null &&
-        (min === undefined || item.members_count >= min) &&
-        (max === undefined || item.members_count <= max),
-      "размер сообщества",
-      "profile_fit",
-    );
+      ((min !== undefined && item.members_count < min) ||
+        (max !== undefined && item.members_count > max))
+    ) {
+      reasons.push("размер сообщества вне указанного диапазона");
+    }
 
     const thematicShare = item.activity?.thematic_post_share;
     const thematicWeight = number(weights.thematic_post_share, 0);
@@ -679,15 +914,26 @@ export function score(
     const lowThematic =
       thematicShare !== null &&
       thematicShare !== undefined &&
-      thematicShare < minThematicShare;
+      thematicShare < lowThematicRiskShare;
     const lowThematicPenalty = number(
       weights.thematic_low_penalty,
       0,
     );
-    if (lowThematic && lowThematicPenalty > 0) {
-      value -= lowThematicPenalty;
-      components.content_relevance -= lowThematicPenalty;
-      reasons.push(`низкая тематичность: -${lowThematicPenalty}`);
+    if (
+      thematicShare !== null &&
+      thematicShare !== undefined &&
+      thematicShare < minThematicShare &&
+      lowThematicPenalty > 0
+    ) {
+      const shareGap = minThematicShare <= 0
+        ? 0
+        : (minThematicShare - thematicShare) / minThematicShare;
+      const penalty = lowThematicPenalty * Math.max(0, shareGap);
+      value -= penalty;
+      components.content_relevance -= penalty;
+      reasons.push(
+        `тематичность ниже целевой: ${Math.round(thematicShare * 100)}% -${formatPoints(penalty)}`,
+      );
     }
     const legacyExcludePenalty = number(
       weights.exclude_term_penalty,
@@ -737,6 +983,56 @@ export function score(
       reasons.push(`низкая активность: -${lowActivityPenalty}`);
     }
 
+    const metadataConceptMatches = matchConcepts(text, concepts);
+    const contextualMatches = [
+      ...matchesContextualSignals(text, contextualSignals),
+      ...(item.activity?.contextual_signal_matches ?? []),
+    ];
+    const conceptMatches = [
+      ...metadataConceptMatches,
+      ...(item.activity?.concept_matches ?? []),
+    ];
+    const negativeMetadataMatches = matchNegativeClusters(
+      text,
+      negativeClusters,
+    );
+    const negativePostMatches = item.activity?.negative_cluster_matches ?? [];
+    const negativeMatches = [
+      ...negativeMetadataMatches,
+      ...negativePostMatches,
+    ];
+    let negativeReview = false;
+    let negativeReject = false;
+    for (const cluster of negativeClusters) {
+      const metadataMatched = negativeMetadataMatches.includes(cluster.id);
+      const share =
+        item.activity?.negative_cluster_post_shares[cluster.id] ?? 0;
+      if (
+        (metadataMatched && cluster.metadata_action === "reject") ||
+        (cluster.post_share_reject !== undefined &&
+          share >= cluster.post_share_reject)
+      ) {
+        negativeReject = true;
+      } else if (
+        (metadataMatched && cluster.metadata_action === "review") ||
+        (cluster.post_share_review !== undefined &&
+          share >= cluster.post_share_review)
+      ) {
+        negativeReview = true;
+      }
+      if (
+        metadataMatched &&
+        cluster.metadata_action === "penalty" &&
+        metadataExcludePenalty > 0
+      ) {
+        value -= metadataExcludePenalty;
+        components.exclusion_risk -= metadataExcludePenalty;
+        reasons.push(
+          `отрицательный класс ${cluster.id} в профиле: -${formatPoints(metadataExcludePenalty)}`,
+        );
+      }
+    }
+
     const compatibilityMatches = [
       ...matches(text, compatibilityTerms),
       ...(item.activity?.compatibility_term_matches ?? []),
@@ -752,6 +1048,16 @@ export function score(
     if (!fresh) riskFlags.push("inactive_or_no_posts");
     if (lowActivity) riskFlags.push("low_activity");
     if (lowThematic) riskFlags.push("low_thematic_post_share");
+    const inactiveReject =
+      rules.reject_inactive !== false &&
+      item.activity !== undefined &&
+      item.activity.posts_30d <=
+        number(rules.inactive_posts_30d_max, 0) &&
+      item.activity.posts_90d <=
+        number(rules.inactive_posts_90d_max, 1);
+    if (inactiveReject) riskFlags.push("inactive_activity_reject");
+    if (negativeReview) riskFlags.push("negative_cluster_review");
+    if (negativeReject) riskFlags.push("negative_cluster_reject");
     const rawScore = Number(value.toFixed(2));
     const finalScore = Math.max(0, Math.min(100, Math.round(rawScore)));
     const matchedClusters = clusters
@@ -787,7 +1093,82 @@ export function score(
       })
       .map((cluster) => String(cluster.name))
       .filter(Boolean);
+    const strongTermKeys = new Set(
+      Object.entries(termStrengthRuleRecord(rules.term_strengths))
+        .filter(([, strength]) => strength === "strong")
+        .map(([term]) => normalize(term)),
+    );
+    const strongConceptIds = new Set(
+      concepts
+        .filter((concept) => concept.strength === "strong")
+        .map((concept) => concept.id),
+    );
+    const strongTermMatched = [
+      ...matches(text, terms),
+      ...(item.activity?.term_matches ?? []),
+    ].some((term) => strongTermKeys.has(normalize(term)));
+    const strongConceptMatched = conceptMatches.some((id) =>
+      strongConceptIds.has(id)
+    );
+    const strongSignalsConfigured =
+      strongTermKeys.size > 0 || strongConceptIds.size > 0;
+    const requireStrongSignal =
+      rules.require_strong_signal_for_recommendation !== false &&
+      strongSignalsConfigured;
+    const missingStrongSignal =
+      requireStrongSignal && !strongTermMatched && !strongConceptMatched;
+    if (missingStrongSignal) riskFlags.push("strong_target_signal_missing");
+    const requireTargetCluster =
+      rules.require_target_cluster_for_recommendation === true ||
+      (rules.require_target_cluster_for_recommendation !== false &&
+        clusters.length > 0);
+    const missingTargetCluster =
+      requireTargetCluster && matchedClusters.length === 0;
+    if (missingTargetCluster) riskFlags.push("target_cluster_missing");
+    const configuredBlockers = new Set(
+      strings(rules.recommendation_blockers),
+    );
+    const defaultBlockingRisks = [
+      "low_thematic_post_share",
+      "compatibility_review_required",
+      "negative_cluster_review",
+      "inactive_activity_reject",
+      "negative_cluster_reject",
+      "strong_target_signal_missing",
+      "target_cluster_missing",
+    ];
+    const blockingRisks = [...new Set(riskFlags)].filter(
+      (flag) =>
+        configuredBlockers.has(flag) ||
+        defaultBlockingRisks.includes(flag),
+    );
+    const rejectForced =
+      inactiveReject || negativeReject || missingStrongSignal ||
+      missingTargetCluster;
     if (finalScore < pass) riskFlags.push("below_min_score");
+    const recommendation =
+      rejectForced
+        ? "rejected"
+        : finalScore >= pass && blockingRisks.length === 0
+          ? "recommended"
+          : finalScore >= reviewMin
+            ? "review"
+            : "rejected";
+    const statusReason =
+      inactiveReject
+        ? "inactive_activity"
+        : negativeReject
+          ? "negative_cluster_reject"
+          : missingStrongSignal
+            ? "strong_target_signal_missing"
+            : missingTargetCluster
+              ? "target_cluster_missing"
+              : blockingRisks[0] ??
+                (finalScore >= pass
+                  ? "score_recommended"
+                  : finalScore >= reviewMin
+                    ? "score_review"
+                    : "below_review_score");
 
     return {
       id: item.id,
@@ -801,12 +1182,12 @@ export function score(
         ]),
       ) as Score["components"],
       compatibility_matches: [...new Set(compatibilityMatches)],
-      recommendation:
-        finalScore >= pass && compatibilityMatches.length === 0
-          ? "recommended"
-          : finalScore >= reviewMin
-            ? "review"
-            : "rejected",
+      concept_matches: [...new Set(conceptMatches)],
+      contextual_signal_matches: [...new Set(contextualMatches)],
+      negative_cluster_matches: [...new Set(negativeMatches)],
+      blocking_risks: blockingRisks,
+      status_reason: statusReason,
+      recommendation,
       clusters: matchedClusters,
       reasons,
       risk_flags: [...new Set(riskFlags)],
@@ -826,6 +1207,70 @@ function strings(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+function conceptRules(value: unknown): ConceptRule[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is ConceptRule => {
+        const source = object(item);
+        return (
+          typeof source.id === "string" &&
+          (source.strength === "strong" ||
+            source.strength === "medium" ||
+            source.strength === "weak") &&
+          strings(source.phrases).length > 0 &&
+          typeof source.weight === "number" &&
+          Number.isFinite(source.weight) &&
+          source.weight > 0
+        );
+      })
+    : [];
+}
+
+function contextualSignalRules(value: unknown): ContextualSignal[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is ContextualSignal => {
+        const source = object(item);
+        return (
+          typeof source.term === "string" &&
+          strings(source.requires_any).length > 0 &&
+          typeof source.max_token_distance === "number" &&
+          Number.isInteger(source.max_token_distance) &&
+          source.max_token_distance >= 0 &&
+          typeof source.weight === "number" &&
+          Number.isFinite(source.weight) &&
+          source.weight > 0
+        );
+      })
+    : [];
+}
+
+function negativeClusterRules(value: unknown): NegativeCluster[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is NegativeCluster => {
+        const source = object(item);
+        return (
+          typeof source.id === "string" &&
+          strings(source.terms).length > 0 &&
+          (source.metadata_action === "penalty" ||
+            source.metadata_action === "review" ||
+            source.metadata_action === "reject")
+        );
+      })
+    : [];
+}
+
+function termStrengthRuleRecord(
+  value: unknown,
+): Record<string, TermStrength> {
+  return Object.fromEntries(
+    Object.entries(object(value)).filter(
+      (entry): entry is [string, TermStrength] =>
+        entry[1] === "strong" ||
+        entry[1] === "medium" ||
+        entry[1] === "weak",
+    ),
+  );
 }
 
 function number(value: unknown, fallback: number): number {
