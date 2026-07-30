@@ -4,6 +4,7 @@ import type {
   VkAdsCurrentUser,
   VkAdsSegment,
   VkAdsSegmentRelation,
+  VkAdsVkGroup,
 } from "../vk-ads/client.js";
 import type {
   ActionContract,
@@ -12,6 +13,93 @@ import type {
 } from "./types.js";
 
 const idSchema = z.number().int().positive();
+const vkGroupReferenceSchema = z
+  .union([
+    z.number().int().positive(),
+    z.string().trim().min(1).max(2048),
+  ])
+  .superRefine((reference, context) => {
+    try {
+      normalizeVkGroupReference(reference);
+    } catch (error) {
+      context.addIssue({
+        code: "custom",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Некорректное VK-сообщество.",
+      });
+    }
+  });
+export const vkGroupImportSchema = z.object({
+  communities: z.array(vkGroupReferenceSchema).min(1).max(300),
+});
+
+export type NormalizedVkGroupReference =
+  | { key: string; objectId: number }
+  | { key: string; shortname: string };
+
+export function normalizeVkGroupReference(
+  reference: z.infer<typeof vkGroupReferenceSchema>,
+): NormalizedVkGroupReference {
+  if (typeof reference === "number") {
+    return {
+      key: `id:${reference}`,
+      objectId: reference,
+    };
+  }
+
+  const value = reference.trim();
+
+  if (/^\d+$/u.test(value)) {
+    const objectId = Number(value);
+
+    if (Number.isSafeInteger(objectId) && objectId > 0) {
+      return { key: `id:${objectId}`, objectId };
+    }
+  }
+
+  let shortname = value.replace(/^@/u, "");
+
+  if (/^https?:\/\//iu.test(shortname)) {
+    const url = new URL(shortname);
+    const allowedHosts = new Set([
+      "vk.com",
+      "www.vk.com",
+      "m.vk.com",
+      "vk.ru",
+      "www.vk.ru",
+      "m.vk.ru",
+    ]);
+
+    if (!allowedHosts.has(url.hostname.toLowerCase())) {
+      throw new Error("Ссылка должна вести на vk.com или vk.ru.");
+    }
+
+    const path = url.pathname
+      .split("/")
+      .filter(Boolean)
+      .map((part) => decodeURIComponent(part));
+
+    if (path.length !== 1 || path[0] === undefined) {
+      throw new Error("Укажите ссылку на само VK-сообщество.");
+    }
+
+    shortname = path[0];
+  }
+
+  if (!/^[a-zA-Z0-9_.-]+$/u.test(shortname)) {
+    throw new Error(
+      "Укажите числовой ID, короткое имя или ссылку VK-сообщества.",
+    );
+  }
+
+  return {
+    key: `shortname:${shortname.toLowerCase()}`,
+    shortname,
+  };
+}
+
 const relationObjectTypeSchema = z.enum([
   "age",
   "interest",
@@ -25,16 +113,66 @@ const relationObjectTypeSchema = z.enum([
   "remarketing_group",
   "remarketing_inapp_event",
   "remarketing_users_list",
+  "remarketing_vk_group",
 ]);
-const relationInputSchema = z.object({
-  objectType: relationObjectTypeSchema,
-  objectId: z.number().int().optional(),
-  params: z.record(z.string(), z.unknown()).optional(),
-});
+export const segmentRelationInputSchema = z
+  .object({
+    objectType: relationObjectTypeSchema,
+    objectId: z.number().int().optional(),
+    params: z.record(z.string(), z.unknown()).optional(),
+  })
+  .superRefine((relation, context) => {
+    if (
+      relation.objectType !== "remarketing_vk_group" &&
+      relation.objectType !== "remarketing_group"
+    ) {
+      return;
+    }
+
+    const sourceId = relation.params?.source_id;
+    const relationType = relation.params?.type;
+
+    if (
+      typeof sourceId !== "number" ||
+      !Number.isInteger(sourceId) ||
+      sourceId <= 0
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["params", "source_id"],
+        message:
+          "Укажите в params.source_id публичный objectId зарегистрированного сообщества.",
+      });
+    }
+
+    if (
+      relationType !== "positive" &&
+      relationType !== "negative"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["params", "type"],
+        message:
+          'Укажите params.type со значением "positive" или "negative".',
+      });
+    }
+
+    if (
+      relation.objectType === "remarketing_group" &&
+      relation.params?.source_type !== "group"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["params", "source_type"],
+        message:
+          'Для группы Одноклассников укажите params.source_type="group".',
+      });
+    }
+  });
 const segmentCreateSchema = z.object({
   name: z.string().min(1),
   passCondition: z.number().int().positive(),
-  relations: z.array(relationInputSchema).min(1),
+  relations: z.array(segmentRelationInputSchema).min(1),
 });
 const segmentUpdateSchema = z
   .object({
@@ -50,7 +188,7 @@ const segmentUpdateSchema = z
 const segmentDeleteSchema = z.object({ id: idSchema });
 const relationCreateSchema = z.object({
   segmentId: idSchema,
-  items: z.array(relationInputSchema).min(1),
+  items: z.array(segmentRelationInputSchema).min(1),
 });
 const relationUpdateSchema = z.object({
   segmentId: idSchema,
@@ -67,6 +205,7 @@ const relationDeleteSchema = z.object({
 type SegmentCreateInput = z.infer<
   typeof segmentCreateSchema
 >;
+type VkGroupImportInput = z.infer<typeof vkGroupImportSchema>;
 type SegmentUpdateInput = z.infer<
   typeof segmentUpdateSchema
 >;
@@ -89,12 +228,14 @@ export interface SegmentPreflightClient {
   listSegmentRelations(
     segmentId: number,
   ): Promise<VkAdsSegmentRelation[]>;
+  listVkGroups?(): Promise<VkAdsVkGroup[]>;
 }
 
 interface SegmentContext {
   user: VkAdsCurrentUser;
   segment?: VkAdsSegment;
   relations?: VkAdsSegmentRelation[];
+  vkGroups?: VkAdsVkGroup[];
 }
 
 function issue(
@@ -132,7 +273,7 @@ function result(
 }
 
 function providerRelations(
-  relations: Array<z.infer<typeof relationInputSchema>>,
+  relations: Array<z.infer<typeof segmentRelationInputSchema>>,
 ) {
   return relations.map((relation) => ({
     object_type: relation.objectType,
@@ -172,6 +313,37 @@ async function loadSegmentContext(
 export function createSegmentActionContracts(
   client: SegmentPreflightClient,
 ): Array<ActionContract<unknown, SegmentContext>> {
+  const vkGroupImport: ActionContract<
+    VkGroupImportInput,
+    SegmentContext
+  > = {
+    action: "vk_group.import",
+    staticSchema: vkGroupImportSchema,
+    target: () => ({ resource: "vk_group" }),
+    async loadContext(_input, reads) {
+      const user = await reads.loadOnce("current-user", () =>
+        client.getCurrentUser(),
+      );
+      return { user };
+    },
+    async validate() {
+      return result(
+        "vk_group.import",
+        "vk_group",
+        undefined,
+        [],
+      );
+    },
+    buildRequest: ({ communities }) => ({
+      items: communities.map((community) => {
+        const normalized = normalizeVkGroupReference(community);
+        return "objectId" in normalized
+          ? { object_id: normalized.objectId }
+          : { shortname: normalized.shortname };
+      }),
+    }),
+  };
+
   const segmentCreate: ActionContract<
     SegmentCreateInput,
     SegmentContext
@@ -179,17 +351,27 @@ export function createSegmentActionContracts(
     action: "segment.create",
     staticSchema: segmentCreateSchema,
     target: () => ({ resource: "segment" }),
-    async loadContext(_input, reads) {
+    async loadContext(input, reads) {
       const user = await reads.loadOnce("current-user", () =>
         client.getCurrentUser(),
       );
-      return { user };
+      const needsVkGroups = input.relations.some(
+        (relation) =>
+          relation.objectType === "remarketing_vk_group",
+      );
+      const vkGroups =
+        needsVkGroups && client.listVkGroups !== undefined
+          ? await reads.loadOnce("vk-groups", () =>
+              client.listVkGroups!(),
+            )
+          : undefined;
+      return {
+        user,
+        ...(vkGroups === undefined ? {} : { vkGroups }),
+      };
     },
-    async validate(input) {
-      return result(
-        "segment.create",
-        "segment",
-        undefined,
+    async validate(input, context) {
+      const incompatible: RequirementIssue[] =
         input.passCondition <= input.relations.length
           ? []
           : [
@@ -199,7 +381,39 @@ export function createSegmentActionContracts(
                 "passCondition не может превышать число связей.",
                 "provider_contract",
               ),
-            ],
+            ];
+
+      input.relations.forEach((relation, index) => {
+        if (
+          relation.objectType !== "remarketing_vk_group" ||
+          context.vkGroups === undefined
+        ) {
+          return;
+        }
+
+        const sourceId = relation.params?.source_id;
+
+        if (
+          typeof sourceId === "number" &&
+          !context.vkGroups.some(
+            (group) => group.objectId === sourceId,
+          )
+        ) {
+          incompatible.push(
+            issue(
+              "vk_group_not_registered",
+              `relations.${index}.params.source_id`,
+              "Сначала добавьте VK-сообщество через vk_ads_vk_groups_import.",
+            ),
+          );
+        }
+      });
+
+      return result(
+        "segment.create",
+        "segment",
+        undefined,
+        incompatible,
       );
     },
     buildRequest: (input) => ({
@@ -393,6 +607,7 @@ export function createSegmentActionContracts(
   };
 
   return [
+    vkGroupImport,
     segmentCreate,
     segmentUpdate,
     segmentDelete,
