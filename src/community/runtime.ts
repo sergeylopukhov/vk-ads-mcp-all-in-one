@@ -95,9 +95,9 @@ export async function createDefaultVkCommunityRuntime(): Promise<VkCommunityRunt
 
 function parseTtl(value: string | undefined): number {
   const days = value === undefined || value === "" ? 30 : Number(value);
-  if (!Number.isInteger(days) || days < 1 || days > 365) {
+  if (!Number.isInteger(days) || days < 0 || days > 365) {
     throw new Error(
-      "VK_COMMUNITY_RESEARCH_TTL_DAYS должен быть целым числом от 1 до 365.",
+      "VK_COMMUNITY_RESEARCH_TTL_DAYS должен быть целым числом от 0 до 365.",
     );
   }
   return days * 24 * 60 * 60 * 1_000;

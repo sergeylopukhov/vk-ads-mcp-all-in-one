@@ -14,6 +14,8 @@ interface StoredRuns {
   items: CommunityResearchRun[];
 }
 
+const NEVER_EXPIRES_AT = "9999-12-31T23:59:59.999Z";
+
 /** Хранит только производные публичные данные, без токенов и текстов постов. */
 export class CommunityResearchStore {
   constructor(
@@ -25,24 +27,29 @@ export class CommunityResearchStore {
 
   async save(run: CommunityResearchRun): Promise<void> {
     const current = await this.read();
-    const items = [
+    let items = [
       ...current.items.filter((item) => item.run_id !== run.run_id),
       run,
-    ]
-      .filter((item) => Date.parse(item.expires_at) > this.now())
-      .sort(
-        (left, right) =>
-          Date.parse(right.created_at) - Date.parse(left.created_at),
-      )
-      .slice(0, this.maxRuns);
+    ].sort(
+      (left, right) =>
+        Date.parse(right.created_at) - Date.parse(left.created_at),
+    );
+    if (this.ttlMs > 0) {
+      items = items
+        .filter((item) => Date.parse(item.expires_at) > this.now())
+        .slice(0, this.maxRuns);
+    }
     await this.write({ version: 2, items });
   }
 
   async get(runId: string): Promise<CommunityResearchRun> {
     const current = await this.read();
-    const active = current.items.filter(
-      (item) => Date.parse(item.expires_at) > this.now(),
-    );
+    const active =
+      this.ttlMs === 0
+        ? current.items
+        : current.items.filter(
+            (item) => Date.parse(item.expires_at) > this.now(),
+          );
     if (active.length !== current.items.length) {
       await this.write({ version: 2, items: active });
     }
@@ -56,6 +63,7 @@ export class CommunityResearchStore {
   }
 
   expiresAt(): string {
+    if (this.ttlMs === 0) return NEVER_EXPIRES_AT;
     return new Date(this.now() + this.ttlMs).toISOString();
   }
 
@@ -65,6 +73,7 @@ export class CommunityResearchStore {
   ): Promise<Map<number, Activity>> {
     const wanted = new Set(ids);
     const result = new Map<number, Activity>();
+    if (this.ttlMs === 0) return result;
     const current = await this.read();
     for (const run of current.items) {
       if (Date.parse(run.expires_at) <= this.now()) continue;
