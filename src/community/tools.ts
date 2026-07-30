@@ -11,10 +11,19 @@ import {
   reanalyzeDerivedActivity,
   score,
   type Candidate,
+  type ConceptRule,
+  type ContextualSignal,
   type ExcludeMatchMode,
+  type NegativeCluster,
   type Score,
   type TermStrength,
 } from "./analysis.js";
+import {
+  DEFAULT_ANALYSIS_POLICY,
+  preselectCandidates,
+  type AnalysisPolicy,
+  type PreselectionResult,
+} from "./preselection.js";
 import {
   CommunityResearchStore,
   type CommunityResearchRun,
@@ -65,6 +74,7 @@ type ResearchInput = {
   min_members?: number | undefined;
   max_members?: number | undefined;
   posts_limit: number;
+  analysis_policy: AnalysisPolicy;
   scoring_rules?: Record<string, unknown> | undefined;
   clusters: Array<Record<string, unknown>>;
 };
@@ -109,6 +119,25 @@ const activitySchema = z.object({
   post_exclude_term_sets: z.array(z.array(z.string())).default([]),
   post_intent_term_sets: z.array(z.array(z.string())).default([]),
   post_compatibility_term_sets: z.array(z.array(z.string())).default([]),
+  concept_matches: z.array(z.string()).default([]),
+  concept_match_counts: z.record(
+    z.string(),
+    z.number().int().nonnegative(),
+  ).default({}),
+  contextual_signal_matches: z.array(z.string()).default([]),
+  contextual_signal_match_counts: z.record(
+    z.string(),
+    z.number().int().nonnegative(),
+  ).default({}),
+  negative_cluster_matches: z.array(z.string()).default([]),
+  negative_cluster_post_shares: z.record(
+    z.string(),
+    z.number().min(0).max(1),
+  ).default({}),
+  post_concept_sets: z.array(z.array(z.string())).default([]),
+  post_contextual_signal_sets: z.array(z.array(z.string())).default([]),
+  post_negative_cluster_sets: z.array(z.array(z.string())).default([]),
+  analysis_fingerprint: z.string().nullable().default(null),
   risk_flags: z.array(z.string()),
 });
 const candidateSchema = z.object({
@@ -121,6 +150,28 @@ const candidateSchema = z.object({
   verified: z.boolean(),
   retrieved_at: z.string(),
   risk_flags: z.array(z.string()),
+  discovery: z
+    .object({
+      queries: z.array(z.string()),
+      sorts: z.array(z.enum(["relevance", "members"])),
+      occurrences: z.number().int().positive(),
+      best_relevance_rank: z.number().int().positive().nullable(),
+      best_members_rank: z.number().int().positive().nullable(),
+    })
+    .optional(),
+  preselection: z
+    .object({
+      metadata_score: z.number(),
+      score_ceiling: z.number().min(0).max(100),
+      matched_strong_signals: z.array(z.string()),
+      matched_medium_signals: z.array(z.string()),
+      matched_weak_signals: z.array(z.string()),
+      matched_target_clusters: z.array(z.string()),
+      matched_negative_clusters: z.array(z.string()),
+      selection_reasons: z.array(z.string()),
+    })
+    .optional(),
+  analysis_source: z.enum(["vk", "cache"]).optional(),
   activity: activitySchema.optional(),
 });
 const DEFAULT_SCORING_WEIGHTS = {
@@ -150,11 +201,65 @@ const scoreSchema = z.object({
     exclusion_risk: z.number(),
   }),
   compatibility_matches: z.array(z.string()),
+  concept_matches: z.array(z.string()).default([]),
+  contextual_signal_matches: z.array(z.string()).default([]),
+  negative_cluster_matches: z.array(z.string()).default([]),
+  blocking_risks: z.array(z.string()).default([]),
+  status_reason: z.string().default("legacy_score"),
   recommendation: z.enum(["recommended", "review", "rejected"]),
   clusters: z.array(z.string()),
   reasons: z.array(z.string()),
   risk_flags: z.array(z.string()),
 });
+const conceptRuleSchema = z
+  .object({
+    id: z.string().trim().min(1).max(120),
+    strength: z.enum(["strong", "medium", "weak"]),
+    phrases: z
+      .array(z.string().trim().min(1).max(120))
+      .min(1)
+      .max(30),
+    weight: z.number().finite().positive().max(100),
+  })
+  .strict();
+const contextualSignalSchema = z
+  .object({
+    term: z.string().trim().min(1).max(120),
+    requires_any: z
+      .array(z.string().trim().min(1).max(120))
+      .min(1)
+      .max(30),
+    max_token_distance: z.number().int().min(0).max(100).default(12),
+    weight: z.number().finite().positive().max(100).default(1),
+  })
+  .strict();
+const negativeClusterSchema = z
+  .object({
+    id: z.string().trim().min(1).max(120),
+    terms: z
+      .array(z.string().trim().min(1).max(120))
+      .min(1)
+      .max(50),
+    contextual_terms: z.array(contextualSignalSchema).max(30).optional(),
+    metadata_action: z.enum(["penalty", "review", "reject"]).default("penalty"),
+    post_share_review: z.number().min(0).max(1).optional(),
+    post_share_reject: z.number().min(0).max(1).optional(),
+  })
+  .strict()
+  .superRefine((cluster, context) => {
+    if (
+      cluster.post_share_review !== undefined &&
+      cluster.post_share_reject !== undefined &&
+      cluster.post_share_review > cluster.post_share_reject
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["post_share_review"],
+        message:
+          "post_share_review не может быть больше post_share_reject.",
+      });
+    }
+  });
 const scoringRulesSchema = z
   .object({
     terms: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
@@ -172,6 +277,19 @@ const scoringRulesSchema = z
     compatibility_terms: z
       .array(z.string().trim().min(1).max(120))
       .max(50)
+      .optional(),
+    concepts: z.array(conceptRuleSchema).max(50).optional(),
+    contextual_signals: z
+      .array(contextualSignalSchema)
+      .max(50)
+      .optional(),
+    negative_clusters: z
+      .array(negativeClusterSchema)
+      .max(50)
+      .optional(),
+    recommendation_blockers: z
+      .array(z.string().trim().min(1).max(120))
+      .max(30)
       .optional(),
     exclude_terms: z
       .array(z.string().trim().min(1).max(120))
@@ -225,6 +343,16 @@ const scoringRulesSchema = z
     activity_fresh_days: z.number().int().positive().max(3650).optional(),
     min_posts_per_week: z.number().nonnegative().max(10_000).optional(),
     min_thematic_post_share: z.number().min(0).max(1).optional(),
+    low_thematic_post_share_threshold: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional(),
+    reject_inactive: z.boolean().optional(),
+    inactive_posts_30d_max: z.number().int().nonnegative().max(10_000).optional(),
+    inactive_posts_90d_max: z.number().int().nonnegative().max(10_000).optional(),
+    require_strong_signal_for_recommendation: z.boolean().optional(),
+    require_target_cluster_for_recommendation: z.boolean().optional(),
     members_range: z
       .object({
         min: z.number().int().nonnegative().optional(),
@@ -237,6 +365,38 @@ const scoringRulesSchema = z
   })
   .strict()
   .superRefine((rules, context) => {
+    if (
+      rules.low_thematic_post_share_threshold !== undefined &&
+      rules.min_thematic_post_share !== undefined &&
+      rules.low_thematic_post_share_threshold >
+        rules.min_thematic_post_share
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["low_thematic_post_share_threshold"],
+        message:
+          "Порог блокирующего риска не может быть выше целевой тематической доли.",
+      });
+    }
+    const uniqueIds = (
+      items: Array<{ id: string }> | undefined,
+      path: string,
+    ): void => {
+      const seen = new Set<string>();
+      for (const [index, item] of (items ?? []).entries()) {
+        const key = item.id.toLocaleLowerCase("ru-RU");
+        if (seen.has(key)) {
+          context.addIssue({
+            code: "custom",
+            path: [path, index, "id"],
+            message: "Идентификаторы должны быть уникальными.",
+          });
+        }
+        seen.add(key);
+      }
+    };
+    uniqueIds(rules.concepts, "concepts");
+    uniqueIds(rules.negative_clusters, "negative_clusters");
     if (
       rules.members_range?.min !== undefined &&
       rules.members_range.max !== undefined &&
@@ -308,8 +468,7 @@ const scoringRulesSchema = z
       (rules.weights?.activity_fresh ??
         DEFAULT_SCORING_WEIGHTS.activity_fresh) +
       (rules.weights?.thematic_post_share ??
-        DEFAULT_SCORING_WEIGHTS.thematic_post_share) +
-      (rules.weights?.members_range ?? 0);
+        DEFAULT_SCORING_WEIGHTS.thematic_post_share);
     const minimumScore =
       rules.min_score ?? DEFAULT_RECOMMENDATION_SCORE;
     if (maximumPositiveScore < minimumScore) {
@@ -352,6 +511,43 @@ const clusterSchema = z
       .default([]),
   })
   .strict();
+const analysisPolicySchema = z
+  .object({
+    mode: z.enum(["efficient", "exhaustive"]).default("efficient"),
+    initial_candidates: z.number().int().min(25).max(10_000).default(100),
+    max_candidates: z.number().int().min(25).max(10_000).default(300),
+    batch_size: z.number().int().min(1).max(100).default(25),
+    primary_share: z.number().min(0).max(1).default(0.65),
+    small_community_share: z.number().min(0).max(1).default(0.15),
+    query_share: z.number().min(0).max(1).default(0.1),
+    exploration_share: z.number().min(0).max(0.5).default(0.1),
+    target_recommended: z.number().int().nonnegative().max(10_000).default(20),
+    target_review: z.number().int().nonnegative().max(10_000).default(30),
+    stable_batches: z.number().int().min(1).max(20).default(3),
+  })
+  .strict()
+  .superRefine((policy, context) => {
+    if (policy.initial_candidates > policy.max_candidates) {
+      context.addIssue({
+        code: "custom",
+        path: ["initial_candidates"],
+        message:
+          "initial_candidates не может быть больше max_candidates.",
+      });
+    }
+    const totalShare =
+      policy.primary_share +
+      policy.small_community_share +
+      policy.query_share +
+      policy.exploration_share;
+    if (totalShare > 1.000_001) {
+      context.addIssue({
+        code: "custom",
+        path: ["primary_share"],
+        message: "Сумма долей shortlist не может быть больше 1.",
+      });
+    }
+  });
 export const researchInputSchema = {
   keywords: z
     .array(z.string().trim().min(1).max(120))
@@ -393,6 +589,7 @@ export const researchInputSchema = {
   min_members: z.number().int().nonnegative().optional(),
   max_members: z.number().int().nonnegative().optional(),
   posts_limit: z.number().int().min(1).max(100).default(100),
+  analysis_policy: analysisPolicySchema.default(DEFAULT_ANALYSIS_POLICY),
   scoring_rules: scoringRulesSchema.optional(),
   clusters: z.array(clusterSchema).max(50).default([]),
 };
@@ -403,7 +600,11 @@ const runOutputSchema = {
   run_id: z.string().uuid(),
   created_at: z.string(),
   expires_at: z.string(),
-  scoring_version: z.enum(["community-research-v2", "community-research-v3"]),
+  scoring_version: z.enum([
+    "community-research-v2",
+    "community-research-v3",
+    "community-research-v4",
+  ]),
   status: z.enum(["queued", "running", "completed", "failed"]),
   request: z.record(z.string(), z.unknown()),
   progress: z.object({
@@ -413,10 +614,26 @@ const runOutputSchema = {
     discovered: z.number().int().nonnegative(),
     selected: z.number().int().nonnegative(),
     processed: z.number().int().nonnegative(),
+    analyzed: z.number().int().nonnegative().default(0),
     remaining: z.number().int().nonnegative(),
     batch_size: z.number().int().positive(),
     batches_total: z.number().int().nonnegative(),
     batches_completed: z.number().int().nonnegative(),
+    metadata_scored: z.number().int().nonnegative().default(0),
+    score_ceiling_rejected: z.number().int().nonnegative().default(0),
+    shortlisted: z.number().int().nonnegative().default(0),
+    cached: z.number().int().nonnegative().default(0),
+    skipped: z.number().int().nonnegative().default(0),
+    remaining_shortlist: z.number().int().nonnegative().default(0),
+    remaining_discovery: z.number().int().nonnegative().default(0),
+    analysis_mode: z.enum(["efficient", "exhaustive"]).default("efficient"),
+    exhaustive: z.boolean().default(false),
+    stop_reason: z.string().nullable().default(null),
+    estimated_wall_requests_saved: z
+      .number()
+      .int()
+      .nonnegative()
+      .default(0),
   }),
   summary: z.object({
     source_matches: z.number().int().nonnegative(),
@@ -446,10 +663,20 @@ const runOutputSchema = {
     search_pages: z.number().int().nonnegative(),
     incomplete: z.boolean(),
     incomplete_reasons: z.array(z.string()),
+    metadata_scored: z.number().int().nonnegative().default(0),
+    score_ceiling_rejected: z.number().int().nonnegative().default(0),
+    shortlisted: z.number().int().nonnegative().default(0),
+    cached: z.number().int().nonnegative().default(0),
+    skipped: z.number().int().nonnegative().default(0),
+    estimated_wall_requests_saved: z.number().int().nonnegative().default(0),
+    analysis_mode: z.enum(["efficient", "exhaustive"]).default("efficient"),
+    exhaustive: z.boolean().default(false),
+    stop_reason: z.string().nullable().default(null),
   }),
   passed: z.array(researchItemSchema),
   review: z.array(researchItemSchema),
   rejected: z.array(researchItemSchema),
+  skipped_candidates: z.array(candidateSchema).default([]),
   error: z.string().optional(),
   rescore_of: z.string().uuid().optional(),
 };
@@ -459,7 +686,6 @@ export function registerVkCommunityTools(
   dependencies: VkCommunityToolDependencies,
 ): void {
   const { client, store } = dependencies;
-  const batchSize = 25;
   const running = new Map<string, Promise<void>>();
   const subscribers = new Map<string, Set<string | undefined>>();
 
@@ -551,11 +777,51 @@ export function registerVkCommunityTools(
           if (offset === 0) providerReportedMatches += page.count;
           for (const item of page.items) sourceIds.add(item.id);
           queryCandidates += page.items.length;
+          const providerRanks = new Map(
+            page.items.map((item, index) => [
+              item.id,
+              offset + index + 1,
+            ]),
+          );
           const pageCandidates = (
             await client.getByIds(page.items.map((item) => item.id))
           ).map((item) => candidate(item));
           for (const item of pageCandidates) {
             enrichedIds.add(item.id);
+            const existing = found.get(item.id);
+            const rank = providerRanks.get(item.id) ?? offset + 1;
+            const previousEvidence = existing?.discovery;
+            item.discovery = {
+              queries: [
+                ...new Set([
+                  ...(previousEvidence?.queries ?? []),
+                  keyword,
+                ]),
+              ].sort((left, right) => left.localeCompare(right, "ru")),
+              sorts: [
+                ...new Set([
+                  ...(previousEvidence?.sorts ?? []),
+                  sort,
+                ]),
+              ].sort(),
+              occurrences: (previousEvidence?.occurrences ?? 0) + 1,
+              best_relevance_rank:
+                sort === "relevance"
+                  ? Math.min(
+                      previousEvidence?.best_relevance_rank ??
+                        Number.MAX_SAFE_INTEGER,
+                      rank,
+                    )
+                  : previousEvidence?.best_relevance_rank ?? null,
+              best_members_rank:
+                sort === "members"
+                  ? Math.min(
+                      previousEvidence?.best_members_rank ??
+                        Number.MAX_SAFE_INTEGER,
+                      rank,
+                    )
+                  : previousEvidence?.best_members_rank ?? null,
+            };
             const structuralReasons = [
               ...(input.community_types?.length &&
               (item.type === null ||
@@ -608,7 +874,16 @@ export function registerVkCommunityTools(
               metadataFlaggedIds.add(item.id);
               item.risk_flags.push("exclude_term_in_metadata");
             }
-            found.set(item.id, item);
+            found.set(item.id, {
+              ...(existing ?? item),
+              ...item,
+              risk_flags: [
+                ...new Set([
+                  ...(existing?.risk_flags ?? []),
+                  ...item.risk_flags,
+                ]),
+              ],
+            });
           }
             const next = offset + page.items.length;
             const reachedBudget =
@@ -647,13 +922,23 @@ export function registerVkCommunityTools(
       }
     }
     const items = [...found.values()];
-    if ((input.search_sort ?? "both") !== "relevance") {
-      items.sort(
-        (left, right) =>
-          (right.members_count ?? -1) - (left.members_count ?? -1) ||
-          left.id - right.id,
+    items.sort((left, right) => {
+      if ((input.search_sort ?? "both") === "members") {
+        return (
+          (left.discovery?.best_members_rank ?? Number.MAX_SAFE_INTEGER) -
+            (right.discovery?.best_members_rank ?? Number.MAX_SAFE_INTEGER) ||
+          left.id - right.id
+        );
+      }
+      return (
+        (left.discovery?.best_relevance_rank ?? Number.MAX_SAFE_INTEGER) -
+          (right.discovery?.best_relevance_rank ?? Number.MAX_SAFE_INTEGER) ||
+        (right.discovery?.occurrences ?? 0) -
+          (left.discovery?.occurrences ?? 0) ||
+        (right.members_count ?? 0) - (left.members_count ?? 0) ||
+        left.id - right.id
       );
-    }
+    });
     return {
       items,
       searchPages,
@@ -691,12 +976,31 @@ export function registerVkCommunityTools(
   ): Promise<Candidate[]> => {
     const terms = strings(rules.terms);
     const excludes = strings(rules.exclude_terms);
+    const fingerprint = analysisFingerprint(
+      rules,
+      excludeMatchMode,
+      postsLimit,
+    );
+    const cachedActivities =
+      typeof store.findCachedActivities === "function"
+        ? await store.findCachedActivities(
+            items.map((item) => item.id),
+            fingerprint,
+          )
+        : new Map();
     for (const item of items) {
       if (
         item.risk_flags.some(
           (flag) => flag !== "exclude_term_in_metadata",
         )
       ) {
+        continue;
+      }
+      const cached = cachedActivities.get(item.id);
+      if (cached !== undefined) {
+        item.activity = cached;
+        item.analysis_source = "cache";
+        item.risk_flags.push(...cached.risk_flags);
         continue;
       }
       try {
@@ -713,8 +1017,17 @@ export function registerVkCommunityTools(
                 : 2,
             intentTerms: strings(rules.intent_terms),
             compatibilityTerms: strings(rules.compatibility_terms),
+            concepts: conceptRules(rules.concepts),
+            contextualSignals: contextualSignals(
+              rules.contextual_signals,
+            ),
+            negativeClusters: negativeClusters(
+              rules.negative_clusters,
+            ),
+            analysisFingerprint: fingerprint,
           },
         );
+        item.analysis_source = "vk";
         item.risk_flags.push(...item.activity.risk_flags);
       } catch {
         item.risk_flags.push("posts_unavailable");
@@ -742,9 +1055,18 @@ export function registerVkCommunityTools(
       min_weak_matches: 2,
       intent_terms: [],
       compatibility_terms: [],
+      concepts: [],
+      contextual_signals: [],
+      negative_clusters: [],
+      recommendation_blockers: [],
       activity_fresh_days: 30,
       min_posts_per_week: 1,
       min_thematic_post_share: 0.5,
+      low_thematic_post_share_threshold: 0.3,
+      reject_inactive: true,
+      inactive_posts_30d_max: 0,
+      inactive_posts_90d_max: 1,
+      require_strong_signal_for_recommendation: true,
       min_score: DEFAULT_RECOMMENDATION_SCORE,
       review_min_score: DEFAULT_REVIEW_SCORE,
     };
@@ -813,6 +1135,7 @@ export function registerVkCommunityTools(
     selected: Candidate[],
     rules: Record<string, unknown>,
     status: "queued" | "completed",
+    preselection?: PreselectionResult,
   ): CommunityResearchRun => {
     const createdAt = new Date().toISOString();
     const incompleteReasons = [
@@ -823,7 +1146,7 @@ export function registerVkCommunityTools(
       run_id: randomUUID(),
       created_at: createdAt,
       expires_at: store.expiresAt(),
-      scoring_version: "community-research-v3",
+      scoring_version: "community-research-v4",
       status,
       request: buildRequest(input, rules),
       progress: {
@@ -831,11 +1154,37 @@ export function registerVkCommunityTools(
         discovered: discovery.items.length,
         selected: selected.length,
         processed: status === "completed" ? selected.length : 0,
+        analyzed: status === "completed" ? selected.length : 0,
         remaining: status === "completed" ? 0 : selected.length,
-        batch_size: batchSize,
-        batches_total: Math.ceil(selected.length / batchSize),
+        batch_size: input.analysis_policy.batch_size,
+        batches_total: Math.ceil(
+          selected.length / input.analysis_policy.batch_size,
+        ),
         batches_completed:
-          status === "completed" ? Math.ceil(selected.length / batchSize) : 0,
+          status === "completed"
+            ? Math.ceil(
+                selected.length / input.analysis_policy.batch_size,
+              )
+            : 0,
+        metadata_scored: preselection?.metadataScored ?? 0,
+        score_ceiling_rejected:
+          preselection?.scoreCeilingRejected ?? 0,
+        shortlisted: selected.length,
+        cached: 0,
+        skipped: preselection?.skipped.length ?? 0,
+        remaining_shortlist: status === "completed" ? 0 : selected.length,
+        remaining_discovery:
+          Math.max(0, discovery.items.length - selected.length),
+        analysis_mode: input.analysis_policy.mode,
+        exhaustive:
+          input.analysis_policy.mode === "exhaustive" &&
+          selected.length + (preselection?.skipped.length ?? 0) ===
+            discovery.items.length,
+        stop_reason: status === "completed"
+          ? "all_candidates_analyzed"
+          : null,
+        estimated_wall_requests_saved:
+          preselection?.skipped.length ?? 0,
       },
       summary: {
         source_matches: discovery.sourceMatches,
@@ -853,7 +1202,7 @@ export function registerVkCommunityTools(
         matched_filters: discovery.items.length,
         selected: selected.length,
         analyzed: 0,
-        analysis_batch_size: batchSize,
+        analysis_batch_size: input.analysis_policy.batch_size,
         analysis_batches: 0,
         posts_unavailable: 0,
         passed: 0,
@@ -862,11 +1211,28 @@ export function registerVkCommunityTools(
         search_pages: discovery.searchPages,
         incomplete: incompleteReasons.length > 0,
         incomplete_reasons: incompleteReasons,
+        metadata_scored: preselection?.metadataScored ?? 0,
+        score_ceiling_rejected:
+          preselection?.scoreCeilingRejected ?? 0,
+        shortlisted: selected.length,
+        cached: 0,
+        skipped: preselection?.skipped.length ?? 0,
+        estimated_wall_requests_saved:
+          preselection?.skipped.length ?? 0,
+        analysis_mode: input.analysis_policy.mode,
+        exhaustive:
+          input.analysis_policy.mode === "exhaustive" &&
+          selected.length + (preselection?.skipped.length ?? 0) ===
+            discovery.items.length,
+        stop_reason: status === "completed"
+          ? "all_candidates_analyzed"
+          : null,
       },
       ...(status === "queued" ? { pending: selected } : {}),
       passed: [],
       review: [],
       rejected: [],
+      skipped_candidates: preselection?.skipped ?? [],
     };
   };
 
@@ -878,6 +1244,7 @@ export function registerVkCommunityTools(
     rules: Record<string, unknown>;
     terms: string[];
     excludes: string[];
+    preselection: PreselectionResult;
   }> => {
     const rules = resolveRules(
       input.scoring_rules,
@@ -888,33 +1255,19 @@ export function registerVkCommunityTools(
     const terms = strings(rules.terms);
     const excludes = strings(rules.exclude_terms);
     const discovery = await discover(input);
-    const ordered = discovery.items.sort((left, right) => {
-      if ((input.search_sort ?? "both") !== "relevance") {
-        return (
-          (right.members_count ?? -1) - (left.members_count ?? -1) ||
-          left.id - right.id
-        );
-      }
-      const leftMatches = matches(
-        `${left.name}\n${left.description}`,
-        terms,
-      ).length;
-      const rightMatches = matches(
-        `${right.name}\n${right.description}`,
-        terms,
-      ).length;
-      return (
-        rightMatches - leftMatches ||
-        (right.members_count ?? 0) - (left.members_count ?? 0) ||
-        left.id - right.id
-      );
-    });
+    const preselection = preselectCandidates(
+      discovery.items,
+      rules,
+      input.clusters,
+      input.analysis_policy,
+    );
     return {
       discovery,
-      selected: ordered,
+      selected: preselection.selected,
       rules,
       terms,
       excludes,
+      preselection,
     };
   };
 
@@ -954,7 +1307,11 @@ export function registerVkCommunityTools(
     rawInput: ResearchInput,
     persist: boolean,
   ): Promise<Record<string, unknown>> => {
-    const input = rawInput;
+    const input: ResearchInput = {
+      ...rawInput,
+      analysis_policy:
+        rawInput.analysis_policy ?? DEFAULT_ANALYSIS_POLICY,
+    };
     const prepared = await prepare(input);
     const analyzed = await analyzeItems(
       prepared.selected,
@@ -969,16 +1326,52 @@ export function registerVkCommunityTools(
       prepared.selected,
       prepared.rules,
       "completed",
+      prepared.preselection,
     );
     const progress = run.progress as Record<string, unknown>;
     const summary = run.summary as Record<string, unknown>;
     summary.analyzed = analyzed.filter(
       (item) => item.activity !== undefined,
     ).length;
-    summary.analysis_batches = Math.ceil(analyzed.length / batchSize);
+    const cached = analyzed.filter(
+      (item) => item.analysis_source === "cache",
+    ).length;
+    summary.cached = cached;
+    summary.estimated_wall_requests_saved =
+      Number(summary.estimated_wall_requests_saved ?? 0) + cached;
+    progress.cached = cached;
+    progress.analyzed = analyzed.length;
+    progress.estimated_wall_requests_saved =
+      summary.estimated_wall_requests_saved;
+    summary.analysis_batches = Math.ceil(
+      analyzed.length / input.analysis_policy.batch_size,
+    );
     progress.processed = analyzed.length;
     progress.remaining = 0;
-    progress.batches_completed = Math.ceil(analyzed.length / batchSize);
+    progress.batches_completed = Math.ceil(
+      analyzed.length / input.analysis_policy.batch_size,
+    );
+    const exhaustive = analyzed.length === prepared.discovery.items.length;
+    const stopReason = exhaustive
+      ? "all_candidates_analyzed"
+      : "analysis_budget_limit";
+    progress.exhaustive = exhaustive;
+    progress.stop_reason = stopReason;
+    progress.remaining_discovery = Math.max(
+      0,
+      prepared.discovery.items.length - analyzed.length,
+    );
+    summary.exhaustive = exhaustive;
+    summary.stop_reason = stopReason;
+    if (!exhaustive) {
+      summary.incomplete = true;
+      summary.incomplete_reasons = [
+        ...new Set([
+          ...((summary.incomplete_reasons as string[]) ?? []),
+          "analysis_budget_limit",
+        ]),
+      ];
+    }
     updatePartitions(run, items);
     if (persist) await store.save(run);
     return project(run);
@@ -1010,7 +1403,11 @@ export function registerVkCommunityTools(
     rawInput: ResearchInput,
     sessionId?: string,
   ): Promise<Record<string, unknown>> => {
-    const input = rawInput;
+    const input: ResearchInput = {
+      ...rawInput,
+      analysis_policy:
+        rawInput.analysis_policy ?? DEFAULT_ANALYSIS_POLICY,
+    };
     const initialRules = resolveRules(
       input.scoring_rules,
       [...new Set([...input.keywords, ...input.include_terms])],
@@ -1058,6 +1455,7 @@ export function registerVkCommunityTools(
           prepared.selected,
           prepared.rules,
           "queued",
+          prepared.preselection,
         );
         run.request = preparedRun.request;
         run.progress = preparedRun.progress;
@@ -1066,10 +1464,38 @@ export function registerVkCommunityTools(
         const preparedProgress = run.progress as Record<string, unknown>;
         preparedProgress.phase =
           prepared.selected.length === 0 ? "completed" : "analyzing";
-        if (prepared.selected.length === 0) run.status = "completed";
+        if (prepared.selected.length === 0) {
+          run.status = "completed";
+          const stopReason =
+            prepared.discovery.items.length === 0
+              ? "all_candidates_analyzed"
+              : "score_ceiling_below_review_threshold";
+          preparedProgress.stop_reason = stopReason;
+          preparedProgress.exhaustive =
+            prepared.discovery.items.length === 0;
+          const summary = run.summary as Record<string, unknown>;
+          summary.stop_reason = stopReason;
+          summary.exhaustive = prepared.discovery.items.length === 0;
+          if (prepared.discovery.items.length > 0) {
+            summary.incomplete = true;
+            summary.incomplete_reasons = [
+              ...new Set([
+                ...strings(summary.incomplete_reasons),
+                stopReason,
+              ]),
+            ];
+          }
+        }
         await store.save(run);
+        let previousSuitable = 0;
+        let stagnantBatches = 0;
+        let previousTop = "";
+        let stableTopBatches = 0;
         while (Array.isArray(run.pending) && run.pending.length > 0) {
-          const batch = (run.pending as Candidate[]).splice(0, batchSize);
+          const batch = (run.pending as Candidate[]).splice(
+            0,
+            input.analysis_policy.batch_size,
+          );
           const analyzed = await analyzeItems(
             batch,
             input.posts_limit,
@@ -1083,16 +1509,142 @@ export function registerVkCommunityTools(
             ...rank(analyzed, prepared.rules, input.clusters),
           ];
           updatePartitions(run, currentItems);
-          const progress = run.progress as Record<string, number>;
-          const summary = run.summary as Record<string, number>;
-          progress.processed = (progress.processed ?? 0) + batch.length;
-          progress.remaining = (progress.remaining ?? 0) - batch.length;
+          const progress = run.progress as Record<string, unknown>;
+          const summary = run.summary as Record<string, unknown>;
+          progress.processed =
+            Number(progress.processed ?? 0) + batch.length;
+          progress.analyzed = progress.processed;
+          progress.remaining =
+            Number(progress.remaining ?? 0) - batch.length;
           progress.batches_completed =
-            (progress.batches_completed ?? 0) + 1;
-          summary.analyzed = progress.processed ?? 0;
+            Number(progress.batches_completed ?? 0) + 1;
+          summary.analyzed = Number(progress.processed ?? 0);
+          const cachedInBatch = analyzed.filter(
+            (item) => item.analysis_source === "cache",
+          ).length;
+          progress.cached =
+            Number(progress.cached ?? 0) + cachedInBatch;
+          summary.cached = Number(progress.cached ?? 0);
+          summary.estimated_wall_requests_saved =
+            Number(summary.estimated_wall_requests_saved ?? 0) +
+            cachedInBatch;
+          progress.estimated_wall_requests_saved =
+            summary.estimated_wall_requests_saved;
           summary.analysis_batches =
-            progress.batches_completed ?? 0;
-          if (run.pending.length === 0) run.status = "completed";
+            Number(progress.batches_completed ?? 0);
+          progress.remaining_shortlist = run.pending.length;
+          const suitable =
+            Number(summary.passed ?? 0) + Number(summary.review ?? 0);
+          stagnantBatches =
+            suitable === previousSuitable ? stagnantBatches + 1 : 0;
+          previousSuitable = suitable;
+          const top = [
+            ...(run.passed as ResearchItem[]),
+            ...(run.review as ResearchItem[]),
+          ]
+            .sort(compareResearchItems)
+            .slice(0, 10)
+            .map((item) => item.id)
+            .join(",");
+          stableTopBatches =
+            top.length > 0 && top === previousTop
+              ? stableTopBatches + 1
+              : 0;
+          previousTop = top;
+          const enoughProcessed =
+            Number(progress.processed ?? 0) >=
+              input.analysis_policy.initial_candidates;
+          const targetsReached =
+            Number(summary.passed ?? 0) >=
+              input.analysis_policy.target_recommended &&
+            Number(summary.review ?? 0) >=
+              input.analysis_policy.target_review;
+          const topItems = [
+            ...(run.passed as ResearchItem[]),
+            ...(run.review as ResearchItem[]),
+          ]
+            .sort(compareResearchItems)
+            .slice(0, 10);
+          const lastTopScore =
+            topItems.length === 10
+              ? topItems.at(-1)?.normalized_score
+              : undefined;
+          const remainingCandidates = [
+            ...((run.pending as Candidate[]) ?? []),
+            ...((run.skipped_candidates as Candidate[]) ?? []),
+          ];
+          const maximumRemainingCeiling = Math.max(
+            -1,
+            ...remainingCandidates.map(
+              (item) => item.preselection?.score_ceiling ?? 100,
+            ),
+          );
+          const topMathematicallyStable =
+            lastTopScore !== undefined &&
+            lastTopScore > maximumRemainingCeiling;
+          let stopReason: string | null = null;
+          if (run.pending.length === 0) {
+            stopReason =
+              prepared.selected.length === prepared.discovery.items.length
+                ? "all_candidates_analyzed"
+                : "analysis_budget_limit";
+          } else if (topMathematicallyStable) {
+            stopReason = "top_results_stable";
+          } else if (
+            enoughProcessed &&
+            targetsReached &&
+            stableTopBatches >= input.analysis_policy.stable_batches
+          ) {
+            stopReason = "target_counts_reached";
+          } else if (
+            enoughProcessed &&
+            stagnantBatches >= input.analysis_policy.stable_batches
+          ) {
+            stopReason = "no_relevant_gain";
+          }
+          if (stopReason !== null) {
+            const unprocessed = [...(run.pending as Candidate[])];
+            for (const item of unprocessed) {
+              item.risk_flags.push("analysis_stopped_before_wall");
+            }
+            run.skipped_candidates = [
+              ...((run.skipped_candidates as Candidate[]) ?? []),
+              ...unprocessed,
+            ];
+            summary.skipped =
+              Number(summary.skipped ?? 0) + unprocessed.length;
+            progress.skipped = summary.skipped;
+            summary.estimated_wall_requests_saved =
+              Number(summary.estimated_wall_requests_saved ?? 0) +
+              unprocessed.length;
+            progress.estimated_wall_requests_saved =
+              summary.estimated_wall_requests_saved;
+            progress.remaining_shortlist = unprocessed.length;
+            progress.remaining = 0;
+            progress.remaining_discovery = Math.max(
+              0,
+              prepared.discovery.items.length -
+                Number(progress.processed ?? 0),
+            );
+            run.pending = [];
+            run.status = "completed";
+            progress.stop_reason = stopReason;
+            summary.stop_reason = stopReason;
+            const exhaustive =
+              Number(progress.processed ?? 0) ===
+              prepared.discovery.items.length;
+            progress.exhaustive = exhaustive;
+            summary.exhaustive = exhaustive;
+            if (!exhaustive) {
+              summary.incomplete = true;
+              summary.incomplete_reasons = [
+                ...new Set([
+                  ...((summary.incomplete_reasons as string[]) ?? []),
+                  stopReason,
+                ]),
+              ];
+            }
+          }
           if (run.status === "completed") {
             (run.progress as Record<string, unknown>).phase = "completed";
           }
@@ -1132,7 +1684,7 @@ export function registerVkCommunityTools(
     {
       title: "Запустить фоновое исследование сообществ VK",
       description:
-        "Сразу создаёт запуск; поиск и анализ публичных сообществ выполняются в фоне пакетами по 25.",
+        "Сразу создаёт запуск; поиск и анализ публичных сообществ выполняются в фоне настраиваемыми пакетами.",
       inputSchema: researchInputSchema,
       outputSchema: runOutputSchema,
       annotations: { ...readOnly, idempotentHint: false },
@@ -1214,8 +1766,33 @@ export function registerVkCommunityTools(
       }
       const request = asObject(source.request);
       const savedRules = asObject(request.scoring_rules);
+      const suppliedRules = scoring_rules ?? {};
+      const mergedOverrides = {
+        ...savedRules,
+        ...suppliedRules,
+        weights: {
+          ...asObject(savedRules.weights),
+          ...asObject(suppliedRules.weights),
+        },
+        term_weights: {
+          ...asObject(savedRules.term_weights),
+          ...asObject(suppliedRules.term_weights),
+        },
+        intent_term_weights: {
+          ...asObject(savedRules.intent_term_weights),
+          ...asObject(suppliedRules.intent_term_weights),
+        },
+        term_strengths: {
+          ...asObject(savedRules.term_strengths),
+          ...asObject(suppliedRules.term_strengths),
+        },
+        per_match_weights: {
+          ...asObject(savedRules.per_match_weights),
+          ...asObject(suppliedRules.per_match_weights),
+        },
+      };
       const rules = resolveRules(
-        scoring_rules,
+        mergedOverrides,
         strings(savedRules.terms).length > 0
           ? strings(savedRules.terms)
           : [...strings(request.keywords), ...strings(request.include_terms)],
@@ -1246,6 +1823,18 @@ export function registerVkCommunityTools(
       const compatibilityTermsChanged = !sameStrings(
         rescoreCompatibilityTerms,
         strings(savedRules.compatibility_terms),
+      );
+      const derivedSignalsChanged = !sameCanonicalValue(
+        {
+          concepts: rules.concepts,
+          contextual_signals: rules.contextual_signals,
+          negative_clusters: rules.negative_clusters,
+        },
+        {
+          concepts: savedRules.concepts,
+          contextual_signals: savedRules.contextual_signals,
+          negative_clusters: savedRules.negative_clusters,
+        },
       );
       const missingTerms = new Set<string>();
       const missingExcludes = new Set<string>();
@@ -1299,6 +1888,11 @@ export function registerVkCommunityTools(
                 "inactive_or_no_posts",
                 "low_activity",
                 "low_thematic_post_share",
+                "inactive_activity_reject",
+                "negative_cluster_review",
+                "negative_cluster_reject",
+                "strong_target_signal_missing",
+                "target_cluster_missing",
                 "below_min_score",
               ].includes(flag),
           ),
@@ -1310,6 +1904,7 @@ export function registerVkCommunityTools(
         rescore_of: run_id,
         created_at: new Date().toISOString(),
         expires_at: store.expiresAt(),
+        scoring_version: "community-research-v4",
         request: {
           ...request,
           scoring_rules: rules,
@@ -1329,7 +1924,8 @@ export function registerVkCommunityTools(
         missingTerms.size > 0 ||
         missingExcludes.size > 0 ||
         missingIntentTerms.size > 0 ||
-        missingCompatibilityTerms.size > 0
+        missingCompatibilityTerms.size > 0 ||
+        derivedSignalsChanged
       ) {
         const summary = next.summary as Record<string, unknown>;
         summary.incomplete = true;
@@ -1347,6 +1943,7 @@ export function registerVkCommunityTools(
           rescore_missing_compatibility_terms: [
             ...missingCompatibilityTerms,
           ],
+          rescore_derived_signals_changed: derivedSignalsChanged,
         };
       }
       await store.save(next);
@@ -1429,6 +2026,9 @@ export function registerVkCommunityTools(
         min_weak_matches: scoringRulesSchema.shape.min_weak_matches,
         intent_terms: scoringRulesSchema.shape.intent_terms,
         compatibility_terms: scoringRulesSchema.shape.compatibility_terms,
+        concepts: scoringRulesSchema.shape.concepts,
+        contextual_signals: scoringRulesSchema.shape.contextual_signals,
+        negative_clusters: scoringRulesSchema.shape.negative_clusters,
         exclude_terms: z
           .array(z.string().trim().min(1).max(120))
           .max(50)
@@ -1455,6 +2055,9 @@ export function registerVkCommunityTools(
               min_weak_matches: input.min_weak_matches ?? 2,
               intent_terms: input.intent_terms ?? [],
               compatibility_terms: input.compatibility_terms ?? [],
+              concepts: input.concepts ?? [],
+              contextual_signals: input.contextual_signals ?? [],
+              negative_clusters: input.negative_clusters ?? [],
             },
             input.exclude_match_mode,
           ),
@@ -1595,6 +2198,55 @@ function termStrengths(value: unknown): Record<string, TermStrength> {
   );
 }
 
+function conceptRules(value: unknown): ConceptRule[] {
+  return Array.isArray(value) ? (value as ConceptRule[]) : [];
+}
+
+function contextualSignals(value: unknown): ContextualSignal[] {
+  return Array.isArray(value) ? (value as ContextualSignal[]) : [];
+}
+
+function negativeClusters(value: unknown): NegativeCluster[] {
+  return Array.isArray(value) ? (value as NegativeCluster[]) : [];
+}
+
+function analysisFingerprint(
+  rules: Record<string, unknown>,
+  excludeMatchMode: ExcludeMatchMode,
+  postsLimit: number,
+): string {
+  return JSON.stringify(
+    canonicalize({
+      posts_limit: postsLimit,
+      exclude_match_mode: excludeMatchMode,
+      terms: rules.terms,
+      exclude_terms: rules.exclude_terms,
+      term_strengths: rules.term_strengths,
+      min_weak_matches: rules.min_weak_matches,
+      intent_terms: rules.intent_terms,
+      compatibility_terms: rules.compatibility_terms,
+      concepts: rules.concepts,
+      contextual_signals: rules.contextual_signals,
+      negative_clusters: rules.negative_clusters,
+    }),
+  );
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (
+    value !== null &&
+    typeof value === "object"
+  ) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonicalize(item)]),
+    );
+  }
+  return value;
+}
+
 function compareResearchItems(
   left: ResearchItem,
   right: ResearchItem,
@@ -1614,6 +2266,10 @@ function sameStrings(left: string[], right: string[]): boolean {
       value.trim().toLocaleLowerCase("ru-RU"),
     ))].sort();
   return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+}
+
+function sameCanonicalValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
 }
 
 function toCsv(rows: Array<Record<string, unknown>>): string {

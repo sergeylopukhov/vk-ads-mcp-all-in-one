@@ -126,10 +126,18 @@ unless the forms have different meanings. All values in
 `weights`, including fields whose names end in `_penalty`, are nonnegative
 magnitudes. The server applies the subtraction.
 
-Represent real synonyms as separate positive scoring terms. Do not replace an
-ambiguous word with a shorter stem merely to increase matches. Positive terms
-affect score only; they must never become a hidden eligibility gate or an
-automatically hardened minus-term.
+Group synonyms and paraphrases of one meaning in `concepts`. One concept earns
+points once even when several of its phrases match. Use `contextual_signals`
+for ambiguous terms that are meaningful only near a strong anchor. Describe
+unwanted content categories with `negative_clusters` and choose separately
+whether a metadata match adds a penalty, requires review, or rejects the
+candidate. Configure post-share thresholds when specialization matters.
+
+Do not replace an ambiguous word with a shorter stem merely to increase
+matches. Positive terms affect score, but `recommended` also requires at least
+one configured strong target signal. If target clusters are configured, at
+least one must match. These admission rules prevent a high score assembled
+only from broad words.
 
 Prefer the server's default scoring scale unless custom weights are needed. If
 you customize weights, add the positive score caps and set explicit
@@ -182,13 +190,17 @@ validation:
 
 Use the default `search_sort=both` so every query runs once by provider
 relevance and once by member count. Use a single sort only when the user asks
-to reduce provider requests or explicitly prefers one mode. Preserve descending
-`members_count` order after merged discovery; final researched lists are still
-ranked by advertising score. Analyze every community returned by VK that
-survives only explicit type and member-count bounds. Positive terms and
-synonyms affect scoring, but their absence from the name or description never
-removes a provider result. A requested final count controls reporting, not how
-many candidates receive post analysis and scoring.
+to reduce provider requests or explicitly prefers one mode. Preserve query,
+sort, rank, and query-coverage evidence when results are merged. Do not rank
+the analysis queue primarily by `members_count`.
+
+Use `analysis_policy.mode=efficient` by default. The server scores all
+available metadata, then builds a diversified shortlist. Default deep-analysis
+limits are 100 initial and 300 maximum candidates in batches of 25. State that
+budget before starting. Use `mode=exhaustive` only when the user asks to inspect
+every candidate or when a smaller run cannot answer the question reliably.
+Absence of a positive metadata match alone must not remove a provider result:
+the exploration and per-query pools preserve such candidates.
 
 Do not present provider-reported totals as the number of communities actually
 inspected. Use `source_matches` for unique observed IDs and
@@ -203,6 +215,7 @@ Before the first tool call, show a compact search brief containing:
 - exclusions and any risky ambiguous terms;
 - geography, community types, and size limits;
 - search breadth and expected result count;
+- deep-analysis mode and maximum candidate budget;
 - scoring emphasis and planned clusters.
 
 If the user's original request already authorized the research, start after the
@@ -215,9 +228,13 @@ saved run. Report incomplete reasons caused by provider or search-budget
 limits.
 
 After completion, return ranked candidates with score reasons, exclusion
-matches, risks, and clusters. Recommend narrower terms, new exclusions, or a
-second run when the first result reveals systematic noise. Do not export unless
-the user asks.
+matches, risks, and clusters. Always report `exhaustive`, `stop_reason`,
+`analyzed`, `skipped`, `remaining_discovery`, and
+`estimated_wall_requests_saved`. `completed` means the selected analysis
+policy finished; it does not mean every discovery candidate was deeply
+analyzed. Recommend narrower terms, new exclusions, a larger shortlist, or an
+explicit exhaustive run when the first result reveals systematic noise. Do not
+export unless the user asks.
 
 ## Let the user tune and continue
 
