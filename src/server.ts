@@ -184,7 +184,7 @@ import { actionReadinessSchema } from "./preflight/types.js";
 
 export const SERVER_INFO = {
   name: "vk-ads-mcp",
-  version: "0.1.348",
+  version: "0.1.349",
 } as const;
 
 export const CONNECTION_CHECK_TOOL = "vk_ads_connection_check";
@@ -1074,6 +1074,9 @@ interface LogicalVkCommunityAudience {
   excludeSegmentIds: number[];
 }
 
+const VK_COMMUNITY_AUDIENCE_SETTLE_ATTEMPTS = 60;
+const VK_COMMUNITY_AUDIENCE_SETTLE_DELAY_MS = 500;
+
 async function readLogicalVkCommunityAudience(
   client: VkAdsMcpClient,
   audience: VkAdsVkCommunityAudience,
@@ -1212,7 +1215,11 @@ async function waitForLogicalVkCommunityAudience(
     );
   }
 
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (
+    let attempt = 0;
+    attempt < VK_COMMUNITY_AUDIENCE_SETTLE_ATTEMPTS;
+    attempt += 1
+  ) {
     try {
       const providerAudience = await getAudience.call(
         client,
@@ -1234,9 +1241,15 @@ async function waitForLogicalVkCommunityAudience(
       // API v3 and the physical v2 segment tree settle separately.
     }
 
-    if (attempt < 19) {
+    if (
+      attempt <
+      VK_COMMUNITY_AUDIENCE_SETTLE_ATTEMPTS - 1
+    ) {
       await new Promise((resolve) =>
-        setTimeout(resolve, 500),
+        setTimeout(
+          resolve,
+          VK_COMMUNITY_AUDIENCE_SETTLE_DELAY_MS,
+        ),
       );
     }
   }
@@ -5064,7 +5077,11 @@ export function createVkAdsMcpServer(
             ),
         );
 
-        for (let attempt = 0; attempt < 20; attempt += 1) {
+        for (
+          let attempt = 0;
+          attempt < VK_COMMUNITY_AUDIENCE_SETTLE_ATTEMPTS;
+          attempt += 1
+        ) {
           after = await readAllVkCommunityAudiences(
             vkAdsClient,
           );
@@ -5077,7 +5094,10 @@ export function createVkAdsMcpServer(
           }
 
           await new Promise((resolve) =>
-            setTimeout(resolve, 500),
+            setTimeout(
+              resolve,
+              VK_COMMUNITY_AUDIENCE_SETTLE_DELAY_MS,
+            ),
           );
         }
 
@@ -5149,7 +5169,8 @@ export function createVkAdsMcpServer(
 
             for (
               let attempt = 0;
-              attempt < 20;
+              attempt <
+              VK_COMMUNITY_AUDIENCE_SETTLE_ATTEMPTS;
               attempt += 1
             ) {
               const afterCleanup =
@@ -5167,7 +5188,10 @@ export function createVkAdsMcpServer(
               }
 
               await new Promise((resolve) =>
-                setTimeout(resolve, 500),
+                setTimeout(
+                  resolve,
+                  VK_COMMUNITY_AUDIENCE_SETTLE_DELAY_MS,
+                ),
               );
             }
 
@@ -5468,26 +5492,26 @@ export function createVkAdsMcpServer(
           expected.excludeSegmentIds,
         );
 
+      let updateRequestError: unknown;
+
       try {
         await updateAudience.call(
           vkAdsClient,
           id,
           buildVkCommunityAudienceProviderInput(expected),
         );
-        const audience =
-          await waitForLogicalVkCommunityAudience(
-            vkAdsClient,
-            id,
-            matchesExpected,
-          );
+      } catch (error) {
+        updateRequestError = error;
+      }
 
-        if (!matchesExpected(audience)) {
-          throw new VkAdsApiError(
-            "Updated community audience could not be verified through API v3.",
-            "vk_community_audience_verification_failed",
-          );
-        }
+      const audience =
+        await waitForLogicalVkCommunityAudience(
+          vkAdsClient,
+          id,
+          matchesExpected,
+        );
 
+      if (matchesExpected(audience)) {
         await auditLog.record({
           operation:
             "remarketing.vk_community_audience.update",
@@ -5509,8 +5533,49 @@ export function createVkAdsMcpServer(
             audience,
           },
         };
-      } catch (error) {
-        try {
+      }
+
+      const matchesBefore = (
+        current:
+          | LogicalVkCommunityAudience
+          | undefined,
+      ) =>
+        current !== undefined &&
+        current.name === before.name &&
+        sameNumberIds(
+          current.includeCommunityObjectIds,
+          before.includeCommunityObjectIds,
+        ) &&
+        sameNumberIds(
+          current.excludeCommunityObjectIds,
+          before.excludeCommunityObjectIds,
+        ) &&
+        sameNumberIds(
+          current.excludeSegmentIds,
+          before.excludeSegmentIds,
+        );
+      const current =
+        await waitForLogicalVkCommunityAudience(
+          vkAdsClient,
+          id,
+        );
+
+      if (matchesBefore(current)) {
+        await auditLog.record({
+          operation:
+            "remarketing.vk_community_audience.update",
+          outcome: "failed",
+        });
+        throw (
+          updateRequestError ??
+          new VkAdsApiError(
+            "Updated community audience could not be verified through API v3.",
+            "vk_community_audience_verification_failed",
+          )
+        );
+      }
+
+      try {
           await updateAudience.call(
             vkAdsClient,
             id,
@@ -5539,25 +5604,30 @@ export function createVkAdsMcpServer(
           if (rollback === undefined) {
             throw new Error("rollback verification failed");
           }
-        } catch {
-          await auditLog.record({
-            operation:
-              "remarketing.vk_community_audience.update",
-            outcome: "verification_failed",
-          });
-          throw new VkAdsApiError(
-            "Community audience update failed and rollback was incomplete.",
-            "vk_community_audience_rollback_failed",
-          );
-        }
-
+      } catch {
         await auditLog.record({
           operation:
             "remarketing.vk_community_audience.update",
-          outcome: "failed",
+          outcome: "verification_failed",
         });
-        throw error;
+        throw new VkAdsApiError(
+          "Community audience update failed and rollback was incomplete.",
+          "vk_community_audience_rollback_failed",
+        );
       }
+
+      await auditLog.record({
+        operation:
+          "remarketing.vk_community_audience.update",
+        outcome: "failed",
+      });
+      throw (
+        updateRequestError ??
+        new VkAdsApiError(
+          "Updated community audience could not be verified through API v3.",
+          "vk_community_audience_verification_failed",
+        )
+      );
     },
   );
 
@@ -5670,7 +5740,11 @@ export function createVkAdsMcpServer(
         await deleteAudience.call(vkAdsClient, id);
         let deletionVerified = false;
 
-        for (let attempt = 0; attempt < 20; attempt += 1) {
+        for (
+          let attempt = 0;
+          attempt < VK_COMMUNITY_AUDIENCE_SETTLE_ATTEMPTS;
+          attempt += 1
+        ) {
           const [logicalAfter, physicalAfter] =
             await Promise.all([
               readAllVkCommunityAudiences(vkAdsClient),
@@ -5689,7 +5763,10 @@ export function createVkAdsMcpServer(
           }
 
           await new Promise((resolve) =>
-            setTimeout(resolve, 500),
+            setTimeout(
+              resolve,
+              VK_COMMUNITY_AUDIENCE_SETTLE_DELAY_MS,
+            ),
           );
         }
 
