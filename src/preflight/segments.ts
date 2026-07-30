@@ -4,6 +4,7 @@ import type {
   VkAdsCurrentUser,
   VkAdsSegment,
   VkAdsSegmentRelation,
+  VkAdsVkCommunityAudience,
   VkAdsVkGroup,
 } from "../vk-ads/client.js";
 import type {
@@ -284,6 +285,35 @@ const segmentUpdateSchema = z
     "Укажите name или passCondition.",
   );
 const segmentDeleteSchema = z.object({ id: idSchema });
+const vkCommunityAudienceUpdateSchema = z
+  .object({
+    id: idSchema,
+    name: z.string().trim().min(1).max(255).optional(),
+    includeCommunityObjectIds: z
+      .array(idSchema)
+      .min(1)
+      .max(300)
+      .optional(),
+    excludeCommunityObjectIds: z
+      .array(idSchema)
+      .max(300)
+      .optional(),
+    excludeSegmentIds: z
+      .array(idSchema)
+      .max(100)
+      .optional(),
+  })
+  .refine(
+    (input) =>
+      input.name !== undefined ||
+      input.includeCommunityObjectIds !== undefined ||
+      input.excludeCommunityObjectIds !== undefined ||
+      input.excludeSegmentIds !== undefined,
+    "Укажите хотя бы одно изменяемое поле.",
+  );
+const vkCommunityAudienceDeleteSchema = z.object({
+  id: idSchema,
+});
 const relationCreateSchema = z.object({
   segmentId: idSchema,
   items: z.array(segmentRelationInputSchema).min(1),
@@ -313,6 +343,12 @@ type SegmentUpdateInput = z.infer<
 type SegmentDeleteInput = z.infer<
   typeof segmentDeleteSchema
 >;
+type VkCommunityAudienceUpdateInput = z.infer<
+  typeof vkCommunityAudienceUpdateSchema
+>;
+type VkCommunityAudienceDeleteInput = z.infer<
+  typeof vkCommunityAudienceDeleteSchema
+>;
 type RelationCreateInput = z.infer<
   typeof relationCreateSchema
 >;
@@ -330,6 +366,9 @@ export interface SegmentPreflightClient {
     segmentId: number,
   ): Promise<VkAdsSegmentRelation[]>;
   listVkGroups?(): Promise<VkAdsVkGroup[]>;
+  getVkCommunityAudience?(
+    id: number,
+  ): Promise<VkAdsVkCommunityAudience | undefined>;
 }
 
 interface SegmentContext {
@@ -337,7 +376,10 @@ interface SegmentContext {
   segment?: VkAdsSegment;
   relations?: VkAdsSegmentRelation[];
   vkGroups?: VkAdsVkGroup[];
-  excludedSegments?: VkAdsSegment[];
+  communityAudience?: VkAdsVkCommunityAudience;
+  excludedCommunityAudiences?: Array<
+    VkAdsVkCommunityAudience | undefined
+  >;
 }
 
 function issue(
@@ -386,6 +428,24 @@ function providerRelations(
       ? {}
       : { params: relation.params }),
   }));
+}
+
+function isVkCommunityAudience(
+  audience: VkAdsVkCommunityAudience | undefined,
+): boolean {
+  return (
+    audience?.positive?.relations.length !== 0 &&
+    audience?.positive?.relations.every(
+      (relation) =>
+        relation.objectType === "remarketing_vk_group",
+    ) === true &&
+    (audience.negative?.relations.every(
+      (relation) =>
+        relation.objectType === "remarketing_vk_group" ||
+        relation.objectType === "segment",
+    ) ??
+      true)
+  );
 }
 
 async function loadSegmentContext(
@@ -454,7 +514,11 @@ export function createSegmentActionContracts(
     staticSchema: vkCommunityAudienceCreateSchema,
     target: () => ({ resource: "segment" }),
     async loadContext(input, reads) {
-      const [user, vkGroups, excludedSegments] =
+      const [
+        user,
+        vkGroups,
+        excludedCommunityAudiences,
+      ] =
         await Promise.all([
           reads.loadOnce("current-user", () =>
             client.getCurrentUser(),
@@ -464,18 +528,24 @@ export function createSegmentActionContracts(
             : reads.loadOnce("vk-groups", () =>
                 client.listVkGroups!(),
               ),
-          Promise.all(
-            input.excludeSegmentIds.map((id) =>
-              reads.loadOnce(`segment:${id}`, () =>
-                client.getSegment(id),
+          client.getVkCommunityAudience === undefined
+            ? Promise.resolve(undefined)
+            : Promise.all(
+                input.excludeSegmentIds.map((id) =>
+                  reads.loadOnce(
+                    `vk-community-audience:${id}`,
+                    () =>
+                      client.getVkCommunityAudience!(id),
+                  ),
+                ),
               ),
-            ),
-          ),
         ]);
       return {
         user,
         ...(vkGroups === undefined ? {} : { vkGroups }),
-        excludedSegments,
+        ...(excludedCommunityAudiences === undefined
+          ? {}
+          : { excludedCommunityAudiences }),
       };
     },
     async validate(input, context) {
@@ -507,9 +577,26 @@ export function createSegmentActionContracts(
         });
       }
 
+      input.excludeSegmentIds.forEach((id, index) => {
+        if (
+          !isVkCommunityAudience(
+            context.excludedCommunityAudiences?.[index],
+          )
+        ) {
+          incompatible.push(
+            issue(
+              "excluded_audience_requires_v3",
+              `excludeSegmentIds.${index}`,
+              `Аудитория ${id} недоступна как логическая аудитория API v3.`,
+              "provider_contract",
+            ),
+          );
+        }
+      });
+
       return result(
         "vk_community_audience.create",
-        "segment",
+        "vk_community_audience",
         undefined,
         incompatible,
       );
@@ -521,6 +608,214 @@ export function createSegmentActionContracts(
       exclude_community_object_ids:
         input.excludeCommunityObjectIds,
       exclude_segment_ids: input.excludeSegmentIds,
+    }),
+  };
+
+  const vkCommunityAudienceUpdate: ActionContract<
+    VkCommunityAudienceUpdateInput,
+    SegmentContext
+  > = {
+    action: "vk_community_audience.update",
+    staticSchema: vkCommunityAudienceUpdateSchema,
+    target: ({ id }) => ({
+      resource: "vk_community_audience",
+      id,
+    }),
+    async loadContext(input, reads) {
+      const [user, communityAudience, vkGroups] =
+        await Promise.all([
+          reads.loadOnce("current-user", () =>
+            client.getCurrentUser(),
+          ),
+          client.getVkCommunityAudience === undefined
+            ? Promise.resolve(undefined)
+            : reads.loadOnce(
+                `vk-community-audience:${input.id}`,
+                () =>
+                  client.getVkCommunityAudience!(input.id),
+              ),
+          client.listVkGroups === undefined
+            ? Promise.resolve(undefined)
+            : reads.loadOnce("vk-groups", () =>
+                client.listVkGroups!(),
+              ),
+        ]);
+      const excludedCommunityAudiences =
+        input.excludeSegmentIds === undefined ||
+        client.getVkCommunityAudience === undefined
+          ? undefined
+          : await Promise.all(
+              input.excludeSegmentIds.map((id) =>
+                reads.loadOnce(
+                  `vk-community-audience:${id}`,
+                  () =>
+                    client.getVkCommunityAudience!(id),
+                ),
+              ),
+            );
+      return {
+        user,
+        ...(communityAudience === undefined
+          ? {}
+          : { communityAudience }),
+        ...(vkGroups === undefined ? {} : { vkGroups }),
+        ...(excludedCommunityAudiences === undefined
+          ? {}
+          : { excludedCommunityAudiences }),
+      };
+    },
+    async validate(input, context) {
+      const incompatible: RequirementIssue[] = [];
+
+      if (!isVkCommunityAudience(context.communityAudience)) {
+        incompatible.push(
+          issue(
+            "not_vk_community_audience",
+            "id",
+            "Выбранный объект не является пользовательской аудиторией VK-сообществ.",
+          ),
+        );
+      }
+
+      const registeredIds = new Set(
+        context.vkGroups?.map((group) => group.objectId),
+      );
+
+      for (const [field, objectIds] of [
+        [
+          "includeCommunityObjectIds",
+          input.includeCommunityObjectIds,
+        ],
+        [
+          "excludeCommunityObjectIds",
+          input.excludeCommunityObjectIds,
+        ],
+      ] as const) {
+        objectIds?.forEach((objectId, index) => {
+          if (!registeredIds.has(objectId)) {
+            incompatible.push(
+              issue(
+                "vk_group_not_registered",
+                `${field}.${index}`,
+                "Сначала добавьте VK-сообщество через vk_ads_vk_groups_import.",
+              ),
+            );
+          }
+        });
+      }
+
+      if (
+        input.includeCommunityObjectIds !== undefined &&
+        input.excludeCommunityObjectIds !== undefined
+      ) {
+        const include = new Set(
+          input.includeCommunityObjectIds,
+        );
+
+        input.excludeCommunityObjectIds.forEach(
+          (objectId, index) => {
+            if (include.has(objectId)) {
+              incompatible.push(
+                issue(
+                  "vk_community_include_exclude_overlap",
+                  `excludeCommunityObjectIds.${index}`,
+                  "Одно сообщество нельзя одновременно включать и исключать.",
+                  "provider_contract",
+                ),
+              );
+            }
+          },
+        );
+      }
+
+      input.excludeSegmentIds?.forEach((id, index) => {
+        if (id === input.id) {
+          incompatible.push(
+            issue(
+              "vk_community_self_exclusion",
+              `excludeSegmentIds.${index}`,
+              "Аудитория не может исключать саму себя.",
+              "provider_contract",
+            ),
+          );
+        } else if (
+          !isVkCommunityAudience(
+            context.excludedCommunityAudiences?.[index],
+          )
+        ) {
+          incompatible.push(
+            issue(
+              "excluded_audience_requires_v3",
+              `excludeSegmentIds.${index}`,
+              `Аудитория ${id} недоступна как логическая аудитория API v3.`,
+              "provider_contract",
+            ),
+          );
+        }
+      });
+
+      return result(
+        "vk_community_audience.update",
+        "vk_community_audience",
+        input.id,
+        incompatible,
+      );
+    },
+    buildRequest: ({ id: _id, ...input }) => ({
+      api_version: 3,
+      ...input,
+    }),
+  };
+
+  const vkCommunityAudienceDelete: ActionContract<
+    VkCommunityAudienceDeleteInput,
+    SegmentContext
+  > = {
+    action: "vk_community_audience.delete",
+    staticSchema: vkCommunityAudienceDeleteSchema,
+    target: ({ id }) => ({
+      resource: "vk_community_audience",
+      id,
+    }),
+    async loadContext(input, reads) {
+      const [user, communityAudience] = await Promise.all([
+        reads.loadOnce("current-user", () =>
+          client.getCurrentUser(),
+        ),
+        client.getVkCommunityAudience === undefined
+          ? Promise.resolve(undefined)
+          : reads.loadOnce(
+              `vk-community-audience:${input.id}`,
+              () =>
+                client.getVkCommunityAudience!(input.id),
+            ),
+      ]);
+      return {
+        user,
+        ...(communityAudience === undefined
+          ? {}
+          : { communityAudience }),
+      };
+    },
+    async validate(input, context) {
+      return result(
+        "vk_community_audience.delete",
+        "vk_community_audience",
+        input.id,
+        isVkCommunityAudience(context.communityAudience)
+          ? []
+          : [
+              issue(
+                "not_vk_community_audience",
+                "id",
+                "Выбранный объект не является пользовательской аудиторией VK-сообществ.",
+              ),
+            ],
+      );
+    },
+    buildRequest: ({ id }) => ({
+      api_version: 3,
+      id,
     }),
   };
 
@@ -610,28 +905,64 @@ export function createSegmentActionContracts(
     action: "segment.update",
     staticSchema: segmentUpdateSchema,
     target: ({ id }) => ({ resource: "segment", id }),
-    loadContext: (input, reads) =>
-      loadSegmentContext(client, input.id, reads),
+    async loadContext(input, reads) {
+      const context = await loadSegmentContext(
+        client,
+        input.id,
+        reads,
+      );
+      const communityAudience =
+        client.getVkCommunityAudience === undefined
+          ? undefined
+          : await reads.loadOnce(
+              `vk-community-audience:${input.id}`,
+              () =>
+                client.getVkCommunityAudience!(input.id),
+            );
+      return {
+        ...context,
+        ...(communityAudience === undefined
+          ? {}
+          : { communityAudience }),
+      };
+    },
     async validate(input, context) {
       const relationCount =
         context.relations?.length ??
         context.segment?.relationsCount;
+      const incompatible: RequirementIssue[] = [];
+
+      if (isVkCommunityAudience(context.communityAudience)) {
+        incompatible.push(
+          issue(
+            "vk_community_audience_requires_v3",
+            "id",
+            "Для пользовательской аудитории VK-сообществ используйте vk_ads_vk_community_audience_update.",
+            "provider_contract",
+          ),
+        );
+      }
+
+      if (
+        input.passCondition !== undefined &&
+        relationCount !== undefined &&
+        input.passCondition > relationCount
+      ) {
+        incompatible.push(
+          issue(
+            "segment_pass_condition_too_high",
+            "passCondition",
+            "passCondition не может превышать текущее число связей.",
+            "provider_contract",
+          ),
+        );
+      }
+
       return result(
         "segment.update",
         "segment",
         input.id,
-        input.passCondition !== undefined &&
-          relationCount !== undefined &&
-          input.passCondition > relationCount
-          ? [
-              issue(
-                "segment_pass_condition_too_high",
-                "passCondition",
-                "passCondition не может превышать текущее число связей.",
-                "provider_contract",
-              ),
-            ]
-          : [],
+        incompatible,
       );
     },
     buildRequest: ({ id: _id, ...input }) => ({
@@ -652,18 +983,46 @@ export function createSegmentActionContracts(
     staticSchema: segmentDeleteSchema,
     target: ({ id }) => ({ resource: "segment", id }),
     async loadContext(input, reads) {
-      const [user, segment] = await Promise.all([
+      const [user, segment, communityAudience] =
+        await Promise.all([
         reads.loadOnce("current-user", () =>
           client.getCurrentUser(),
         ),
         reads.loadOnce(`segment:${input.id}`, () =>
-          client.getSegment(input.id),
-        ),
-      ]);
-      return { user, segment };
+            client.getSegment(input.id),
+          ),
+          client.getVkCommunityAudience === undefined
+            ? Promise.resolve(undefined)
+            : reads.loadOnce(
+                `vk-community-audience:${input.id}`,
+                () =>
+                  client.getVkCommunityAudience!(input.id),
+              ),
+        ]);
+      return {
+        user,
+        segment,
+        ...(communityAudience === undefined
+          ? {}
+          : { communityAudience }),
+      };
     },
-    async validate(input) {
-      return result("segment.delete", "segment", input.id, []);
+    async validate(input, context) {
+      return result(
+        "segment.delete",
+        "segment",
+        input.id,
+        isVkCommunityAudience(context.communityAudience)
+          ? [
+              issue(
+                "vk_community_audience_requires_v3",
+                "id",
+                "Для пользовательской аудитории VK-сообществ используйте vk_ads_vk_community_audience_delete.",
+                "provider_contract",
+              ),
+            ]
+          : [],
+      );
     },
     buildRequest: ({ id }) => ({ id }),
   };
@@ -789,6 +1148,8 @@ export function createSegmentActionContracts(
   return [
     vkGroupImport,
     vkCommunityAudienceCreate,
+    vkCommunityAudienceUpdate,
+    vkCommunityAudienceDelete,
     segmentCreate,
     segmentUpdate,
     segmentDelete,

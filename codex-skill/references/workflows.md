@@ -109,18 +109,22 @@ All community tools carry `✅`.
    `vk_ads_vk_groups_import`. Pass the returned `objectId` values to
    `vk_ads_vk_community_audience_create`. Use
    `excludeCommunityObjectIds` for community exclusions and
-   `excludeSegmentIds` for earlier audiences. Do not send
-   `type=negative` for `remarketing_vk_group`: VK represents exclusions as
-   a verified tree of service segments. Do not use the registry `id`, a URL
-   ID, or `remarketing_group`; the latter is for Odnoklassniki groups.
-4. Prefer existing verified list and segment tools.
-5. Treat current counter-goal write tools as unverified and do not use them as
+   `excludeSegmentIds` for earlier audiences. Do not use the registry `id`,
+   a URL ID, or `remarketing_group`; the latter is for Odnoklassniki groups.
+4. Read logical VK-community audiences through
+   `vk_ads_vk_community_audiences_list` and
+   `vk_ads_vk_community_audience_get`. Rename or replace sources through
+   `vk_ads_vk_community_audience_update`, and delete the complete logical
+   audience through `vk_ads_vk_community_audience_delete`.
+5. Keep `vk_ads_segment_create`, `vk_ads_segment_update`, and
+   `vk_ads_segment_delete` for low-level API v2 segments only.
+6. Treat current counter-goal write tools as unverified and do not use them as
    routine operations.
-6. Prepare the exact audience action before a write. Do not submit source
+7. Prepare the exact audience action before a write. Do not submit source
    credentials, file contents, or sharing keys in chat.
-7. After a write, reread the object, relations, or collection and verify exact
+8. After a write, reread the object, relations, or collection and verify exact
    requested fields.
-8. Never expose uploaded identifiers or source credentials.
+9. Never expose uploaded identifiers or source credentials.
 
 ## Leads and surveys
 
