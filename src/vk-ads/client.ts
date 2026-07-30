@@ -375,6 +375,33 @@ const segmentRelationSchema = z
       .optional(),
   })
   .passthrough();
+const vkCommunityAudiencePartSchema = z
+  .object({
+    pass_condition: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional(),
+    relations: z.array(segmentRelationSchema),
+  })
+  .passthrough();
+const vkCommunityAudienceSchema = z
+  .object({
+    id: z.number().int().positive(),
+    name: z.string().min(1),
+    flags: z.array(z.string()),
+    relations_count: z
+      .number()
+      .int()
+      .nonnegative()
+      .optional(),
+    positive: vkCommunityAudiencePartSchema.nullable(),
+    negative: vkCommunityAudiencePartSchema.nullable(),
+  })
+  .passthrough();
+const vkCommunityAudiencesPageSchema = createPageSchema(
+  vkCommunityAudienceSchema,
+);
 const segmentRelationsResponseSchema = z
   .object({
     items: z.array(segmentRelationSchema),
@@ -1196,6 +1223,43 @@ export interface UpdateVkAdsSegmentInput {
   pass_condition?: number;
 }
 
+export interface VkAdsVkCommunityAudiencePart {
+  passCondition?: number;
+  relations: VkAdsSegmentRelation[];
+}
+
+export interface VkAdsVkCommunityAudience {
+  id: number;
+  name: string;
+  flags: string[];
+  relationsCount?: number;
+  positive: VkAdsVkCommunityAudiencePart | null;
+  negative: VkAdsVkCommunityAudiencePart | null;
+}
+
+export interface VkAdsVkCommunityAudiencesPage {
+  count: number;
+  offset: number;
+  items: VkAdsVkCommunityAudience[];
+}
+
+export interface VkAdsVkCommunityAudiencePartInput {
+  pass_condition?: number;
+  relations: CreateVkAdsSegmentRelationInput[];
+}
+
+export interface CreateVkAdsVkCommunityAudienceInput {
+  name: string;
+  positive: VkAdsVkCommunityAudiencePartInput;
+  negative?: VkAdsVkCommunityAudiencePartInput | null;
+}
+
+export interface UpdateVkAdsVkCommunityAudienceInput {
+  name?: string;
+  positive?: VkAdsVkCommunityAudiencePartInput;
+  negative?: VkAdsVkCommunityAudiencePartInput | null;
+}
+
 export interface VkAdsSharingKeySource {
   objectType: string;
   objectId: number;
@@ -1858,6 +1922,35 @@ function normalizeSegmentRelation(
     objectType: item.object_type,
     objectId: item.object_id,
     ...(item.params == null ? {} : { params: item.params }),
+  };
+}
+
+function normalizeVkCommunityAudience(
+  item: z.infer<typeof vkCommunityAudienceSchema>,
+): VkAdsVkCommunityAudience {
+  const normalizePart = (
+    part: z.infer<typeof vkCommunityAudiencePartSchema> | null,
+  ): VkAdsVkCommunityAudiencePart | null =>
+    part === null
+      ? null
+      : {
+          ...(part.pass_condition === undefined
+            ? {}
+            : { passCondition: part.pass_condition }),
+          relations: part.relations.map(
+            normalizeSegmentRelation,
+          ),
+        };
+
+  return {
+    id: item.id,
+    name: item.name,
+    flags: item.flags,
+    ...(item.relations_count === undefined
+      ? {}
+      : { relationsCount: item.relations_count }),
+    positive: normalizePart(item.positive),
+    negative: normalizePart(item.negative),
   };
 }
 
@@ -3872,6 +3965,89 @@ export class VkAdsApiClient {
     );
 
     return normalizeVkGroup(parsed);
+  }
+
+  async listVkCommunityAudiences(
+    input: VkAdsPaginationInput = {},
+  ): Promise<VkAdsVkCommunityAudiencesPage> {
+    const url = new URL(
+      `${this.v3BaseUrl}/remarketing/segments.json`,
+    );
+    appendPagination(url.searchParams, input);
+    url.searchParams.set(
+      "fields",
+      "id,name,flags,relations_count,positive,negative",
+    );
+    const parsed = await this.requestValidated(
+      "GET",
+      url,
+      vkCommunityAudiencesPageSchema,
+      "VK Ads returned an invalid community audiences page.",
+    );
+
+    return {
+      count: parsed.count,
+      offset: parsed.offset,
+      items: parsed.items.map(
+        normalizeVkCommunityAudience,
+      ),
+    };
+  }
+
+  async getVkCommunityAudience(
+    id: number,
+  ): Promise<VkAdsVkCommunityAudience> {
+    const url = new URL(
+      `${this.v3BaseUrl}/remarketing/segments/${id}.json`,
+    );
+    url.searchParams.set(
+      "fields",
+      "id,name,flags,relations_count,positive,negative",
+    );
+    const parsed = await this.requestValidated(
+      "GET",
+      url,
+      vkCommunityAudienceSchema,
+      "VK Ads returned an invalid community audience.",
+    );
+
+    return normalizeVkCommunityAudience(parsed);
+  }
+
+  async createVkCommunityAudience(
+    input: CreateVkAdsVkCommunityAudienceInput,
+  ): Promise<{ id: number }> {
+    const parsed = await this.requestValidated(
+      "POST",
+      new URL(`${this.v3BaseUrl}/remarketing/segments.json`),
+      createSegmentResponseSchema,
+      "VK Ads returned an invalid community audience creation response.",
+      input,
+    );
+
+    return { id: parsed.id };
+  }
+
+  async updateVkCommunityAudience(
+    id: number,
+    input: UpdateVkAdsVkCommunityAudienceInput,
+  ): Promise<void> {
+    await this.requestSuccessfulEmpty(
+      "POST",
+      new URL(
+        `${this.v3BaseUrl}/remarketing/segments/${id}.json`,
+      ),
+      input,
+    );
+  }
+
+  async deleteVkCommunityAudience(id: number): Promise<void> {
+    await this.requestSuccessfulEmpty(
+      "DELETE",
+      new URL(
+        `${this.v3BaseUrl}/remarketing/segments/${id}.json`,
+      ),
+    );
   }
 
   async listSegments(
