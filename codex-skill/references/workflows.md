@@ -102,16 +102,22 @@ All community tools carry `✅`.
 ## Audience work
 
 1. Identify whether the source is a counter, offline list, uploaded user list,
-   composed segment, or shared source.
+   VK community, composed segment, or shared source.
 2. Read existing objects and their relations before creating or changing data.
-3. Prefer existing verified list and segment tools.
-4. Treat current counter-goal write tools as unverified and do not use them as
+3. For VK community subscribers, call `vk_ads_vk_groups_list`, then import
+   missing numeric IDs, shortnames, or VK links with
+   `vk_ads_vk_groups_import`. Use the returned `objectId` as
+   `params.source_id` with `objectType=remarketing_vk_group`. Do not use the
+   registry `id`, a URL ID, or `remarketing_group`; the latter is for
+   Odnoklassniki groups.
+4. Prefer existing verified list and segment tools.
+5. Treat current counter-goal write tools as unverified and do not use them as
    routine operations.
-5. Prepare the exact audience action before a write. Do not submit source
+6. Prepare the exact audience action before a write. Do not submit source
    credentials, file contents, or sharing keys in chat.
-6. After a write, reread the object, relations, or collection and verify exact
+7. After a write, reread the object, relations, or collection and verify exact
    requested fields.
-7. Never expose uploaded identifiers or source credentials.
+8. Never expose uploaded identifiers or source credentials.
 
 ## Leads and surveys
 

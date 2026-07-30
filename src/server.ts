@@ -24,6 +24,7 @@ import {
   type CreateVkAdsRemarketingCounterInput,
   type CreateVkAdsRemarketingOfflineGoalInput,
   type CreateVkAdsRemarketingUsersListInput,
+  type CreateVkAdsVkGroupInput,
   type CreateVkAdsSegmentInput,
   type CreateVkAdsSegmentRelationInput,
   type CreateVkAdsSharingKeyInput,
@@ -68,6 +69,8 @@ import {
   type VkAdsRemarketingUsersListApiVersion,
   type VkAdsRemarketingUsersListDeleteApiVersion,
   type VkAdsRemarketingUsersListsResult,
+  type VkAdsVkGroup,
+  type VkAdsVkGroupsPage,
   type VkAdsSegment,
   type VkAdsSegmentRelation,
   type VkAdsSegmentsPage,
@@ -131,7 +134,12 @@ import { createCoreWriteActionContracts } from "./preflight/core-writes.js";
 import { createContentActionContracts } from "./preflight/content.js";
 import { createUsersListActionContracts } from "./preflight/users-lists.js";
 import { createOfflineGoalActionContracts } from "./preflight/offline-goals.js";
-import { createSegmentActionContracts } from "./preflight/segments.js";
+import {
+  createSegmentActionContracts,
+  normalizeVkGroupReference,
+  segmentRelationInputSchema,
+  vkGroupImportSchema,
+} from "./preflight/segments.js";
 import { createSharingKeyActionContracts } from "./preflight/sharing-keys.js";
 import { createRemarketingActionContracts } from "./preflight/remarketing.js";
 import {
@@ -171,7 +179,7 @@ import { actionReadinessSchema } from "./preflight/types.js";
 
 export const SERVER_INFO = {
   name: "vk-ads-mcp",
-  version: "0.1.342",
+  version: "0.1.346",
 } as const;
 
 export const CONNECTION_CHECK_TOOL = "vk_ads_connection_check";
@@ -231,6 +239,8 @@ export const REMARKETING_USERS_LIST_UPDATE_TOOL =
   "vk_ads_remarketing_users_list_update";
 export const REMARKETING_USERS_LIST_DELETE_TOOL =
   "vk_ads_remarketing_users_list_delete";
+export const VK_GROUPS_LIST_TOOL = "vk_ads_vk_groups_list";
+export const VK_GROUPS_IMPORT_TOOL = "vk_ads_vk_groups_import";
 export const SEGMENTS_LIST_TOOL = "vk_ads_segments_list";
 export const SEGMENT_GET_TOOL = "vk_ads_segment_get";
 export const SEGMENT_CREATE_TOOL = "vk_ads_segment_create";
@@ -576,6 +586,12 @@ type VkAdsMcpClient = {
     id: number,
     apiVersion?: VkAdsRemarketingUsersListDeleteApiVersion,
   ): Promise<void>;
+  listVkGroups?(
+    input?: { limit?: number; offset?: number },
+  ): Promise<VkAdsVkGroupsPage>;
+  createVkGroup?(
+    input: CreateVkAdsVkGroupInput,
+  ): Promise<VkAdsVkGroup>;
   listSegments?(
     input?: ListVkAdsSegmentsInput,
   ): Promise<VkAdsSegmentsPage>;
@@ -915,6 +931,35 @@ async function readBannersInBatches(
   return banners;
 }
 
+async function readAllVkGroups(
+  client: VkAdsMcpClient,
+): Promise<VkAdsVkGroup[]> {
+  const listVkGroups = client.listVkGroups;
+
+  if (listVkGroups === undefined) {
+    throw new VkAdsApiError(
+      "VK-group capability is unavailable.",
+      "vk_group_client_unavailable",
+    );
+  }
+
+  const items: VkAdsVkGroup[] = [];
+  let offset = 0;
+
+  while (true) {
+    const page = await listVkGroups.call(client, {
+      limit: 50,
+      offset,
+    });
+    items.push(...page.items);
+    offset += page.items.length;
+
+    if (page.items.length === 0 || offset >= page.count) {
+      return items;
+    }
+  }
+}
+
 const remarketingUsersListOutputSchema = z.object({
   id: z.number().int().positive(),
   name: z.string(),
@@ -934,16 +979,18 @@ const segmentOutputSchema = z.object({
   relationsCount: z.number().int().nonnegative().optional(),
 });
 
+const vkGroupOutputSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string().min(1),
+  objectId: z.number().int().positive(),
+  shortname: z.string().min(1),
+  url: z.string().url(),
+});
+
 const segmentRelationOutputSchema = z.object({
   id: z.number().int().positive(),
   objectType: z.string().min(1),
   objectId: z.number().int(),
-  params: z.record(z.string(), z.unknown()).optional(),
-});
-
-const segmentRelationInputSchema = z.object({
-  objectType: z.string().min(1),
-  objectId: z.number().int().optional(),
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -1667,6 +1714,7 @@ export function createVkAdsMcpServer(
 
       return listRelations.call(vkAdsClient, segmentId);
     },
+    listVkGroups: () => readAllVkGroups(vkAdsClient),
   })) {
     actionContracts.register(contract);
   }
@@ -4268,6 +4316,264 @@ export function createVkAdsMcpServer(
           verified: true as const,
           auditRecorded: true,
           readiness,
+        },
+      };
+    },
+  );
+
+  server.registerTool(
+    VK_GROUPS_LIST_TOOL,
+    {
+      title: "Получить источники VK-сообществ",
+      description:
+        "Возвращает зарегистрированные в кабинете VK-сообщества. Поле objectId используется как params.source_id аудитории.",
+      inputSchema: {
+        limit: z.number().int().positive().max(50).optional(),
+        offset: z.number().int().nonnegative().optional(),
+      },
+      outputSchema: {
+        count: z.number().int().nonnegative(),
+        offset: z.number().int().nonnegative(),
+        items: z.array(vkGroupOutputSchema),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ limit, offset }) => {
+      const listVkGroups = vkAdsClient.listVkGroups;
+
+      if (listVkGroups === undefined) {
+        throw new VkAdsApiError(
+          "VK-group capability is unavailable.",
+          "vk_group_client_unavailable",
+        );
+      }
+
+      const result = await listVkGroups.call(vkAdsClient, {
+        ...(limit === undefined ? {} : { limit }),
+        ...(offset === undefined ? {} : { offset }),
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Получено источников VK-сообществ: ${result.items.length}.`,
+          },
+        ],
+        structuredContent: {
+          count: result.count,
+          offset: result.offset,
+          items: result.items,
+        },
+      };
+    },
+  );
+
+  server.registerTool(
+    VK_GROUPS_IMPORT_TOOL,
+    {
+      title: "Добавить VK-сообщества для аудиторий",
+      description:
+        "Добавляет до 300 ID, коротких имён или ссылок VK-сообществ в рекламный кабинет. Поле objectId результата используется как params.source_id аудитории.",
+      inputSchema: vkGroupImportSchema.shape,
+      outputSchema: {
+        imported: z.boolean(),
+        verified: z.boolean(),
+        auditRecorded: z.boolean(),
+        createdCount: z.number().int().nonnegative(),
+        existingCount: z.number().int().nonnegative(),
+        readiness: actionReadinessSchema,
+        items: z.array(vkGroupOutputSchema),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ communities }) => {
+      const readiness = await prepareWriteAction(
+        "vk_group.import",
+        { communities },
+        "remarketing.vk_groups.import",
+      );
+
+      if (!readiness.ready) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "Добавление VK-сообществ остановлено предварительной проверкой.",
+            },
+          ],
+          structuredContent: {
+            imported: false,
+            verified: false,
+            auditRecorded: true,
+            createdCount: 0,
+            existingCount: 0,
+            readiness,
+            items: [],
+          },
+        };
+      }
+
+      const createVkGroup = vkAdsClient.createVkGroup;
+
+      if (createVkGroup === undefined) {
+        throw new VkAdsApiError(
+          "VK-group capability is unavailable.",
+          "vk_group_client_unavailable",
+        );
+      }
+
+      const references = [
+        ...new Map(
+          communities.map((community) => {
+            const reference = normalizeVkGroupReference(community);
+            return [reference.key, reference] as const;
+          }),
+        ).values(),
+      ];
+
+      await auditLog.ensureReady();
+      await vkAdsClient.getCurrentUser();
+      const before = await readAllVkGroups(vkAdsClient);
+      const resolved = new Map<string, VkAdsVkGroup>();
+      const createdIds = new Set<number>();
+      const unresolvedShortnames = references.flatMap((reference) => {
+        if ("objectId" in reference) return [];
+        const existing = before.some(
+          (item) =>
+            item.shortname.toLowerCase() ===
+            reference.shortname.toLowerCase(),
+        );
+        return existing ? [] : [reference.shortname];
+      });
+      const resolvedCommunities =
+        unresolvedShortnames.length === 0
+          ? []
+          : await (
+              communityDependencies?.client.getByReferences(
+                unresolvedShortnames,
+              ) ??
+              Promise.reject(
+                new VkAdsApiError(
+                  "Core VK client is unavailable for resolving community links.",
+                  "vk_group_resolution_unavailable",
+                ),
+              )
+            );
+      const resolvedObjectIds = new Map(
+        resolvedCommunities.flatMap((community) =>
+          community.screen_name === undefined
+            ? []
+            : [
+                [
+                  community.screen_name.toLowerCase(),
+                  community.id,
+                ] as const,
+              ],
+        ),
+      );
+
+      for (const reference of references) {
+        const existing = before.find((item) =>
+          "objectId" in reference
+            ? item.objectId === reference.objectId
+            : item.shortname.toLowerCase() ===
+              reference.shortname.toLowerCase(),
+        );
+
+        if (existing !== undefined) {
+          resolved.set(reference.key, existing);
+          continue;
+        }
+
+        const objectId =
+          "objectId" in reference
+            ? reference.objectId
+            : resolvedObjectIds.get(
+                reference.shortname.toLowerCase(),
+              );
+
+        if (objectId === undefined) {
+          await auditLog.record({
+            operation: "remarketing.vk_groups.import",
+            outcome: "failed",
+          });
+          throw new VkAdsApiError(
+            "VK community could not be resolved.",
+            "vk_group_not_found",
+          );
+        }
+
+        try {
+          const created = await createVkGroup.call(
+            vkAdsClient,
+            { object_id: objectId },
+          );
+          resolved.set(reference.key, created);
+          createdIds.add(created.id);
+        } catch (error) {
+          await auditLog.record({
+            operation: "remarketing.vk_groups.import",
+            outcome: "failed",
+          });
+          throw error;
+        }
+      }
+
+      const after = await readAllVkGroups(vkAdsClient);
+      const items: VkAdsVkGroup[] = [];
+
+      for (const reference of references) {
+        const expected = resolved.get(reference.key);
+        const reread = after.find(
+          (item) => item.id === expected?.id,
+        );
+
+        if (expected === undefined || reread === undefined) {
+          await auditLog.record({
+            operation: "remarketing.vk_groups.import",
+            outcome: "verification_failed",
+          });
+          throw new VkAdsApiError(
+            "Imported VK group could not be verified by provider reread.",
+            "vk_group_verification_failed",
+          );
+        }
+
+        items.push(reread);
+      }
+
+      await auditLog.record({
+        operation: "remarketing.vk_groups.import",
+        outcome: "success",
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `VK-сообщества добавлены и проверены: ${items.length}. Для сегмента используйте поле objectId.`,
+          },
+        ],
+        structuredContent: {
+          imported: true as const,
+          verified: true as const,
+          auditRecorded: true,
+          createdCount: createdIds.size,
+          existingCount: items.length - createdIds.size,
+          readiness,
+          items,
         },
       };
     },
@@ -9041,6 +9347,7 @@ export function createVkAdsMcpServer(
           "remarketing_counter_goal.create",
           "remarketing_counter_goal.update",
           "remarketing_in_app_event.update",
+          "vk_group.import",
           "segment.create",
           "segment.update",
           "segment.delete",

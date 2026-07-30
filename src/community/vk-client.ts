@@ -136,6 +136,39 @@ export class VkCommunityClient {
     });
   }
 
+  async getByReferences(
+    references: Array<number | string>,
+  ): Promise<VkCommunity[]> {
+    const unique = [
+      ...new Set(
+        references
+          .map((reference) => String(reference).trim())
+          .filter(Boolean),
+      ),
+    ];
+    const items: VkCommunity[] = [];
+
+    for (let index = 0; index < unique.length; index += 500) {
+      const result = await this.call("groups.getById", {
+        group_ids: unique.slice(index, index + 500).join(","),
+        fields:
+          "description,members_count,verified,screen_name,activity",
+      });
+
+      for (const raw of asItems(result)) {
+        const item = asCommunity(raw);
+        if (item === null) continue;
+        this.cache.set(item.id, {
+          expiresAt: this.now() + this.cacheTtlMs,
+          value: item,
+        });
+        items.push(item);
+      }
+    }
+
+    return items;
+  }
+
   async wall(id: number, count: number): Promise<VkWallPost[]> {
     const result = await this.call("wall.get", {
       owner_id: -id,

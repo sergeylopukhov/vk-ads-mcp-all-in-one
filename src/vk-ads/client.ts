@@ -335,6 +335,21 @@ const createRemarketingUsersListResponseSchema = z
     id: z.number().int().positive(),
   })
   .passthrough();
+const vkGroupSchema = z
+  .object({
+    id: z.number().int().positive(),
+    name: z.string().min(1),
+    object_id: z.number().int().positive(),
+    shortname: z.string().min(1),
+    url: z.string().url(),
+  })
+  .passthrough();
+const vkGroupsPageSchema = z
+  .object({
+    count: z.number().int().nonnegative(),
+    items: z.array(vkGroupSchema),
+  })
+  .passthrough();
 const segmentSchema = z
   .object({
     id: z.number().int().positive(),
@@ -1116,6 +1131,24 @@ export interface CreateVkAdsRemarketingUsersListInput {
 export type VkAdsRemarketingUsersListApiVersion = 2 | 3;
 export type VkAdsRemarketingUsersListDeleteApiVersion = 1 | 2 | 3;
 
+export interface VkAdsVkGroup {
+  id: number;
+  name: string;
+  objectId: number;
+  shortname: string;
+  url: string;
+}
+
+export interface VkAdsVkGroupsPage {
+  count: number;
+  offset: number;
+  items: VkAdsVkGroup[];
+}
+
+export type CreateVkAdsVkGroupInput =
+  | { object_id: number }
+  | { shortname: string };
+
 export interface VkAdsSegment {
   id: number;
   name: string;
@@ -1799,6 +1832,18 @@ function normalizeSegment(
     ...(item.relations_count === undefined
       ? {}
       : { relationsCount: item.relations_count }),
+  };
+}
+
+function normalizeVkGroup(
+  item: z.infer<typeof vkGroupSchema>,
+): VkAdsVkGroup {
+  return {
+    id: item.id,
+    name: item.name,
+    objectId: item.object_id,
+    shortname: item.shortname,
+    url: item.url,
   };
 }
 
@@ -3787,6 +3832,43 @@ export class VkAdsApiClient {
       "DELETE",
       new URL(endpoint),
     );
+  }
+
+  async listVkGroups(
+    input: VkAdsPaginationInput = {},
+  ): Promise<VkAdsVkGroupsPage> {
+    const url = new URL(
+      `${this.v2BaseUrl}/remarketing/vk_groups.json`,
+    );
+    appendPagination(url.searchParams, input);
+    const parsed = await this.requestValidated(
+      "GET",
+      url,
+      vkGroupsPageSchema,
+      "VK Ads returned an invalid VK-groups page.",
+    );
+
+    return {
+      count: parsed.count,
+      offset: input.offset ?? 0,
+      items: parsed.items.map(normalizeVkGroup),
+    };
+  }
+
+  async createVkGroup(
+    input: CreateVkAdsVkGroupInput,
+  ): Promise<VkAdsVkGroup> {
+    const parsed = await this.requestValidated(
+      "POST",
+      new URL(
+        `${this.v2BaseUrl}/remarketing/vk_groups.json`,
+      ),
+      vkGroupSchema,
+      "VK Ads returned an invalid VK-group creation response.",
+      input,
+    );
+
+    return normalizeVkGroup(parsed);
   }
 
   async listSegments(

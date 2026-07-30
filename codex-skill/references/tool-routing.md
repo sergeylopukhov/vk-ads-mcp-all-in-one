@@ -61,6 +61,8 @@ by MCP before filling provider-specific fields.
 - Segments: `vk_ads_segments_list`, `vk_ads_segment_get`,
   `vk_ads_segment_create`, `vk_ads_segment_update`,
   `vk_ads_segment_delete`
+- VK community audience sources: `vk_ads_vk_groups_list`,
+  `vk_ads_vk_groups_import`
 - Segment sources: `vk_ads_segment_relations_list`,
   `vk_ads_segment_relations_create`, `vk_ads_segment_relation_update`,
   `vk_ads_segment_relation_delete`
