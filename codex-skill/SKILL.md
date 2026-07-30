@@ -88,6 +88,13 @@ Never lower thresholds or relax exclusions without the user's choice.
 When the user gives an exact recommendation threshold without a review
 threshold, use that exact `min_score` and keep a 15-point review band below it,
 bounded at zero.
+For every high-level community research call, explicitly set
+`research_context.purpose`. Use `advertising_audience` only after the buyer,
+conversion action, purchase triggers, geography, provider exclusions, and
+competitor policy are known. Use `topic_discovery` only when the user asks for
+ordinary thematic discovery that is not an advertising-audience assessment.
+If the tool returns `needs_clarification` or `invalid_strategy`, ask the
+returned business questions and do not retry with guessed values.
 
 For analytical work, also read
 [references/reporting.md](references/reporting.md) and produce a detailed

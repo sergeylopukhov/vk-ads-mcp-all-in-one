@@ -25,6 +25,15 @@ import {
   type PreselectionResult,
 } from "./preselection.js";
 import {
+  applyAudienceAdmission,
+  clarificationResult,
+  classifyAudience,
+  preflightResearch,
+  type AudienceClassification,
+  type ResearchContext,
+  type ResearchPreflight,
+} from "./research-context.js";
+import {
   CommunityResearchStore,
   type CommunityResearchRun,
 } from "./research-store.js";
@@ -54,7 +63,8 @@ export interface VkCommunityToolDependencies {
 }
 
 type ResearchItem = Candidate &
-  Omit<Score, "id">;
+  Omit<Score, "id"> &
+  Partial<AudienceClassification>;
 type CommunitySearchMode = CommunitySearchSort | "both";
 type ResearchInput = {
   keywords: string[];
@@ -77,6 +87,7 @@ type ResearchInput = {
   analysis_policy: AnalysisPolicy;
   scoring_rules?: Record<string, unknown> | undefined;
   clusters: Array<Record<string, unknown>>;
+  research_context?: ResearchContext | undefined;
 };
 
 const communityTypeSchema = z.enum(["group", "page", "event"]);
@@ -210,6 +221,101 @@ const scoreSchema = z.object({
   clusters: z.array(z.string()),
   reasons: z.array(z.string()),
   risk_flags: z.array(z.string()),
+  audience_relationship: z
+    .enum([
+      "target_audience",
+      "adjacent_audience",
+      "partner",
+      "competitor",
+      "provider",
+      "irrelevant",
+      "unknown",
+    ])
+    .optional(),
+  relationship_reasons: z.array(z.string()).optional(),
+  buyer_signals: z.array(z.string()).optional(),
+  provider_signals: z.array(z.string()).optional(),
+  competitor_signals: z.array(z.string()).optional(),
+  applied_competitor_policy: z
+    .enum(["exclude", "review", "include"])
+    .nullable()
+    .optional(),
+});
+const researchContextSchema = z
+  .object({
+    purpose: z
+      .enum([
+        "advertising_audience",
+        "topic_discovery",
+        "competitor_research",
+      ])
+      .optional(),
+    offer: z.string().trim().min(1).max(500).optional(),
+    conversion_action: z.string().trim().min(1).max(500).optional(),
+    target_audience: z
+      .array(z.string().trim().min(1).max(200))
+      .max(50)
+      .optional(),
+    buyer_roles: z
+      .array(z.string().trim().min(1).max(120))
+      .max(50)
+      .optional(),
+    purchase_triggers: z
+      .array(z.string().trim().min(1).max(200))
+      .max(50)
+      .optional(),
+    geography: z.string().trim().min(1).max(200).optional(),
+    competitor_policy: z.enum(["exclude", "review", "include"]).optional(),
+    competitor_policy_confirmed: z.boolean().optional(),
+    personal_choice_level: z.enum(["low", "medium", "high"]).optional(),
+    audience_terms: z
+      .array(z.string().trim().min(1).max(120))
+      .max(100)
+      .optional(),
+    adjacent_audience_terms: z
+      .array(z.string().trim().min(1).max(120))
+      .max(100)
+      .optional(),
+    partner_terms: z
+      .array(z.string().trim().min(1).max(120))
+      .max(100)
+      .optional(),
+    competitor_terms: z
+      .array(z.string().trim().min(1).max(120))
+      .max(100)
+      .optional(),
+    provider_terms: z
+      .array(z.string().trim().min(1).max(120))
+      .max(100)
+      .optional(),
+    irrelevant_terms: z
+      .array(z.string().trim().min(1).max(120))
+      .max(100)
+      .optional(),
+  })
+  .strict();
+const researchPreflightSchema = z.object({
+  status: z.enum(["ready", "needs_clarification", "invalid_strategy"]),
+  ready: z.boolean(),
+  purpose: z
+    .enum([
+      "advertising_audience",
+      "topic_discovery",
+      "competitor_research",
+    ])
+    .nullable(),
+  missing_fields: z.array(z.string()),
+  questions: z.array(z.string()),
+  strategy_errors: z.array(z.string()),
+  summary: z.object({
+    offer: z.string().nullable(),
+    conversion_action: z.string().nullable(),
+    target_audience: z.array(z.string()),
+    purchase_triggers: z.array(z.string()),
+    geography: z.string().nullable(),
+    competitor_policy: z.enum(["exclude", "review", "include"]).nullable(),
+    personal_choice_level: z.enum(["low", "medium", "high"]).nullable(),
+  }),
 });
 const conceptRuleSchema = z
   .object({
@@ -549,6 +655,7 @@ const analysisPolicySchema = z
     }
   });
 export const researchInputSchema = {
+  research_context: researchContextSchema.optional(),
   keywords: z
     .array(z.string().trim().min(1).max(120))
     .min(1)
@@ -679,6 +786,35 @@ const runOutputSchema = {
   skipped_candidates: z.array(candidateSchema).default([]),
   error: z.string().optional(),
   rescore_of: z.string().uuid().optional(),
+  research_purpose: z
+    .enum([
+      "advertising_audience",
+      "topic_discovery",
+      "competitor_research",
+    ])
+    .optional(),
+  preflight: researchPreflightSchema.optional(),
+};
+const researchStartOutputSchema = {
+  status: z.enum([
+    "needs_clarification",
+    "invalid_strategy",
+    "queued",
+    "running",
+    "completed",
+    "failed",
+  ]),
+  needs_clarification: z.boolean().optional(),
+  preflight: researchPreflightSchema.optional(),
+  missing_questions: z.array(z.string()).optional(),
+  run_id: z.string().uuid().optional(),
+  research_purpose: z
+    .enum([
+      "advertising_audience",
+      "topic_discovery",
+      "competitor_research",
+    ])
+    .optional(),
 };
 
 export function registerVkCommunityTools(
@@ -1105,13 +1241,23 @@ export function registerVkCommunityTools(
     communities: Candidate[],
     rules: Record<string, unknown>,
     clusters: Array<Record<string, unknown>>,
+    researchContext?: ResearchContext,
   ): ResearchItem[] => {
     const byId = new Map(
       score(communities, rules, clusters).map((item) => [item.id, item]),
     );
     return communities
       .map((community) => {
-        const result = byId.get(community.id)!;
+        const baseResult = byId.get(community.id)!;
+        const result =
+          researchContext === undefined ||
+          researchContext.purpose === "topic_discovery"
+            ? baseResult
+            : applyAudienceAdmission(
+                baseResult,
+                classifyAudience(community, researchContext),
+                researchContext,
+              );
         return {
           ...community,
           ...result,
@@ -1233,6 +1379,12 @@ export function registerVkCommunityTools(
       review: [],
       rejected: [],
       skipped_candidates: preselection?.skipped ?? [],
+      research_purpose: input.research_context?.purpose,
+      preflight: preflightResearch(
+        input.research_context,
+        input.keywords,
+        input.clusters,
+      ),
     };
   };
 
@@ -1312,6 +1464,12 @@ export function registerVkCommunityTools(
       analysis_policy:
         rawInput.analysis_policy ?? DEFAULT_ANALYSIS_POLICY,
     };
+    const preflight = preflightResearch(
+      input.research_context,
+      input.keywords,
+      input.clusters,
+    );
+    if (!preflight.ready) return clarificationResult(preflight);
     const prepared = await prepare(input);
     const analyzed = await analyzeItems(
       prepared.selected,
@@ -1319,7 +1477,12 @@ export function registerVkCommunityTools(
       prepared.rules,
       input.exclude_match_mode,
     );
-    const items = rank(analyzed, prepared.rules, input.clusters);
+    const items = rank(
+      analyzed,
+      prepared.rules,
+      input.clusters,
+      input.research_context,
+    );
     const run = createRun(
       input,
       prepared.discovery,
@@ -1408,6 +1571,12 @@ export function registerVkCommunityTools(
       analysis_policy:
         rawInput.analysis_policy ?? DEFAULT_ANALYSIS_POLICY,
     };
+    const preflight = preflightResearch(
+      input.research_context,
+      input.keywords,
+      input.clusters,
+    );
+    if (!preflight.ready) return clarificationResult(preflight);
     const initialRules = resolveRules(
       input.scoring_rules,
       [...new Set([...input.keywords, ...input.include_terms])],
@@ -1506,7 +1675,12 @@ export function registerVkCommunityTools(
             ...(run.passed as ResearchItem[]),
             ...(run.review as ResearchItem[]),
             ...(run.rejected as ResearchItem[]),
-            ...rank(analyzed, prepared.rules, input.clusters),
+            ...rank(
+              analyzed,
+              prepared.rules,
+              input.clusters,
+              input.research_context,
+            ),
           ];
           updatePartitions(run, currentItems);
           const progress = run.progress as Record<string, unknown>;
@@ -1684,32 +1858,46 @@ export function registerVkCommunityTools(
     {
       title: "Запустить фоновое исследование сообществ VK",
       description:
-        "Сразу создаёт запуск; поиск и анализ публичных сообществ выполняются в фоне настраиваемыми пакетами.",
+        "Проверяет назначение и рекламный бриф до VK. При готовом preflight создаёт фоновый запуск.",
       inputSchema: researchInputSchema,
-      outputSchema: runOutputSchema,
+      outputSchema: researchStartOutputSchema,
       annotations: { ...readOnly, idempotentHint: false },
     },
-    async (input, extra) =>
-      result(
-        await start(input, extra.sessionId),
-        "Фоновое исследование запущено.",
-      ),
+    async (input, extra) => {
+      const output = await start(input, extra.sessionId);
+      const blocked =
+        output.status === "needs_clarification" ||
+        output.status === "invalid_strategy";
+      return result(
+        output,
+        blocked
+          ? "Исследование не запущено: требуется уточнить рекламный бриф или поисковую стратегию."
+          : "Фоновое исследование запущено.",
+      );
+    },
   );
   server.registerTool(
     "vk_research_communities",
     {
       title: "Запустить исследование сообществ VK",
       description:
-        "Совместимый alias фонового исследования сообществ.",
+        "Совместимый alias фонового исследования с обязательным preflight до VK.",
       inputSchema: researchInputSchema,
-      outputSchema: runOutputSchema,
+      outputSchema: researchStartOutputSchema,
       annotations: { ...readOnly, idempotentHint: false },
     },
-    async (input, extra) =>
-      result(
-        await start(input, extra.sessionId),
-        "Фоновое исследование запущено.",
-      ),
+    async (input, extra) => {
+      const output = await start(input, extra.sessionId);
+      const blocked =
+        output.status === "needs_clarification" ||
+        output.status === "invalid_strategy";
+      return result(
+        output,
+        blocked
+          ? "Исследование не запущено: требуется уточнить рекламный бриф или поисковую стратегию."
+          : "Фоновое исследование запущено.",
+      );
+    },
   );
   server.registerTool(
     "vk_get_community_research_progress",
@@ -1918,6 +2106,7 @@ export function registerVkCommunityTools(
           sourceItems,
           rules,
           clusters ?? objects(request.clusters),
+          researchContextFrom(request.research_context),
         ),
       );
       if (
@@ -1955,17 +2144,46 @@ export function registerVkCommunityTools(
     {
       title: "Найти и оценить сообщества VK",
       description:
-        "За один вызов выполняет поиск, анализ публикаций и прозрачный скоринг.",
+        "Проверяет назначение и рекламный бриф до VK, затем выполняет поиск, анализ и классификацию отношений с аудиторией.",
       inputSchema: researchInputSchema,
       outputSchema: {
+        status: z
+          .enum([
+            "completed",
+            "needs_clarification",
+            "invalid_strategy",
+          ])
+          .optional(),
+        needs_clarification: z.boolean().optional(),
+        preflight: researchPreflightSchema.optional(),
+        missing_questions: z.array(z.string()).optional(),
+        research_purpose: z
+          .enum([
+            "advertising_audience",
+            "topic_discovery",
+            "competitor_research",
+          ])
+          .optional(),
         items: z.array(candidateSchema.merge(scoreSchema.omit({ id: true }))),
       },
       annotations: { ...readOnly, idempotentHint: true },
     },
     async (input) => {
       const run = await runSynchronously(input, false);
+      if (
+        run.status === "needs_clarification" ||
+        run.status === "invalid_strategy"
+      ) {
+        return result(
+          run,
+          "Исследование не запущено: требуется уточнить рекламный бриф или поисковую стратегию.",
+        );
+      }
       return result(
         {
+          status: "completed",
+          research_purpose: run.research_purpose,
+          preflight: run.preflight,
           items: [
             ...(run.passed as ResearchItem[]),
             ...(run.review as ResearchItem[]),
@@ -2185,6 +2403,11 @@ function objects(value: unknown): Array<Record<string, unknown>> {
           !Array.isArray(item),
       )
     : [];
+}
+
+function researchContextFrom(value: unknown): ResearchContext | undefined {
+  const parsed = researchContextSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function termStrengths(value: unknown): Record<string, TermStrength> {
