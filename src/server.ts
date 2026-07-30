@@ -171,7 +171,7 @@ import { actionReadinessSchema } from "./preflight/types.js";
 
 export const SERVER_INFO = {
   name: "vk-ads-mcp",
-  version: "0.1.33",
+  version: "0.1.34",
 } as const;
 
 export const CONNECTION_CHECK_TOOL = "vk_ads_connection_check";
@@ -990,6 +990,45 @@ const statisticsStatusSchema = z.enum([
   "active",
   "blocked",
   "deleted",
+]);
+const v2StatisticsMetricSetSchema = z.enum([
+  "all",
+  "base",
+  "events",
+  "video",
+  "carousel",
+  "ad_offers",
+  "uniques",
+  "uniques_video",
+  "tps",
+  "romi",
+  "playable",
+  "custom_event",
+  "social_network",
+]);
+const v3StatisticsMetricSetSchema = z.enum([
+  "all",
+  "base",
+  "events",
+  "uniques",
+  "uniques_video",
+  "video",
+  "carousel",
+  "ad_offers",
+  "playable",
+  "tps",
+  "social_network",
+  "romi",
+]);
+const v3StatisticsMetricFieldSchema = z
+  .string()
+  .regex(
+    /^(?:base|events|uniques|uniques_video|video|carousel|ad_offers|playable|tps|social_network|romi)\.[a-z0-9_]+(?:\.[a-z0-9_]+)*$/,
+    "Use a metric set or a qualified field such as base.clicks.",
+  );
+const v3StatisticsFieldSchema = z.union([
+  v3StatisticsMetricSetSchema,
+  v3StatisticsMetricFieldSchema,
 ]);
 const statisticsIdListSchema = z
   .array(z.number().int().positive())
@@ -5810,7 +5849,7 @@ export function createVkAdsMcpServer(
     {
       title: "Получить дневную статистику VK Рекламы",
       description:
-        "Возвращает пагинированную статистику API v3 по объявлениям, группам, кампаниям или аккаунтам.",
+        "Возвращает пагинированную статистику API v3 по объявлениям, группам, кампаниям или аккаунтам. По умолчанию запрашивает набор base: показы, клики, расход, CTR, CPC, CPM, цели, CPA и CR.",
       inputSchema: {
         resource: z.enum([
           "banners",
@@ -5825,7 +5864,13 @@ export function createVkAdsMcpServer(
           .optional(),
         ids: statisticsIdListSchema.optional(),
         excludedIds: statisticsIdListSchema.optional(),
-        fields: z.array(z.string().min(1)).min(1).optional(),
+        fields: z
+          .array(v3StatisticsFieldSchema)
+          .min(1)
+          .default(["base"])
+          .describe(
+            "Наборы метрик или поля вида base.clicks. Для основных показателей используйте base, а не shows, impressions или views.",
+          ),
         attribution: z.enum(["conversion", "impression"]).optional(),
         bannerStatuses: z
           .array(statisticsStatusSchema)
@@ -6050,14 +6095,20 @@ export function createVkAdsMcpServer(
     {
       title: "Получить статистику VK Рекламы API v2",
       description:
-        "Возвращает дневную или суммарную статистику по объявлениям, группам, кампаниям или аккаунтам.",
+        "Возвращает дневную или суммарную статистику по объявлениям, группам, кампаниям или аккаунтам. По умолчанию запрашивает набор base: показы, клики, расход, CTR, CPC, CPM, цели, CPA и CR.",
       inputSchema: {
         resource: statisticsResourceSchema,
         granularity: z.enum(["day", "summary"]),
         dateFrom: statisticsDateSchema,
         dateTo: statisticsDateSchema,
         ids: statisticsIdListSchema,
-        metrics: z.array(z.string().min(1)).min(1).optional(),
+        metrics: z
+          .array(v2StatisticsMetricSetSchema)
+          .min(1)
+          .default(["base"])
+          .describe(
+            "Наборы метрик VK Ads. Для основных показателей используйте base, а не shows, impressions или views.",
+          ),
         attribution: z.enum(["conversion", "impression"]).optional(),
       },
       outputSchema: v2StatisticsOutputSchema,

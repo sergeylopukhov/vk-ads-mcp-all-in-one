@@ -17,11 +17,15 @@
    latest period is complete.
 3. Use `vk_ads_statistics_day_list` for daily trends and
    `vk_ads_statistics_v2_get` for the required daily or aggregate view.
-4. Add goal, in-app, or offline statistics only when relevant.
-5. Check structural context: status, parent, budget settings, and active ads.
-6. Compare periods and objects using actual returned metrics. Do not invent
+4. For impressions, clicks, spend, CTR, CPC, CPM, goals, CPA, and CR, omit the
+   metric selector or pass `fields=["base"]` / `metrics=["base"]`. These
+   parameters name metric sets; never pass result fields such as `shows`,
+   `impressions`, or `views` as metric sets.
+5. Add goal, in-app, or offline statistics only when relevant.
+6. Check structural context: status, parent, budget settings, and active ads.
+7. Compare periods and objects using actual returned metrics. Do not invent
    attribution, revenue, or missing denominators.
-7. Return the detailed report described in `reporting.md`.
+8. Return the detailed report described in `reporting.md`.
 
 ## Campaign management
 
